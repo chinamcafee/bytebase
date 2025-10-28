@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/enterprise/plugin"
@@ -44,44 +45,59 @@ func NewLicenseService(mode common.ReleaseMode, store *store.Store) (*LicenseSer
 // If there is no license, we will return a free plan subscription without expiration time.
 // If there is expired license, we will return a free plan subscription with the expiration time of the expired license.
 func (s *LicenseService) LoadSubscription(ctx context.Context) *v1pb.Subscription {
-	s.mu.RLock()
-	cached := s.cachedSubscription
-	s.mu.RUnlock()
-
-	if cached != nil {
-		// Invalidate the cache if expired.
-		if cached.ExpiresTime != nil && cached.ExpiresTime.AsTime().Before(time.Now()) {
-			// refresh expired subscription
-			s.mu.Lock()
-			s.cachedSubscription = nil
-			s.mu.Unlock()
-			cached = nil
-		}
-	}
-	if cached != nil {
-		return cached
+	// DEV MODE: Force return ENTERPRISE plan for local development
+	// This bypasses all license checks and unlocks all features
+	return &v1pb.Subscription{
+		Plan:            v1pb.PlanType_ENTERPRISE,
+		Seats:           -1,  // Unlimited seats
+		Instances:       -1,  // Unlimited instances
+		ActiveInstances: -1,  // Unlimited active instances
+		ExpiresTime:     timestamppb.New(time.Date(2099, 12, 31, 23, 59, 59, 0, time.UTC)), // Expires on 2099-12-31
+		Trialing:        false,
 	}
 
-	// Cache the subscription.
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Original license validation logic (unreachable due to return above)
+	// Uncomment the code below and remove the return above to restore normal license checking
+	/*
+		s.mu.RLock()
+		cached := s.cachedSubscription
+		s.mu.RUnlock()
 
-	subscription := s.provider.LoadSubscription(ctx)
-	if subscription == nil {
-		// Never had a subscription, set to free plan.
-		subscription = &v1pb.Subscription{
-			Plan: v1pb.PlanType_FREE,
+		if cached != nil {
+			// Invalidate the cache if expired.
+			if cached.ExpiresTime != nil && cached.ExpiresTime.AsTime().Before(time.Now()) {
+				// refresh expired subscription
+				s.mu.Lock()
+				s.cachedSubscription = nil
+				s.mu.Unlock()
+				cached = nil
+			}
 		}
-	}
-	// Switch to free plan if the subscription is expired.
-	if subscription.ExpiresTime != nil && subscription.ExpiresTime.AsTime().Before(time.Now()) {
-		subscription = &v1pb.Subscription{
-			Plan:        v1pb.PlanType_FREE,
-			ExpiresTime: subscription.ExpiresTime,
+		if cached != nil {
+			return cached
 		}
-	}
-	s.cachedSubscription = subscription
-	return subscription
+
+		// Cache the subscription.
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		subscription := s.provider.LoadSubscription(ctx)
+		if subscription == nil {
+			// Never had a subscription, set to free plan.
+			subscription = &v1pb.Subscription{
+				Plan: v1pb.PlanType_FREE,
+			}
+		}
+		// Switch to free plan if the subscription is expired.
+		if subscription.ExpiresTime != nil && subscription.ExpiresTime.AsTime().Before(time.Now()) {
+			subscription = &v1pb.Subscription{
+				Plan:        v1pb.PlanType_FREE,
+				ExpiresTime: subscription.ExpiresTime,
+			}
+		}
+		s.cachedSubscription = subscription
+		return subscription
+	*/
 }
 
 // GetEffectivePlan gets the effective plan.
