@@ -16,7 +16,6 @@ import (
 	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/sampleinstance"
 	"github.com/bytebase/bytebase/backend/enterprise"
-	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
 	"github.com/bytebase/bytebase/backend/runner/schemasync"
@@ -90,11 +89,10 @@ func (s *ActuatorService) UpdateActuatorInfo(
 
 // DeleteCache deletes the cache.
 func (s *ActuatorService) DeleteCache(
-	ctx context.Context,
+	_ context.Context,
 	_ *connect.Request[v1pb.DeleteCacheRequest],
 ) (*connect.Response[emptypb.Empty], error) {
 	s.store.DeleteCache()
-	s.licenseService.RefreshCache(ctx)
 	return connect.NewResponse(&emptypb.Empty{}), nil
 }
 
@@ -103,16 +101,13 @@ func (s *ActuatorService) GetResourcePackage(
 	ctx context.Context,
 	_ *connect.Request[v1pb.GetResourcePackageRequest],
 ) (*connect.Response[v1pb.ResourcePackage], error) {
-	brandingSetting, err := s.store.GetSettingV2(ctx, storepb.SettingName_BRANDING_LOGO)
+	workspaceProfileSetting, err := s.store.GetWorkspaceProfileSetting(ctx)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to find workspace branding"))
-	}
-	if brandingSetting == nil {
-		return nil, errors.Errorf("cannot find setting %v", storepb.SettingName_BRANDING_LOGO)
+		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to find workspace profile setting"))
 	}
 
 	pkg := &v1pb.ResourcePackage{
-		Logo: []byte(brandingSetting.Value),
+		Logo: []byte(workspaceProfileSetting.BrandingLogo),
 	}
 	return connect.NewResponse(pkg), nil
 }
@@ -126,7 +121,7 @@ func (s *ActuatorService) SetupSample(
 	if !ok || user == nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("user not found"))
 	}
-	if err := s.sampleInstanceManager.GenerateOnboardingData(ctx, user.ID, s.schemaSyncer); err != nil {
+	if err := s.sampleInstanceManager.GenerateOnboardingData(ctx, user, s.schemaSyncer); err != nil {
 		// When running inside docker on mac, we sometimes get database does not exist error.
 		// This is due to the docker overlay storage incompatibility with mac OS file system.
 		// Onboarding error is not critical, so we just emit an error log.
@@ -136,26 +131,23 @@ func (s *ActuatorService) SetupSample(
 }
 
 func (s *ActuatorService) getServerInfo(ctx context.Context) (*v1pb.ActuatorInfo, error) {
-	count, err := s.store.CountUsers(ctx, storepb.PrincipalType_END_USER)
+	activeEndUserCount, err := s.store.CountActiveEndUsers(ctx)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 
-	setting, err := s.store.GetWorkspaceGeneralSetting(ctx)
+	setting, err := s.store.GetWorkspaceProfileSetting(ctx)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to find workspace setting"))
 	}
 
-	passwordRestrictionSetting, err := s.store.GetPasswordRestrictionSetting(ctx)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to find password restriction setting"))
-	}
-	passwordSetting := convertToPasswordRestrictionSetting(passwordRestrictionSetting)
+	passwordSetting := convertToPasswordRestrictionSetting(setting.GetPasswordRestriction())
 
-	workspaceID, err := s.store.GetWorkspaceID(ctx)
+	systemSetting, err := s.store.GetSystemSetting(ctx)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get system setting"))
 	}
+	workspaceID := systemSetting.WorkspaceId
 
 	usedFeatures, err := s.getUsedFeatures(ctx)
 	if err != nil {
@@ -170,13 +162,19 @@ func (s *ActuatorService) getServerInfo(ctx context.Context) (*v1pb.ActuatorInfo
 	// Check if sample instances are available
 	hasSampleInstances, _ := s.store.HasSampleInstances(ctx)
 
+	// Prefer command-line flag over database value for external URL
+	externalURL := setting.ExternalUrl
+	if s.profile.ExternalURL != "" {
+		externalURL = s.profile.ExternalURL
+	}
+
 	serverInfo := v1pb.ActuatorInfo{
 		Version:                s.profile.Version,
 		GitCommit:              s.profile.GitCommit,
 		Saas:                   s.profile.SaaS,
 		Demo:                   s.profile.Demo,
-		NeedAdminSetup:         count == 0,
-		ExternalUrl:            setting.ExternalUrl,
+		NeedAdminSetup:         activeEndUserCount == 0,
+		ExternalUrl:            externalURL,
 		DisallowSignup:         setting.DisallowSignup || s.profile.SaaS,
 		Require_2Fa:            setting.Require_2Fa,
 		LastActiveTime:         timestamppb.New(time.Unix(s.profile.LastActiveTS.Load(), 0)),
@@ -187,6 +185,7 @@ func (s *ActuatorService) getServerInfo(ctx context.Context) (*v1pb.ActuatorInfo
 		DisallowPasswordSignin: setting.DisallowPasswordSignin,
 		PasswordRestriction:    passwordSetting,
 		EnableSample:           hasSampleInstances,
+		ExternalUrlFromFlag:    s.profile.ExternalURL != "",
 	}
 
 	stats, err := s.store.StatUsers(ctx)
@@ -207,11 +206,11 @@ func (s *ActuatorService) getServerInfo(ctx context.Context) (*v1pb.ActuatorInfo
 	}
 	serverInfo.ActivatedInstanceCount = int32(activatedInstanceCount)
 
-	totalInstanceCount, err := s.store.CountInstance(ctx, &store.CountInstanceMessage{})
+	activeInstanceCount, err := s.store.CountActiveInstances(ctx)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to count total instance"))
 	}
-	serverInfo.TotalInstanceCount = int32(totalInstanceCount)
+	serverInfo.TotalInstanceCount = int32(activeInstanceCount)
 
 	return &serverInfo, nil
 }
@@ -229,24 +228,7 @@ func (s *ActuatorService) getUsedFeatures(ctx context.Context) ([]v1pb.PlanFeatu
 		features = append(features, v1pb.PlanFeature_FEATURE_ENTERPRISE_SSO)
 	}
 
-	// setting
-	brandingLogo, err := s.store.GetSettingV2(ctx, storepb.SettingName_BRANDING_LOGO)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get branding logo setting")
-	}
-	if brandingLogo != nil && brandingLogo.Value != "" {
-		features = append(features, v1pb.PlanFeature_FEATURE_CUSTOM_LOGO)
-	}
-
-	watermark, err := s.store.GetSettingV2(ctx, storepb.SettingName_WATERMARK)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get watermark setting")
-	}
-	if watermark != nil && watermark.Value == "1" {
-		features = append(features, v1pb.PlanFeature_FEATURE_WATERMARK)
-	}
-
-	setting, err := s.store.GetWorkspaceGeneralSetting(ctx)
+	setting, err := s.store.GetWorkspaceProfileSetting(ctx)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get workspace general setting")
 	}
@@ -256,15 +238,21 @@ func (s *ActuatorService) getUsedFeatures(ctx context.Context) ([]v1pb.PlanFeatu
 	if setting.Require_2Fa {
 		features = append(features, v1pb.PlanFeature_FEATURE_TWO_FA)
 	}
-	if setting.GetTokenDuration().GetSeconds() > 0 && float64(setting.GetTokenDuration().GetSeconds()) != auth.DefaultTokenDuration.Seconds() {
-		features = append(features, v1pb.PlanFeature_FEATURE_SIGN_IN_FREQUENCY_CONTROL)
+	if setting.GetRefreshTokenDuration().GetSeconds() > 0 && float64(setting.GetRefreshTokenDuration().GetSeconds()) != auth.DefaultRefreshTokenDuration.Seconds() {
+		features = append(features, v1pb.PlanFeature_FEATURE_TOKEN_DURATION_CONTROL)
 	}
 	if setting.GetAnnouncement().GetText() != "" {
 		features = append(features, v1pb.PlanFeature_FEATURE_DASHBOARD_ANNOUNCEMENT)
 	}
+	if setting.Watermark {
+		features = append(features, v1pb.PlanFeature_FEATURE_WATERMARK)
+	}
+	if setting.BrandingLogo != "" {
+		features = append(features, v1pb.PlanFeature_FEATURE_CUSTOM_LOGO)
+	}
 
 	// environment tier
-	environments, err := s.store.GetEnvironmentSetting(ctx)
+	environments, err := s.store.GetEnvironment(ctx)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get environment setting")
 	}

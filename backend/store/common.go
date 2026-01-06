@@ -2,6 +2,8 @@ package store
 
 import (
 	"regexp"
+
+	"github.com/pkg/errors"
 )
 
 // RowStatus is the status for a row.
@@ -33,15 +35,26 @@ type OrderByKey struct {
 	SortOrder SortOrder
 }
 
-type ListResourceFilter struct {
-	Args  []any
-	Where string
-}
+func parseOrderBy(orderBy string) ([]*OrderByKey, error) {
+	if orderBy == "" {
+		return nil, nil
+	}
 
-var dollarPlaceholderRegex = regexp.MustCompile(`\$\d+`)
-
-// ConvertDollarPlaceholders converts PostgreSQL $N placeholders to ? placeholders for qb.
-// This is needed because the API layer creates filters with $1, $2, etc. but qb expects ?.
-func ConvertDollarPlaceholders(where string) string {
-	return dollarPlaceholderRegex.ReplaceAllString(where, "?")
+	var result []*OrderByKey
+	re := regexp.MustCompile(`(\w+)\s*(asc|desc)?`)
+	matches := re.FindAllStringSubmatch(orderBy, -1)
+	for _, match := range matches {
+		if len(match) > 3 {
+			return nil, errors.Errorf("invalid order by %q", orderBy)
+		}
+		key := &OrderByKey{
+			Key:       match[1],
+			SortOrder: ASC,
+		}
+		if len(match) == 3 && match[2] == "desc" {
+			key.SortOrder = DESC
+		}
+		result = append(result, key)
+	}
+	return result, nil
 }

@@ -8,15 +8,12 @@
       },
       tab.status.toLowerCase(),
     ]"
-    :data-status="tab.status"
-    :data-sheet="tab.worksheet"
-    :data-connection="JSON.stringify(tab.connection)"
     @mousedown.left="$emit('select', tab, index)"
     @mouseenter="state.hovering = true"
     @mouseleave="state.hovering = false"
   >
     <div
-      class="body"
+      class="body flex items-center gap-x-2"
       :style="
         backgroundColorRgb
           ? {
@@ -39,7 +36,7 @@
 import { computed, reactive } from "vue";
 import { useSQLEditorTabStore } from "@/store";
 import { type SQLEditorTab, UNKNOWN_ID } from "@/types";
-import { connectionForSQLEditorTab, hexToRgb } from "@/utils";
+import { getConnectionForSQLEditorTab, hexToRgb } from "@/utils";
 import AdminLabel from "./AdminLabel.vue";
 import Label from "./Label.vue";
 import Prefix from "./Prefix.vue";
@@ -68,7 +65,7 @@ const tabStore = useSQLEditorTabStore();
 const isCurrentTab = computed(() => props.tab.id === tabStore.currentTabId);
 
 const environment = computed(() => {
-  const { database } = connectionForSQLEditorTab(props.tab);
+  const { database } = getConnectionForSQLEditorTab(props.tab);
   const environment = database?.effectiveEnvironmentEntity;
   if (environment?.id === String(UNKNOWN_ID)) {
     return;
@@ -89,26 +86,41 @@ const backgroundColorRgb = computed(() => {
 
 <style scoped lang="postcss">
 .tab-item {
-  @apply cursor-pointer border-r bg-white gap-x-2 relative;
+  cursor: pointer;
+  border-right-width: 1px;
+  background-color: white;
+  column-gap: 0.5rem;
+  position: relative;
 }
 .hovering {
-  @apply bg-gray-50;
+  background-color: rgb(var(--color-gray-50));
 }
 .tab-item.admin {
-  @apply !bg-dark-bg;
+  background-color: rgb(var(--color-dark-bg)) !important;
 }
 
 .body {
-  @apply flex items-center justify-between gap-x-1 pl-2 pr-1 border-t pt-[4px] h-[36px];
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 0.5rem;
+  padding-right: 0.25rem;
+  border-top-width: 1px;
+  padding-top: 4px;
+  height: 36px;
 }
 .current .body {
-  @apply relative bg-white border-t-[3px] pt-[2px];
+  position: relative;
+  background-color: white;
+  border-top-width: 3px;
+  padding-top: 2px;
 }
 
 .tab-item.admin .body {
-  @apply text-matrix-green-hover;
+  color: rgb(var(--color-matrix-green-hover));
 }
 .tab-item.admin.current .body {
-  @apply !bg-dark-bg border-matrix-green-hover;
+  background-color: rgb(var(--color-dark-bg)) !important;
+  border-top-color: rgb(var(--color-matrix-green-hover));
 }
 </style>

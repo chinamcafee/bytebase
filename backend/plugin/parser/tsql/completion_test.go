@@ -96,7 +96,7 @@ func TestCompletion(t *testing.T) {
 		if record {
 			tests[i].Want = filteredResult
 		} else {
-			a.Equalf(t.Want, filteredResult, t.Input, "Case %02d: %s", i, t.Description)
+			a.Equalf(t.Want, filteredResult, "Case %02d: %s", i, t.Input)
 		}
 	}
 
@@ -154,6 +154,14 @@ var databaseMetadatas = []*storepb.DatabaseSchemaMetadata{
 						},
 					},
 				},
+				Sequences: []*storepb.SequenceMetadata{
+					{
+						Name: "EmployeeIdSeq",
+					},
+					{
+						Name: "OrderSeq",
+					},
+				},
 			},
 			{
 				Name: "MySchema",
@@ -204,7 +212,7 @@ func buildMockDatabaseMetadataGetterLister() (base.GetDatabaseMetadataFunc, base
 	return func(_ context.Context, _, databaseName string) (string, *model.DatabaseMetadata, error) {
 			m := make(map[string]*model.DatabaseMetadata)
 			for _, metadata := range databaseMetadatas {
-				m[metadata.Name] = model.NewDatabaseMetadata(metadata, false /* isObjectCaseSensitive */, false /* isDetailCaseSensitive */)
+				m[metadata.Name] = model.NewDatabaseMetadata(metadata, nil, nil, storepb.Engine_MSSQL, false /* isObjectCaseSensitive */)
 			}
 
 			if databaseMetadata, ok := m[databaseName]; ok {

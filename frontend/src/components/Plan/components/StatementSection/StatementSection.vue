@@ -1,5 +1,5 @@
 <template>
-  <div v-if="viewMode === 'EDITOR'" class="flex-1 max-h-[50vh]">
+  <div v-if="viewMode === 'EDITOR'" class="flex-1">
     <EditorView :key="editorViewKey" />
   </div>
   <ReleaseView v-else-if="viewMode === 'RELEASE'" />
@@ -12,7 +12,7 @@ import { useSelectedSpec } from "../SpecDetailView/context";
 import EditorView from "./EditorView";
 import ReleaseView from "./ReleaseView";
 
-const selectedSpec = useSelectedSpec();
+const { selectedSpec } = useSelectedSpec();
 
 const viewMode = computed((): "NONE" | "EDITOR" | "RELEASE" => {
   if (selectedSpec.value) {

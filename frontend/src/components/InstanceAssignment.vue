@@ -4,9 +4,9 @@
       :title="$t('subscription.instance-assignment.manage-license')"
       class="max-w-[100vw]"
     >
-      <div class="divide-block-border space-y-5 w-[40rem] h-full">
+      <div class="flex flex-col gap-y-5 w-[40rem] h-full">
         <div>
-          <div class="flex space-x-2">
+          <div class="flex gap-x-2">
             <div class="text-gray-400">
               {{
                 $t("subscription.instance-assignment.used-and-total-license")
@@ -69,16 +69,15 @@ import { create } from "@bufbuild/protobuf";
 import { FieldMaskSchema } from "@bufbuild/protobuf/wkt";
 import { NButton } from "naive-ui";
 import { storeToRefs } from "pinia";
-import { reactive, computed, ref, watch } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { PagedInstanceTable } from "@/components/v2";
-import { Drawer, DrawerContent } from "@/components/v2";
+import { Drawer, DrawerContent, PagedInstanceTable } from "@/components/v2";
 import {
   pushNotification,
+  useActuatorV1Store,
+  useDatabaseV1Store,
   useInstanceV1Store,
   useSubscriptionV1Store,
-  useDatabaseV1Store,
-  useActuatorV1Store,
 } from "@/store";
 import type {
   Instance,
@@ -160,7 +159,7 @@ watch(
 
 const totalLicenseCount = computed((): string => {
   if (instanceLicenseCount.value === Number.MAX_VALUE) {
-    return t("subscription.unlimited");
+    return t("common.unlimited");
   }
   return `${instanceLicenseCount.value}`;
 });

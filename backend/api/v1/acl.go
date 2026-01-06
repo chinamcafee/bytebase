@@ -148,24 +148,45 @@ func (in *ACLInterceptor) doACLCheck(ctx context.Context, request any, fullMetho
 		return connect.NewError(connect.CodeInternal, errors.Errorf("failed to check permission for method %q, extra %v, err: %v", fullMethod, extra, err))
 	}
 	if !ok {
-		return connect.NewError(connect.CodePermissionDenied, errors.Errorf("permission denied for method %q, user does not have permission %q, extra %v", fullMethod, authContext.Permission, extra))
+		err := connect.NewError(connect.CodePermissionDenied, errors.Errorf("permission denied for method %q, user does not have permission %q, extra %v", fullMethod, authContext.Permission, extra))
+		if detail, detailErr := connect.NewErrorDetail(&v1pb.PermissionDeniedDetail{
+			Method:              fullMethod,
+			RequiredPermissions: []string{string(authContext.Permission)},
+			Resources:           extra,
+		}); detailErr == nil {
+			err.AddDetail(detail)
+		}
+		return err
 	}
 
 	// Check allow_missing secondary permission if applicable
 	// This handles Update methods that can create resources via allow_missing=true
-	allowMissingPerm, err := auth.GetAllowMissingRequiredPermission(fullMethod)
-	if err != nil {
-		return connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to get allow_missing permission requirement"))
-	}
+	// When allow_missing is set, we additionally require create permission
+	if hasAllowMissingEnabled(request) {
+		// Derive create permission by replacing ".update" with ".create"
+		// Example: "bb.roles.update" -> "bb.roles.create"
+		createPerm := strings.Replace(string(authContext.Permission), ".update", ".create", 1)
 
-	if allowMissingPerm != "" && hasAllowMissingEnabled(request) {
-		// User is attempting create-or-update, verify create permission
-		hasCreatePerm, err := in.iamManager.CheckPermission(ctx, iam.Permission(allowMissingPerm), user)
-		if err != nil {
-			return connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to check %s permission", allowMissingPerm))
+		// Create a new auth context for create permission check
+		createAuthContext := &common.AuthContext{
+			Permission: iam.Permission(createPerm),
+			AuthMethod: authContext.AuthMethod,
+			Resources:  authContext.Resources,
 		}
-		if !hasCreatePerm {
-			return connect.NewError(connect.CodePermissionDenied, errors.Errorf("permission denied: allow_missing=true requires both %s and %s", authContext.Permission, allowMissingPerm))
+		ok, extra, err := doIAMPermissionCheck(ctx, in.iamManager, fullMethod, user, createAuthContext)
+		if err != nil {
+			return connect.NewError(connect.CodeInternal, errors.Errorf("failed to check create permission %q, extra %v, err: %v", createPerm, extra, err))
+		}
+		if !ok {
+			err := connect.NewError(connect.CodePermissionDenied, errors.Errorf("permission denied: allow_missing=true requires both %s and %s, extra %v", authContext.Permission, createPerm, extra))
+			if detail, detailErr := connect.NewErrorDetail(&v1pb.PermissionDeniedDetail{
+				Method:              fullMethod,
+				RequiredPermissions: []string{string(authContext.Permission), createPerm},
+				Resources:           extra,
+			}); detailErr == nil {
+				err.AddDetail(detail)
+			}
+			return err
 		}
 	}
 
@@ -208,11 +229,16 @@ func doIAMPermissionCheck(ctx context.Context, iamManager *iam.Manager, fullMeth
 	if len(projectIDs) > 0 {
 		ok, err := iamManager.CheckPermission(ctx, authContext.Permission, user, projectIDs...)
 		if err != nil {
-			return false, projectIDs, err
+			return false, nil, err
 		}
-		if !ok {
-			return false, projectIDs, nil
+		if ok {
+			return true, nil, nil
 		}
+		projectResources := []string{}
+		for _, id := range projectIDs {
+			projectResources = append(projectResources, common.FormatProject(id))
+		}
+		return false, projectResources, nil
 	}
 	return true, nil, nil
 }
@@ -241,9 +267,19 @@ func populateRawResources(ctx context.Context, stores *store.Store, authContext 
 		case strings.HasPrefix(resource.Name, "instances/") && strings.Contains(resource.Name, "/databases/") && !strings.HasPrefix(resource.Name, "instances/-/databases/"):
 			match := databaseRegex.FindString(resource.Name)
 			if match != "" {
-				database, err := getDatabaseMessage(ctx, stores, match)
+				instanceID, databaseName, err := common.GetInstanceDatabaseID(match)
 				if err != nil {
-					return errors.Wrapf(err, "failed to get database %q", match)
+					return errors.Wrapf(err, "failed to parse %q", match)
+				}
+				database, err := stores.GetDatabase(ctx, &store.FindDatabaseMessage{
+					InstanceID:   &instanceID,
+					DatabaseName: &databaseName,
+				})
+				if err != nil {
+					return errors.Wrapf(err, "failed to get database")
+				}
+				if database == nil {
+					return errors.Errorf("database %q not found", match)
 				}
 				resource.ProjectID = database.ProjectID
 			}

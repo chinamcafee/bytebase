@@ -5,7 +5,7 @@
       :current-index="state.currentStep"
       :step-list="STEP_LIST"
       :allow-next="allowNext"
-      :finish-title="$t(`common.confirm-and-${policy ? 'update' : 'add'}`)"
+      :finish-title="finishTitle"
       class="flex-1 overflow-hidden flex flex-col"
       pane-class="flex-1 overflow-y-auto"
       @update:current-index="changeStepIndex"
@@ -44,7 +44,7 @@
 <script lang="ts" setup>
 import { isEqual } from "lodash-es";
 import { useDialog } from "naive-ui";
-import { reactive, computed } from "vue";
+import { computed, reactive } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { StepTab } from "@/components/v2";
@@ -54,31 +54,32 @@ import {
 } from "@/router/dashboard/workspaceRoutes";
 import { pushNotification, useSQLReviewStore } from "@/store";
 import {
-  reviewConfigNamePrefix,
   getReviewConfigId,
+  reviewConfigNamePrefix,
 } from "@/store/modules/v1/common";
 import type {
   RuleTemplateV2,
-  SQLReviewPolicyTemplateV2,
   SQLReviewPolicy,
+  SQLReviewPolicyTemplateV2,
 } from "@/types";
 import {
-  getRuleMapByEngine,
-  convertRuleMapToPolicyRuleList,
   TEMPLATE_LIST_V2 as builtInTemplateList,
+  convertRuleMapToPolicyRuleList,
+  getRuleMapByEngine,
 } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
+import { SQLReviewRule_Type } from "@/types/proto-es/v1/review_config_service_pb";
 import { hasWorkspacePermissionV2, sqlReviewPolicySlug } from "@/utils";
+import { getTemplateId } from "./components";
 import SQLReviewConfig from "./SQLReviewConfig.vue";
 import SQLReviewInfo from "./SQLReviewInfo.vue";
-import { getTemplateId } from "./components";
 
 interface LocalState {
   currentStep: number;
   name: string;
   resourceId: string;
   attachedResources: string[];
-  selectedRuleMapByEngine: Map<Engine, Map<string, RuleTemplateV2>>;
+  selectedRuleMapByEngine: Map<Engine, Map<SQLReviewRule_Type, RuleTemplateV2>>;
   selectedTemplateId: string | undefined;
   ruleUpdated: boolean;
   pendingApplyTemplate: SQLReviewPolicyTemplateV2 | undefined;
@@ -105,6 +106,13 @@ const dialog = useDialog();
 const { t } = useI18n();
 const router = useRouter();
 const store = useSQLReviewStore();
+
+const finishTitle = computed(() => {
+  if (props.policy) {
+    return t("common.confirm-and-update");
+  }
+  return t("common.confirm-and-add");
+});
 
 const BASIC_INFO_STEP = 0;
 const CONFIGURE_RULE_STEP = 1;
@@ -262,7 +270,7 @@ const upsertRule = (
   if (!state.selectedRuleMapByEngine.has(rule.engine)) {
     state.selectedRuleMapByEngine.set(
       rule.engine,
-      new Map<string, RuleTemplateV2>()
+      new Map<SQLReviewRule_Type, RuleTemplateV2>()
     );
   }
 

@@ -1,7 +1,6 @@
 package mysql
 
 import (
-	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -9,7 +8,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/mysql-parser"
+	parser "github.com/bytebase/parser/mysql"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
@@ -20,23 +19,62 @@ func init() {
 	base.RegisterParseFunc(storepb.Engine_MYSQL, parseMySQLForRegistry)
 	base.RegisterParseFunc(storepb.Engine_MARIADB, parseMySQLForRegistry)
 	base.RegisterParseFunc(storepb.Engine_OCEANBASE, parseMySQLForRegistry)
+	base.RegisterParseStatementsFunc(storepb.Engine_MYSQL, parseMySQLStatements)
+	base.RegisterParseStatementsFunc(storepb.Engine_MARIADB, parseMySQLStatements)
+	base.RegisterParseStatementsFunc(storepb.Engine_OCEANBASE, parseMySQLStatements)
+	base.RegisterGetStatementTypes(storepb.Engine_MYSQL, GetStatementTypes)
+	base.RegisterGetStatementTypes(storepb.Engine_MARIADB, GetStatementTypes)
+	base.RegisterGetStatementTypes(storepb.Engine_OCEANBASE, GetStatementTypes)
 }
 
 // parseMySQLForRegistry is the ParseFunc for MySQL, MariaDB, and OceanBase.
-// Returns []*ParseResult on success.
-func parseMySQLForRegistry(statement string) (any, error) {
-	return ParseMySQL(statement)
+// Returns []base.AST with *ANTLRAST instances.
+func parseMySQLForRegistry(statement string) ([]base.AST, error) {
+	parseResults, err := ParseMySQL(statement)
+	if err != nil {
+		return nil, err
+	}
+	asts := make([]base.AST, len(parseResults))
+	for i, r := range parseResults {
+		asts[i] = r
+	}
+	return asts, nil
 }
 
-// ParseResult is the result of parsing a MySQL statement.
-type ParseResult struct {
-	Tree     antlr.Tree
-	Tokens   *antlr.CommonTokenStream
-	BaseLine int
+// parseMySQLStatements is the ParseStatementsFunc for MySQL, MariaDB, and OceanBase.
+// Returns []ParsedStatement with both text and AST populated.
+func parseMySQLStatements(statement string) ([]base.ParsedStatement, error) {
+	// First split to get Statement with text and positions
+	stmts, err := SplitSQL(statement)
+	if err != nil {
+		return nil, err
+	}
+
+	// Then parse to get ASTs
+	parseResults, err := ParseMySQL(statement)
+	if err != nil {
+		return nil, err
+	}
+
+	// Combine: Statement provides text/positions, ANTLRAST provides AST
+	var result []base.ParsedStatement
+	astIndex := 0
+	for _, stmt := range stmts {
+		ps := base.ParsedStatement{
+			Statement: stmt,
+		}
+		if !stmt.Empty && astIndex < len(parseResults) {
+			ps.AST = parseResults[astIndex]
+			astIndex++
+		}
+		result = append(result, ps)
+	}
+
+	return result, nil
 }
 
 // ParseMySQL parses the given SQL statement and returns the AST.
-func ParseMySQL(statement string) ([]*ParseResult, error) {
+func ParseMySQL(statement string) ([]*base.ANTLRAST, error) {
 	statement, err := DealWithDelimiter(statement)
 	if err != nil {
 		return nil, err
@@ -56,7 +94,7 @@ func DealWithDelimiter(statement string) (string, error) {
 		return "", err
 	}
 	if has {
-		var result []string
+		var result strings.Builder
 		delimiter := `;`
 		for _, sql := range list {
 			if IsDelimiter(sql.Text) {
@@ -64,97 +102,28 @@ func DealWithDelimiter(statement string) (string, error) {
 				if err != nil {
 					return "", err
 				}
-				result = append(result, "-- "+sql.Text)
+				// Comment out only the DELIMITER line, preserving all other lines for correct line numbers
+				lines := strings.Split(sql.Text, "\n")
+				for i, line := range lines {
+					if IsDelimiter(line) {
+						lines[i] = "-- " + strings.TrimLeft(line, " \t")
+						break
+					}
+				}
+				result.WriteString(strings.Join(lines, "\n"))
 				continue
 			}
-			// TODO(rebelice): after deal with delimiter, we may cannot get the right line number, fix it.
 			if delimiter != ";" && !sql.Empty {
-				result = append(result, fmt.Sprintf("%s;", strings.TrimSuffix(sql.Text, delimiter)))
+				result.WriteString(strings.TrimSuffix(sql.Text, delimiter))
+				result.WriteString(";")
 			} else {
-				result = append(result, sql.Text)
+				result.WriteString(sql.Text)
 			}
 		}
 
-		statement = strings.Join(result, "\n")
+		statement = result.String()
 	}
 	return statement, nil
-}
-
-// RestoreDelimiter tries to restore the delimiter statement which is commented by DealWithDelimiter,
-//
-// Assumes the delimiter comment takes up a single line and matches the syntax `-- DELIMITER ?`,
-// also, one delimiter comment MUST only affect one statement, in the other words, the following statement cause UB:
-// -- DELIMITER ;
-// SELECT 1;
-// SELECT 2;
-// -- DELIMITER ;.
-// If the current delimiter is `;`, and meet `-- DELIMITER ;`, we would skip this delimiter comment.
-func RestoreDelimiter(statement string) (string, error) {
-	delimiterRegexp := regexp.MustCompile(`(?i)^-- DELIMITER\s+(?P<DELIMITER>[^\s\\]+)\s*`)
-	lines := strings.Split(statement, "\n")
-	var result strings.Builder
-	var buf strings.Builder
-	previousDelimiter := ";"
-
-	flushBuf := func(delimiter string) error {
-		bufStmt := buf.String()
-		buf.Reset()
-		// Lookup reversely to modify the last delimiter.
-		for i := len(bufStmt) - 1; i >= 0; i-- {
-			if bufStmt[i] == ';' {
-				bufStmt = bufStmt[:i] + delimiter + bufStmt[i+1:]
-				break
-			}
-		}
-		if _, err := result.WriteString(bufStmt); err != nil {
-			return errors.Wrapf(err, "failed to write string %q into builder", bufStmt)
-		}
-		return nil
-	}
-
-	for i, line := range lines {
-		matchList := delimiterRegexp.FindStringSubmatch(line)
-		if matchList == nil {
-			target := &result
-			if previousDelimiter != ";" {
-				target = &buf
-			}
-			// Like strings.Join.
-			s := line
-			if i != len(lines)-1 {
-				s = fmt.Sprintf("%s\n", line)
-			}
-			if _, err := target.WriteString(s); err != nil {
-				return "", errors.Wrapf(err, "failed to write string %q into builder", line)
-			}
-			continue
-		}
-		if len(matchList) != 2 {
-			return "", errors.Errorf("invalid delimiter comment %q", line)
-		}
-
-		// If meet delimiter again, we should convert the delimiter in buf to previous delimiter.
-		if previousDelimiter != ";" {
-			if err := flushBuf(previousDelimiter); err != nil {
-				return "", err
-			}
-		}
-
-		if matchList[1] != previousDelimiter {
-			if _, err := result.WriteString(fmt.Sprintf("DELIMITER %s\n", matchList[1])); err != nil {
-				return "", errors.Wrapf(err, "failed to write string %q into builder", line)
-			}
-		}
-		previousDelimiter = matchList[1]
-	}
-
-	if previousDelimiter != ";" {
-		if err := flushBuf(previousDelimiter); err != nil {
-			return "", err
-		}
-	}
-
-	return result.String(), nil
 }
 
 func parseSingleStatement(baseLine int, statement string) (antlr.Tree, *antlr.CommonTokenStream, error) {
@@ -164,14 +133,15 @@ func parseSingleStatement(baseLine int, statement string) (antlr.Tree, *antlr.Co
 
 	p := parser.NewMySQLParser(stream)
 
+	startPosition := &storepb.Position{Line: int32(baseLine) + 1}
 	lexerErrorListener := &base.ParseErrorListener{
-		BaseLine: baseLine,
+		StartPosition: startPosition,
 	}
 	lexer.RemoveErrorListeners()
 	lexer.AddErrorListener(lexerErrorListener)
 
 	parserErrorListener := &base.ParseErrorListener{
-		BaseLine: baseLine,
+		StartPosition: startPosition,
 	}
 	p.RemoveErrorListeners()
 	p.AddErrorListener(parserErrorListener)
@@ -224,8 +194,8 @@ func mysqlAddSemicolonIfNeeded(sql string) string {
 	return sql
 }
 
-func parseInputStream(input *antlr.InputStream, statement string) ([]*ParseResult, error) {
-	var result []*ParseResult
+func parseInputStream(input *antlr.InputStream, statement string) ([]*base.ANTLRAST, error) {
+	var result []*base.ANTLRAST
 	lexer := parser.NewMySQLLexer(input)
 	stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
 
@@ -249,10 +219,10 @@ func parseInputStream(input *antlr.InputStream, statement string) ([]*ParseResul
 			continue
 		}
 
-		result = append(result, &ParseResult{
-			Tree:     tree,
-			Tokens:   tokens,
-			BaseLine: s.BaseLine,
+		result = append(result, &base.ANTLRAST{
+			StartPosition: &storepb.Position{Line: int32(s.BaseLine()) + 1},
+			Tree:          tree,
+			Tokens:        tokens,
 		})
 		// s.End.Line is 1-based, but baseLine should be 0-based
 		baseLine = int(s.End.Line) - 1
@@ -289,7 +259,7 @@ func ExtractDelimiter(stmt string) (string, error) {
 	return "", errors.Errorf("cannot extract delimiter from %q", stmt)
 }
 
-func hasDelimiter(statement string) (bool, []base.SingleSQL, error) {
+func hasDelimiter(statement string) (bool, []base.Statement, error) {
 	// use splitTiDBMultiSQL to check if the statement has delimiter
 	t := tokenizer.NewTokenizer(statement)
 	list, err := t.SplitTiDBMultiSQL()

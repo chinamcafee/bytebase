@@ -139,9 +139,17 @@ func getMetadataForTest(_ context.Context, _, databaseName string) (string, *mod
 							`,
 						},
 					},
+					Sequences: []*storepb.SequenceMetadata{
+						{
+							Name: "SEQ1",
+						},
+						{
+							Name: "USER_ID_SEQ",
+						},
+					},
 				},
 			},
-		}, true /* isObjectCaseSensitive */, true /* isDetailCaseSensitive */), nil
+		}, nil, nil, storepb.Engine_ORACLE, true /* isObjectCaseSensitive */), nil
 	case "SCHEMA2":
 		return "SCHEMA2", model.NewDatabaseMetadata(&storepb.DatabaseSchemaMetadata{
 			Name: databaseName,
@@ -183,7 +191,7 @@ func getMetadataForTest(_ context.Context, _, databaseName string) (string, *mod
 					},
 				},
 			},
-		}, true /* isObjectCaseSensitive */, true /* isDetailCaseSensitive */), nil
+		}, nil, nil, storepb.Engine_ORACLE, true /* isObjectCaseSensitive */), nil
 	case "SCHEMA3":
 		return "SCHEMA3", model.NewDatabaseMetadata(&storepb.DatabaseSchemaMetadata{
 			Name: databaseName,
@@ -225,7 +233,7 @@ func getMetadataForTest(_ context.Context, _, databaseName string) (string, *mod
 					},
 				},
 			},
-		}, true /* isObjectCaseSensitive */, true /* isDetailCaseSensitive */), nil
+		}, nil, nil, storepb.Engine_ORACLE, true /* isObjectCaseSensitive */), nil
 	default:
 		return "", nil, nil
 	}

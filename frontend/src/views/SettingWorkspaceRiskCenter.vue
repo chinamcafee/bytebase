@@ -1,78 +1,79 @@
 <template>
-  <FeatureAttention
-    :feature="PlanFeature.FEATURE_RISK_ASSESSMENT"
-    class="mb-4"
-  />
+  <div class="w-full flex flex-col gap-y-6 text-sm">
+    <FeatureAttention
+      :feature="PlanFeature.FEATURE_RISK_ASSESSMENT"
+      class="mb-2"
+    />
 
-  <div class="w-full space-y-4 text-sm">
     <div class="textinfolabel">
       {{ $t("custom-approval.risk.description") }}
-      <LearnMoreLink
-        url="https://docs.bytebase.com/administration/risk-center?source=console"
-      />
     </div>
-    <RiskCenter v-if="state.ready" />
-    <div v-else class="w-full py-[4rem] flex justify-center items-center">
-      <BBSpin />
+
+    <div class="space-y-6">
+      <div>
+        <h3 class="text-lg font-medium text-main mb-2">
+          {{ $t("custom-approval.risk.how-it-works") }}
+        </h3>
+        <p class="text-control-light">
+          {{ $t("custom-approval.risk.how-it-works-description") }}
+        </p>
+      </div>
+
+      <div>
+        <h3 class="text-lg font-medium text-main mb-3">
+          {{ $t("custom-approval.risk.risk-levels") }}
+        </h3>
+        <div class="space-y-3">
+          <div class="flex items-start gap-x-3">
+            <NTag
+              type="error"
+              size="small"
+            >
+              {{ $t('custom-approval.risk-rule.risk.risk-level.high') }}
+            </NTag>
+            <p class="text-control-light">
+              {{ $t("custom-approval.risk.risk-level-high") }}
+            </p>
+          </div>
+          <div class="flex items-start gap-x-3">
+            <NTag
+              type="warning"
+              size="small"
+            >
+              {{ $t('custom-approval.risk-rule.risk.risk-level.moderate') }}
+            </NTag>
+            <p class="text-control-light">
+              {{ $t("custom-approval.risk.risk-level-moderate") }}
+            </p>
+          </div>
+          <div class="flex items-start gap-x-3">
+            <NTag
+              type="info"
+              size="small"
+            >
+              {{ $t('custom-approval.risk-rule.risk.risk-level.low') }}
+            </NTag>
+            <p class="text-control-light">
+              {{ $t("custom-approval.risk.risk-level-low") }}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h3 class="text-lg font-medium text-main mb-2">
+          {{ $t("custom-approval.risk.integration") }}
+        </h3>
+        <p class="text-control-light">
+          {{ $t("custom-approval.risk.integration-description") }}
+        </p>
+      </div>
     </div>
   </div>
-
-  <RiskDialog />
-
-  <FeatureModal
-    :feature="PlanFeature.FEATURE_RISK_ASSESSMENT"
-    :open="state.showFeatureModal"
-    @cancel="state.showFeatureModal = false"
-  />
 </template>
 
 <script lang="ts" setup>
-import { computed, onMounted, reactive, ref, toRef } from "vue";
-import { BBSpin } from "@/bbkit";
-import {
-  RiskCenter,
-  RiskDialog,
-  provideRiskCenterContext,
-} from "@/components/CustomApproval/Settings/components/RiskCenter";
-import { provideRiskFilter } from "@/components/CustomApproval/Settings/components/common";
-import { FeatureAttention, FeatureModal } from "@/components/FeatureGuard";
-import LearnMoreLink from "@/components/LearnMoreLink.vue";
-import { featureToRef, useRiskStore } from "@/store";
+import { NTag } from "naive-ui";
+import { FeatureAttention } from "@/components/FeatureGuard";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
-import { hasWorkspacePermissionV2 } from "@/utils";
-
-interface LocalState {
-  ready: boolean;
-  showFeatureModal: boolean;
-}
-
-const state = reactive<LocalState>({
-  ready: false,
-  showFeatureModal: false,
-});
-const hasRiskAssessmentFeature = featureToRef(
-  PlanFeature.FEATURE_RISK_ASSESSMENT
-);
-
-const allowAdmin = computed(() => {
-  return hasWorkspacePermissionV2("bb.risks.update");
-});
-
-provideRiskFilter();
-provideRiskCenterContext({
-  hasFeature: hasRiskAssessmentFeature,
-  showFeatureModal: toRef(state, "showFeatureModal"),
-  allowAdmin,
-  ready: toRef(state, "ready"),
-  dialog: ref(),
-});
-
-onMounted(async () => {
-  try {
-    await useRiskStore().fetchRiskList();
-    state.ready = true;
-  } catch {
-    // nothing
-  }
-});
 </script>

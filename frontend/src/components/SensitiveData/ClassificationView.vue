@@ -1,5 +1,5 @@
 <template>
-  <div class="w-full space-y-4">
+  <div class="w-full flex flex-col gap-y-4">
     <div class="text-sm text-control-light">
       {{ $t("database.classification.description") }}
       <LearnMoreLink
@@ -7,31 +7,6 @@
         class="ml-1"
       />
     </div>
-    <div>
-      <div class="flex items-center space-x-2">
-        <NSwitch
-          :value="!state.classification.classificationFromConfig"
-          :disabled="
-            !allowEdit || !hasClassificationFeature || !hasClassificationConfig
-          "
-          @update:value="onClassificationConfigChange"
-        />
-        <div class="font-medium leading-7 text-main">
-          {{ $t("database.classification.sync-from-comment") }}
-        </div>
-      </div>
-      <i18n-t
-        class="textinfolabel mt-1"
-        tag="div"
-        keypath="database.classification.sync-from-comment-tip"
-      >
-        <template #format>
-          <span class="font-semibold">{classification id}-{comment}</span>
-        </template>
-      </i18n-t>
-    </div>
-
-    <NDivider class="my-2" />
 
     <div class="flex items-center justify-between">
       <div class="textinfolabel">
@@ -44,26 +19,42 @@
         </span>
       </div>
 
-      <div class="flex items-center justify-end gap-2">
-        <NButton
-          type="primary"
-          :disabled="!allowEdit || !hasClassificationFeature"
-          @click="onUpload"
-        >
-          <template #icon>
-            <UploadIcon class="h-4 w-4" />
-          </template>
-          {{ $t("settings.sensitive-data.classification.upload") }}
-        </NButton>
-        <input
-          ref="uploader"
-          type="file"
-          accept=".json"
-          class="sr-only hidden"
-          :disabled="!allowEdit || !hasClassificationFeature"
-          @input="onFileChange"
-        />
-      </div>
+      <PermissionGuardWrapper
+        v-slot="slotProps"
+        :permissions="['bb.settings.set']"
+      >
+        <div class="flex items-center justify-end gap-x-2">
+          <BBButtonConfirm
+            :tertiary="true"
+            :text="false"
+            :type="'DELETE'"
+            :ok-text="$t('common.delete')"
+            :require-confirm="true"
+            :hide-icon="true"
+            :button-text="$t('common.clear')"
+            :disabled="slotProps.disabled || !hasClassificationFeature"
+            @confirm="clearSetting"
+          />
+          <NButton
+            type="primary"
+            :disabled="slotProps.disabled || !hasClassificationFeature"
+            @click="onUpload"
+          >
+            <template #icon>
+              <UploadIcon class="h-4 w-4" />
+            </template>
+            {{ $t("settings.sensitive-data.classification.upload") }}
+          </NButton>
+          <input
+            ref="uploader"
+            type="file"
+            accept=".json"
+            class="sr-only hidden"
+            :disabled="slotProps.disabled || !hasClassificationFeature"
+            @input="onFileChange"
+          />
+        </div>
+      </PermissionGuardWrapper>
     </div>
 
     <div
@@ -71,10 +62,11 @@
       class="flex justify-center border-2 border-gray-300 border-dashed rounded-md relative h-72"
     >
       <SingleFileSelector
-        class="space-y-1 text-center flex flex-col justify-center items-center absolute top-0 bottom-0 left-0 right-0"
+        class="flex flex-col gap-y-1 text-center justify-center items-center absolute top-0 bottom-0 left-0 right-0"
         :support-file-extensions="['.json']"
         :max-file-size-in-mi-b="maxFileSizeInMiB"
         :disabled="!allowEdit || !hasClassificationFeature"
+        :show-no-data-placeholder="true"
         @on-select="onFileSelect"
       >
       </SingleFileSelector>
@@ -93,31 +85,33 @@
 
 <script lang="ts" setup>
 import { create } from "@bufbuild/protobuf";
-import { head, isEqual, isEmpty } from "lodash-es";
+import { head, isEmpty, isEqual } from "lodash-es";
 import { UploadIcon } from "lucide-vue-next";
-import { NSwitch, useDialog, NDivider, NButton } from "naive-ui";
+import { NButton, useDialog } from "naive-ui";
 import { v4 as uuidv4 } from "uuid";
 import { computed, reactive, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
-import { featureToRef, useSettingV1Store, pushNotification } from "@/store";
+import { BBButtonConfirm } from "@/bbkit";
+import PermissionGuardWrapper from "@/components/Permission/PermissionGuardWrapper.vue";
+import { featureToRef, pushNotification, useSettingV1Store } from "@/store";
 import type {
   DataClassificationSetting_DataClassificationConfig_Level as ClassificationLevel,
   DataClassificationSetting_DataClassificationConfig_DataClassification as DataClassification,
   DataClassificationSetting_DataClassificationConfig,
 } from "@/types/proto-es/v1/setting_service_pb";
 import {
-  DataClassificationSetting_DataClassificationConfigSchema,
-  DataClassificationSetting_DataClassificationConfig_LevelSchema,
   DataClassificationSetting_DataClassificationConfig_DataClassificationSchema,
+  DataClassificationSetting_DataClassificationConfig_LevelSchema,
+  DataClassificationSetting_DataClassificationConfigSchema,
   DataClassificationSettingSchema,
   Setting_SettingName,
-  ValueSchema as SettingValueSchema,
+  SettingValueSchema as SettingSettingValueSchema,
 } from "@/types/proto-es/v1/setting_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import { hasWorkspacePermissionV2 } from "@/utils";
 import LearnMoreLink from "../LearnMoreLink.vue";
-import ClassificationTree from "../SchemaTemplate/ClassificationTree.vue";
 import SingleFileSelector from "../SingleFileSelector.vue";
+import ClassificationTree from "./components/ClassificationTree.vue";
 import DataExampleModal from "./components/DataExampleModal.vue";
 
 const uploader = ref<HTMLInputElement | null>(null);
@@ -145,13 +139,8 @@ const formerConfig = computed(() => {
     title: classification?.title || "",
     levels: classification?.levels || [],
     classification: classification?.classification || {},
-    classificationFromConfig: classification?.classificationFromConfig || false,
   });
 });
-
-const hasClassificationConfig = computed(
-  () => settingStore.classification.length > 0
-);
 
 const state = reactive<LocalState>({
   showExampleModal: false,
@@ -162,7 +151,6 @@ const state = reactive<LocalState>({
       title: "",
       levels: [],
       classification: {},
-      classificationFromConfig: false,
     }
   ),
 });
@@ -175,7 +163,6 @@ watchEffect(() => {
     title: config.title,
     levels: config.levels,
     classification: config.classification,
-    classificationFromConfig: config.classificationFromConfig,
   });
 });
 
@@ -191,22 +178,6 @@ const allowSave = computed(() => {
   );
 });
 
-const onClassificationConfigChange = (fromComment: boolean) => {
-  $dialog.warning({
-    title: t("common.warning"),
-    content: fromComment
-      ? t("database.classification.sync-from-comment-enable-warning")
-      : t("database.classification.sync-from-comment-disable-warning"),
-    style: "z-index: 100000",
-    negativeText: t("common.cancel"),
-    positiveText: t("common.confirm"),
-    onPositiveClick: async () => {
-      state.classification.classificationFromConfig = !fromComment;
-      await upsertSetting();
-    },
-  });
-};
-
 const saveChanges = async () => {
   if (Object.keys(formerConfig.value.classification).length !== 0) {
     $dialog.warning({
@@ -218,22 +189,28 @@ const saveChanges = async () => {
         "settings.sensitive-data.classification.override-confirm"
       ),
       onPositiveClick: async () => {
-        await upsertSetting();
+        await upsertSetting([state.classification]);
       },
     });
     return;
   }
-  await upsertSetting();
+  await upsertSetting([state.classification]);
 };
 
-const upsertSetting = async () => {
+const clearSetting = async () => {
+  await upsertSetting([]);
+};
+
+const upsertSetting = async (
+  configs: DataClassificationSetting_DataClassificationConfig[]
+) => {
   await settingStore.upsertSetting({
     name: Setting_SettingName.DATA_CLASSIFICATION,
-    value: create(SettingValueSchema, {
+    value: create(SettingSettingValueSchema, {
       value: {
-        case: "dataClassificationSettingValue",
+        case: "dataClassification",
         value: create(DataClassificationSettingSchema, {
-          configs: [state.classification],
+          configs,
         }),
       },
     }),
@@ -258,11 +235,14 @@ const onUpload = () => {
 };
 
 const onFileChange = () => {
-  const files: File[] = (uploader.value as any).files;
-  if (files.length !== 1) {
+  const files = uploader.value?.files;
+  if (!files || files.length !== 1) {
     return;
   }
-  const file = files[0];
+  const file = files.item(0);
+  if (!file) {
+    return;
+  }
   if (file.size > maxFileSizeInMiB * 1024 * 1024) {
     pushNotification({
       module: "bytebase",

@@ -1,7 +1,7 @@
 <template>
   <FormLayout :title="title">
     <template #body>
-      <div class="space-y-8">
+      <div class="flex flex-col gap-y-8">
         <div class="w-full">
           <div class="flex items-center gap-x-1 mb-2">
             <span class="text-main">
@@ -10,34 +10,12 @@
             <RequiredStar />
           </div>
           <DatabaseResourceForm
-            v-model:database-resources="state.databaseResources"
+            ref="databaseResourceFormRef"
+            :database-resources="databaseResources"
             :project-name="projectName"
             :required-feature="PlanFeature.FEATURE_DATA_MASKING"
             :include-cloumn="true"
           />
-        </div>
-
-        <div class="w-full">
-          <div class="flex items-center gap-x-1 mb-2">
-            <span class="text-main">
-              {{ $t("settings.sensitive-data.action.self") }}
-            </span>
-            <RequiredStar />
-          </div>
-          <div class="flex space-x-4">
-            <NCheckbox
-              v-for="action in ACTIONS"
-              :key="action"
-              :checked="state.supportActions.has(action)"
-              @update:checked="toggleAction(action, $event)"
-            >
-              {{
-                $t(
-                  `settings.sensitive-data.action.${MaskingExceptionPolicy_MaskingException_Action[action].toLowerCase()}`
-                )
-              }}
-            </NCheckbox>
-          </div>
         </div>
 
         <div class="w-full">
@@ -71,7 +49,6 @@
         <MembersBindingSelect
           v-model:value="state.memberList"
           :required="true"
-          :project-name="projectName"
           :include-all-users="false"
           :include-service-account="false"
         />
@@ -79,7 +56,7 @@
     </template>
     <template #footer>
       <div class="flex justify-end items-center">
-        <div class="flex items-center gap-x-2">
+        <div class="flex items-center gap-x-3">
           <NButton @click.prevent="onDismiss">
             {{ $t("common.cancel") }}
           </NButton>
@@ -98,33 +75,30 @@
 
 <script lang="tsx" setup>
 import { create } from "@bufbuild/protobuf";
-import { isUndefined } from "lodash-es";
-import { NButton, NCheckbox, NDatePicker, NInput } from "naive-ui";
-import { computed, reactive } from "vue";
+import { NButton, NDatePicker, NInput } from "naive-ui";
+import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import DatabaseResourceForm from "@/components/GrantRequestPanel/DatabaseResourceForm/index.vue";
 import MembersBindingSelect from "@/components/Member/MembersBindingSelect.vue";
 import RequiredStar from "@/components/RequiredStar.vue";
 import FormLayout from "@/components/v2/Form/FormLayout.vue";
-import { usePolicyV1Store, pushNotification } from "@/store";
-import type { DatabaseResource } from "@/types";
+import { pushNotification, usePolicyV1Store } from "@/store";
 import { ExprSchema } from "@/types/proto-es/google/type/expr_pb";
 import type {
+  MaskingExemptionPolicy_Exemption,
   Policy,
-  MaskingExceptionPolicy_MaskingException,
 } from "@/types/proto-es/v1/org_policy_service_pb";
 import {
-  PolicyType,
+  MaskingExemptionPolicy_ExemptionSchema,
+  MaskingExemptionPolicySchema,
   PolicyResourceType,
-  MaskingExceptionPolicy_MaskingException_Action,
-  MaskingExceptionPolicySchema,
-  MaskingExceptionPolicy_MaskingExceptionSchema,
+  PolicyType,
 } from "@/types/proto-es/v1/org_policy_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import type { SensitiveColumn } from "./types";
 import {
-  getExpressionsForDatabaseResource,
   convertSensitiveColumnToDatabaseResource,
+  getExpressionsForDatabaseResource,
 } from "./utils";
 
 const props = defineProps<{
@@ -139,24 +113,19 @@ interface LocalState {
   memberList: string[];
   expirationTimestamp?: number;
   processing: boolean;
-  supportActions: Set<MaskingExceptionPolicy_MaskingException_Action>;
-  databaseResources?: DatabaseResource[];
   description: string;
 }
-
-const ACTIONS = [
-  MaskingExceptionPolicy_MaskingException_Action.EXPORT,
-  MaskingExceptionPolicy_MaskingException_Action.QUERY,
-];
 
 const state = reactive<LocalState>({
   memberList: [],
   processing: false,
-  supportActions: new Set(ACTIONS),
-  databaseResources: props.columnList.map(
-    convertSensitiveColumnToDatabaseResource
-  ),
   description: "",
+});
+const databaseResourceFormRef =
+  ref<InstanceType<typeof DatabaseResourceForm>>();
+
+const databaseResources = computed(() => {
+  return props.columnList.map(convertSensitiveColumnToDatabaseResource);
 });
 
 const policyStore = usePolicyV1Store();
@@ -164,9 +133,7 @@ const { t } = useI18n();
 
 const resetState = () => {
   state.expirationTimestamp = undefined;
-  state.supportActions = new Set(ACTIONS);
   state.memberList = [];
-  state.databaseResources = undefined;
   state.processing = false;
 };
 
@@ -179,16 +146,7 @@ const submitDisabled = computed(() => {
   if (state.memberList.length === 0) {
     return true;
   }
-  if (state.supportActions.size === 0) {
-    return true;
-  }
-  if (
-    !isUndefined(state.databaseResources) &&
-    state.databaseResources?.length === 0
-  ) {
-    return true;
-  }
-  return false;
+  return !databaseResourceFormRef.value?.isValid;
 });
 
 const onSubmit = async () => {
@@ -214,7 +172,7 @@ const onSubmit = async () => {
 const getPendingUpdatePolicy = async (
   parentPath: string
 ): Promise<Partial<Policy>> => {
-  const maskingExceptions: MaskingExceptionPolicy_MaskingException[] = [];
+  const exemptions: MaskingExemptionPolicy_Exemption[] = [];
 
   const expressions = [];
   if (state.expirationTimestamp) {
@@ -225,61 +183,48 @@ const getPendingUpdatePolicy = async (
     );
   }
 
-  for (const action of state.supportActions.values()) {
-    for (const member of state.memberList) {
-      const resourceExpressions = state.databaseResources?.map(
-        getExpressionsForDatabaseResource
-      ) ?? [[""]];
-      for (const expressionList of resourceExpressions) {
-        const resourceExpression = [...expressionList, ...expressions].filter(
-          (e) => e
-        );
-        maskingExceptions.push(
-          create(MaskingExceptionPolicy_MaskingExceptionSchema, {
-            member,
-            action,
-            condition: create(ExprSchema, {
-              description: state.description,
-              expression:
-                resourceExpression.length > 0
-                  ? resourceExpression.join(" && ")
-                  : "",
-            }),
-          })
-        );
-      }
-    }
+  const databaseResources =
+    await databaseResourceFormRef.value?.getDatabaseResources();
+
+  const resourceExpressions = databaseResources?.map(
+    getExpressionsForDatabaseResource
+  ) ?? [[""]];
+  for (const expressionList of resourceExpressions) {
+    const resourceExpression = [...expressionList, ...expressions].filter(
+      (e) => e
+    );
+    exemptions.push(
+      create(MaskingExemptionPolicy_ExemptionSchema, {
+        members: state.memberList,
+        condition: create(ExprSchema, {
+          description: state.description,
+          expression:
+            resourceExpression.length > 0
+              ? resourceExpression.join(" && ")
+              : "",
+        }),
+      })
+    );
   }
 
   const policy = await policyStore.getOrFetchPolicyByParentAndType({
     parentPath,
-    policyType: PolicyType.MASKING_EXCEPTION,
+    policyType: PolicyType.MASKING_EXEMPTION,
   });
   const existed =
-    policy?.policy?.case === "maskingExceptionPolicy"
-      ? policy.policy.value.maskingExceptions
+    policy?.policy?.case === "maskingExemptionPolicy"
+      ? policy.policy.value.exemptions
       : [];
   return {
     name: policy?.name,
-    type: PolicyType.MASKING_EXCEPTION,
+    type: PolicyType.MASKING_EXEMPTION,
     resourceType: PolicyResourceType.PROJECT,
     policy: {
-      case: "maskingExceptionPolicy",
-      value: create(MaskingExceptionPolicySchema, {
-        maskingExceptions: [...existed, ...maskingExceptions],
+      case: "maskingExemptionPolicy",
+      value: create(MaskingExemptionPolicySchema, {
+        exemptions: [...existed, ...exemptions],
       }),
     },
   };
-};
-
-const toggleAction = (
-  action: MaskingExceptionPolicy_MaskingException_Action,
-  check: boolean
-) => {
-  if (check) {
-    state.supportActions.add(action);
-  } else {
-    state.supportActions.delete(action);
-  }
 };
 </script>

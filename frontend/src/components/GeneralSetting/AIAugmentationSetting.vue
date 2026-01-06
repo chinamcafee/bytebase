@@ -1,7 +1,7 @@
 <template>
   <div id="ai" ref="containerRef" class="py-6 lg:flex">
     <div class="text-left lg:w-1/4">
-      <div class="flex items-center space-x-2">
+      <div class="flex items-center gap-x-2">
         <h1 class="text-2xl font-bold">
           {{ title }}
         </h1>
@@ -19,7 +19,7 @@
           "
         />
       </div>
-      <div v-else class="mt-4 lg:mt-0 space-y-4">
+      <div v-else class="mt-4 lg:mt-0 flex flex-col gap-y-4">
         <div>
           <div class="flex items-center gap-x-2">
             <Switch
@@ -44,7 +44,7 @@
             />
           </div>
         </div>
-        <template v-if="state.enabled">
+        <NCollapseTransition :show="state.enabled" class="flex flex-col gap-y-4">
           <div>
             <label class="flex items-center gap-x-2 mb-2">
               <span class="font-medium">{{
@@ -153,7 +153,7 @@
               </span>
             </NTooltip>
           </div>
-        </template>
+        </NCollapseTransition>
       </div>
     </div>
   </div>
@@ -161,20 +161,19 @@
 
 <script lang="ts" setup>
 import { create } from "@bufbuild/protobuf";
-import { NSelect, NTooltip } from "naive-ui";
+import { NCollapseTransition, NSelect, NTooltip } from "naive-ui";
 import scrollIntoView from "scroll-into-view-if-needed";
 import { computed, onMounted, reactive, ref, watch, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
-import { BBTextField } from "@/bbkit";
-import { BBAttention } from "@/bbkit";
+import { BBAttention, BBTextField } from "@/bbkit";
 import LearnMoreLink from "@/components/LearnMoreLink.vue";
 import { Switch } from "@/components/v2";
-import { useSettingV1Store, useActuatorV1Store } from "@/store/modules";
+import { useActuatorV1Store, useSettingV1Store } from "@/store/modules";
 import {
-  AISettingSchema,
   AISetting_Provider,
+  AISettingSchema,
   Setting_SettingName,
-  ValueSchema as SettingValueSchema,
+  SettingValueSchema as SettingSettingValueSchema,
 } from "@/types/proto-es/v1/setting_service_pb";
 
 interface LocalState {
@@ -205,7 +204,7 @@ const state = reactive<LocalState>({
 
 const aiSetting = computed(() => {
   const setting = settingV1Store.getSettingByName(Setting_SettingName.AI);
-  if (setting?.value?.value?.case === "aiSetting") {
+  if (setting?.value?.value?.case === "ai") {
     return setting.value.value.value;
   }
   return undefined;
@@ -331,9 +330,9 @@ const toggleAIEnabled = (on: boolean) => {
 const updateAISetting = async () => {
   await settingV1Store.upsertSetting({
     name: Setting_SettingName.AI,
-    value: create(SettingValueSchema, {
+    value: create(SettingSettingValueSchema, {
       value: {
-        case: "aiSetting",
+        case: "ai",
         value: create(AISettingSchema, {
           enabled: state.enabled,
           apiKey: state.apiKey,

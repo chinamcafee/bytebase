@@ -12,7 +12,7 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	tsql "github.com/bytebase/tsql-parser"
+	"github.com/bytebase/parser/tsql"
 	mssqldb "github.com/microsoft/go-mssqldb"
 
 	"github.com/bytebase/bytebase/backend/common/log"
@@ -57,6 +57,8 @@ func makeValueByTypeName(typeName string, _ *sql.ColumnType) any {
 	case "BINARY":
 		return new([]byte)
 	case "SQL_VARIANT":
+		return new([]byte)
+	case "GEOMETRY", "GEOGRAPHY":
 		return new([]byte)
 	default:
 		// For unknown types, default to sql.NullString which can handle most values
@@ -171,10 +173,16 @@ func getStatementWithResultLimit(statement string, limit int) string {
 }
 
 func getStatementWithResultLimitInline(singleStatement string, limitCount int) (string, error) {
-	result, err := tsqlparser.ParseTSQL(singleStatement)
+	results, err := tsqlparser.ParseTSQL(singleStatement)
 	if err != nil {
 		return "", err
 	}
+
+	if len(results) != 1 {
+		return "", errors.Errorf("expected exactly 1 statement, got %d", len(results))
+	}
+
+	result := results[0]
 
 	listener := &tsqlRewriter{
 		limitCount: limitCount,

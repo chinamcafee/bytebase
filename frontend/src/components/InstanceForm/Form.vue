@@ -1,23 +1,29 @@
 <template>
-  <div class="space-y-6 pb-2">
-    <div class="divide-y divide-block-border max-w-[850px]">
+  <div class="flex flex-col gap-y-6 pb-2">
+    <div class="max-w-[850px]">
       <InstanceEngineRadioGrid
         v-if="isCreating"
         :engine="basicInfo.engine"
         :engine-list="supportedEngineV1List()"
-        class="w-full mb-6 grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2"
+        class="w-full grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2"
         @update:engine="(newEngine: Engine) => changeInstanceEngine(newEngine)"
       >
-        <template #suffix="{ engine }: { engine: Engine }">
-          <BBBetaBadge
-            v-if="isEngineBeta(engine)"
-            class="absolute -top-1.5 -right-1 rounded text-xs !bg-gray-500 px-1 !py-0 z-10"
-          />
+        <template #suffix="{ engine }">
+          <NTag
+            v-if="isEngineBeta(engine as Engine)"
+            round
+            size="small"
+            type="info"
+          >
+            Beta
+          </NTag>
         </template>
       </InstanceEngineRadioGrid>
 
+      <NDivider />
+
       <!-- Instance Name -->
-      <div class="pt-4 grid grid-cols-1 gap-y-6 gap-x-4 sm:grid-cols-4">
+      <div class="grid grid-cols-1 gap-y-6 gap-x-4 sm:grid-cols-4">
         <div class="sm:col-span-2 sm:col-start-1">
           <label for="name" class="textlabel flex flex-row items-center">
             {{ $t("instance.instance-name") }}
@@ -32,6 +38,7 @@
             required
             class="mt-1 w-full"
             :disabled="!allowEdit"
+            :maxlength="200"
           />
         </div>
 
@@ -90,7 +97,7 @@
           <EnvironmentSelect
             class="mt-1 w-full"
             required="true"
-            :environment-name="
+            :value="
               isValidEnvironmentName(
                 `${environmentNamePrefix}${environment.id}`
               )
@@ -98,7 +105,7 @@
                 : undefined
             "
             :disabled="!allowEdit"
-            @update:environment-name="handleSelectEnvironment"
+            @update:value="handleSelectEnvironment($event as (string | undefined))"
           />
         </div>
 
@@ -226,7 +233,7 @@
 
         <div
           v-if="basicInfo.engine === Engine.REDIS"
-          class="sm:col-span-4 sm:col-start-1 space-y-2"
+          class="sm:col-span-4 sm:col-start-1 flex flex-col gap-y-2"
         >
           <label
             for="connectionStringSchema"
@@ -267,7 +274,7 @@
                 <label
                   v-if="index === 0"
                   for="additionalAddressesHost"
-                  class="textlabel !font-normal flex flex-row items-center"
+                  class="textlabel font-normal! flex flex-row items-center"
                 >
                   {{ $t("instance.host-or-socket") }}
                 </label>
@@ -284,7 +291,7 @@
                 <label
                   v-if="index === 0"
                   for="additionalAddressesPort"
-                  class="textlabel !font-normal flex flex-row items-center"
+                  class="textlabel font-normal! flex flex-row items-center"
                 >
                   {{ $t("instance.port") }}
                 </label>
@@ -309,7 +316,7 @@
             </template>
             <div class="mt-1 sm:col-span-12 sm:col-start-1">
               <NButton
-                class="ml-auto !w-12"
+                class="ml-auto w-12!"
                 size="small"
                 @click.prevent="addDSAdditionalAddress"
               >
@@ -374,14 +381,6 @@
           @update:sync-databases="handleChangeSyncDatabases"
         />
 
-        <MaximumConnectionsInput
-          v-if="!isCreating"
-          ref="maximumConnectionsInputRef"
-          :maximum-connections="basicInfo.maximumConnections ?? 0"
-          :allow-edit="allowEdit"
-          @update:maximum-connections="changeMaximumConnections"
-        />
-
         <!--Do not show external link on create to reduce cognitive load-->
         <div v-if="!isCreating" class="sm:col-span-3 sm:col-start-1">
           <label for="external-link" class="textlabel inline-flex">
@@ -438,9 +437,11 @@
         </div>
       </div>
 
+      <NDivider />
+
       <!-- Connection Info -->
       <template v-if="basicInfo.engine !== Engine.DYNAMODB">
-        <p class="mt-6 pt-4 w-full text-lg leading-6 font-medium text-gray-900">
+        <p class="w-full text-lg leading-6 font-medium text-gray-900">
           {{ $t("instance.connection-info") }}
         </p>
 
@@ -463,7 +464,7 @@
       </BBAttention>
 
       <div class="mt-6 pt-0 border-none">
-        <div class="flex flex-row space-x-2">
+        <div class="flex flex-row gap-x-2">
           <NButton
             tertiary
             type="primary"
@@ -477,9 +478,11 @@
         </div>
       </div>
 
+      <NDivider />
+
       <div
         v-if="basicInfo.engine !== Engine.DYNAMODB && isCreating"
-        class="mt-6 pt-4 space-y-1"
+        class="flex flex-col gap-y-1"
       >
         <p class="w-full text-lg leading-6 font-medium text-gray-900">
           {{ $t("instance.sync-databases.self") }}
@@ -508,15 +511,17 @@ import type { Duration } from "@bufbuild/protobuf/wkt";
 import { TrashIcon } from "lucide-vue-next";
 import {
   NButton,
-  NInput,
-  NSwitch,
-  NRadioGroup,
-  NRadio,
   NCheckbox,
+  NDivider,
+  NInput,
+  NRadio,
+  NRadioGroup,
+  NSwitch,
+  NTag,
 } from "naive-ui";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { BBAttention, BBBetaBadge } from "@/bbkit";
+import { BBAttention } from "@/bbkit";
 import { InstanceArchiveRestoreButton } from "@/components/Instance";
 import { LabelListEditor } from "@/components/Label";
 import RequiredStar from "@/components/RequiredStar.vue";
@@ -528,45 +533,44 @@ import {
 } from "@/components/v2";
 import ResourceIdField from "@/components/v2/Form/ResourceIdField.vue";
 import {
-  useActuatorV1Store,
-  useInstanceV1Store,
-  useDatabaseV1Store,
-  useSubscriptionV1Store,
   pushNotification,
+  useActuatorV1Store,
+  useDatabaseV1Store,
+  useInstanceV1Store,
+  useSubscriptionV1Store,
 } from "@/store";
 import {
   environmentNamePrefix,
   instanceNamePrefix,
 } from "@/store/modules/v1/common";
-import { UNKNOWN_ID, isValidEnvironmentName } from "@/types";
+import { isValidEnvironmentName, UNKNOWN_ID } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import {
-  DataSource_AuthenticationType,
   DataSource_AddressSchema,
+  DataSource_AuthenticationType,
+  DataSource_RedisType,
 } from "@/types/proto-es/v1/instance_service_pb";
-import { DataSource_RedisType } from "@/types/proto-es/v1/instance_service_pb";
 import { PlanType } from "@/types/proto-es/v1/subscription_service_pb";
 import {
-  isDev,
-  extractInstanceResourceName,
-  onlyAllowNumber,
   autoSubscriptionRoute,
-  urlfy,
+  extractInstanceResourceName,
+  isDev,
+  onlyAllowNumber,
   supportedEngineV1List,
+  urlfy,
 } from "@/utils";
 import LearnMoreLink from "../LearnMoreLink.vue";
 import BigQueryHostInput from "./BigQueryHostInput.vue";
+import {
+  MongoDBConnectionStringSchemaList,
+  RedisConnectionType,
+  SnowflakeExtraLinkPlaceHolder,
+} from "./constants";
+import { useInstanceFormContext } from "./context";
 import DataSourceSection from "./DataSourceSection/DataSourceSection.vue";
-import MaximumConnectionsInput from "./MaximumConnectionsInput.vue";
 import ScanIntervalInput from "./ScanIntervalInput.vue";
 import SpannerHostInput from "./SpannerHostInput.vue";
 import SyncDatabases from "./SyncDatabases.vue";
-import {
-  MongoDBConnectionStringSchemaList,
-  SnowflakeExtraLinkPlaceHolder,
-  RedisConnectionType,
-} from "./constants";
-import { useInstanceFormContext } from "./context";
 
 defineProps<{
   hideArchiveRestore?: boolean;
@@ -607,7 +611,7 @@ const availableLicenseCount = computed(() => {
 
 const availableLicenseCountText = computed((): string => {
   if (subscriptionStore.instanceLicenseCount === Number.MAX_VALUE) {
-    return t("subscription.unlimited");
+    return t("common.unlimited");
   }
   return `${availableLicenseCount.value}`;
 });
@@ -712,10 +716,6 @@ const changeScanInterval = (duration: Duration | undefined) => {
   basicInfo.value.syncInterval = duration;
 };
 
-const changeMaximumConnections = (maximumConnections: number) => {
-  basicInfo.value.maximumConnections = maximumConnections;
-};
-
 const handleRedisConnectionTypeChange = (type: string) => {
   const ds = editingDataSource.value;
   if (!ds) return;
@@ -809,6 +809,7 @@ const testConnectionForCurrentEditingDS = () => {
 
 <style lang="postcss" scoped>
 .instance-engine-button :deep(.n-button__content) {
-  @apply w-full justify-start;
+  width: 100%;
+  justify-content: flex-start;
 }
 </style>

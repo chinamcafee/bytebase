@@ -18,16 +18,14 @@
         </div>
 
         <div class="ml-3 min-w-0 flex-1">
-          <div
-            class="rounded-lg border border-gray-200 bg-white overflow-hidden"
-          >
+          <div class="rounded-lg border border-gray-200 bg-white">
             <div class="px-3 py-2 bg-gray-50">
               <div class="flex items-center justify-between">
                 <div
                   class="flex items-center gap-x-2 text-sm min-w-0 flex-wrap"
                 >
                   <ActionCreator :creator="issue.creator" />
-                  <span class="text-gray-600 break-words min-w-0">{{
+                  <span class="text-gray-600 wrap-break-word min-w-0">{{
                     $t("activity.sentence.created-issue")
                   }}</span>
                   <HumanizeTs
@@ -60,14 +58,12 @@
                 :mode="state.isEditing ? 'editor' : 'preview'"
                 :content="state.isEditing ? state.editContent : description"
                 :project="project"
-                :issue-list="issueList"
                 @change="(val: string) => (state.editContent = val)"
                 @submit="saveEdit"
-                @cancel="cancelEdit"
               />
               <div
                 v-if="state.isEditing"
-                class="flex space-x-2 mt-2 items-center justify-end"
+                class="flex gap-x-2 mt-2 items-center justify-end"
               >
                 <NButton quaternary size="small" @click.prevent="cancelEdit">
                   {{ $t("common.cancel") }}
@@ -91,28 +87,27 @@
 
 <script lang="ts" setup>
 import { create } from "@bufbuild/protobuf";
-import { PlusIcon, PencilIcon } from "lucide-vue-next";
+import { PencilIcon, PlusIcon } from "lucide-vue-next";
 import { NButton } from "naive-ui";
-import { computed, reactive, ref } from "vue";
+import { computed, reactive } from "vue";
 import MarkdownEditor from "@/components/MarkdownEditor";
-import UserAvatar from "@/components/User/UserAvatar.vue";
 import HumanizeTs from "@/components/misc/HumanizeTs.vue";
-import { planServiceClientConnect, issueServiceClientConnect } from "@/grpcweb";
-import { useCurrentUserV1, useUserStore } from "@/store";
-import { useCurrentProjectV1 } from "@/store";
-import { getTimeForPbTimestampProtoEs, type ComposedIssue } from "@/types";
+import UserAvatar from "@/components/User/UserAvatar.vue";
+import { issueServiceClientConnect, planServiceClientConnect } from "@/connect";
+import { useCurrentProjectV1, useCurrentUserV1, useUserStore } from "@/store";
+import { type ComposedIssue, getTimeForPbTimestampProtoEs } from "@/types";
+import type { IssueComment } from "@/types/proto-es/v1/issue_service_pb";
 import { UpdateIssueRequestSchema } from "@/types/proto-es/v1/issue_service_pb";
 import {
-  UpdatePlanRequestSchema,
   PlanSchema,
+  UpdatePlanRequestSchema,
 } from "@/types/proto-es/v1/plan_service_pb";
 import { hasProjectPermissionV2 } from "@/utils";
 import ActionCreator from "./ActionCreator.vue";
-import type { DistinctIssueComment } from "./common";
 
 const props = defineProps<{
   issue: ComposedIssue;
-  issueComments: DistinctIssueComment[];
+  issueComments: IssueComment[];
 }>();
 
 const emit = defineEmits<{
@@ -122,8 +117,6 @@ const emit = defineEmits<{
 const currentUser = useCurrentUserV1();
 const userStore = useUserStore();
 const { project } = useCurrentProjectV1();
-
-const issueList = ref([]);
 
 const state = reactive({
   isEditing: false,

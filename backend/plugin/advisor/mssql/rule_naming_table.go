@@ -7,13 +7,14 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/tsql-parser"
-
+	parser "github.com/bytebase/parser/tsql"
 	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	tsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/tsql"
 )
 
@@ -22,7 +23,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MSSQL, advisor.SchemaRuleTableNaming, &NamingTableAdvisor{})
+	advisor.Register(storepb.Engine_MSSQL, storepb.SQLReviewRule_NAMING_TABLE, &NamingTableAdvisor{})
 }
 
 // NamingTableAdvisor is the advisor checking for table naming convention..
@@ -31,27 +32,42 @@ type NamingTableAdvisor struct {
 
 // Check checks for table naming convention..
 func (*NamingTableAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	format, maxLength, err := advisor.UnmarshalNamingRulePayloadAsRegexp(checkCtx.Rule.Payload)
+	namingPayload := checkCtx.Rule.GetNamingPayload()
+	if namingPayload == nil {
+		return nil, errors.New("naming_payload is required for this rule")
+	}
+
+	format, err := regexp.Compile(namingPayload.Format)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to compile regex format %q", namingPayload.Format)
+	}
+
+	maxLength := int(namingPayload.MaxLength)
+	if maxLength == 0 {
+		maxLength = advisor.DefaultNameLengthLimit
 	}
 
 	// Create the rule
-	rule := NewNamingTableRule(level, string(checkCtx.Rule.Type), format, maxLength)
+	rule := NewNamingTableRule(level, checkCtx.Rule.Type.String(), format, maxLength)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList(), nil
 }
@@ -104,7 +120,7 @@ func (r *NamingTableRule) enterCreateTable(ctx *parser.Create_tableContext) {
 	if !r.format.MatchString(tableName) {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.NamingTableConventionMismatch.Int32(),
+			Code:          code.NamingTableConventionMismatch.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf(`%s mismatches table naming convention, naming format should be %q`, tableName, r.format),
 			StartPosition: common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),
@@ -113,7 +129,7 @@ func (r *NamingTableRule) enterCreateTable(ctx *parser.Create_tableContext) {
 	if r.maxLength > 0 && len(tableName) > r.maxLength {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.NamingTableConventionMismatch.Int32(),
+			Code:          code.NamingTableConventionMismatch.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf(`%s mismatches table naming convention, its length should be within %d characters`, tableName, r.maxLength),
 			StartPosition: common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),
@@ -186,7 +202,7 @@ func (r *NamingTableRule) enterExecuteBody(ctx *parser.Execute_bodyContext) {
 	if !r.format.MatchString(newTableName) {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.NamingTableConventionMismatch.Int32(),
+			Code:          code.NamingTableConventionMismatch.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf(`%s mismatches table naming convention, naming format should be %q`, newTableName, r.format),
 			StartPosition: common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),
@@ -195,7 +211,7 @@ func (r *NamingTableRule) enterExecuteBody(ctx *parser.Execute_bodyContext) {
 	if r.maxLength > 0 && len(newTableName) > r.maxLength {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.NamingTableConventionMismatch.Int32(),
+			Code:          code.NamingTableConventionMismatch.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf(`%s mismatches table naming convention, its length should be within %d characters`, newTableName, r.maxLength),
 			StartPosition: common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),

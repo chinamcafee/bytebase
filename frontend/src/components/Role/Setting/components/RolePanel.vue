@@ -20,6 +20,7 @@
               v-model:value="state.role.title"
               :placeholder="$t('role.setting.title-placeholder')"
               :status="state.role.title?.length === 0 ? 'error' : undefined"
+              :maxlength="200"
             />
           </div>
           <div class="-mt-2">
@@ -45,6 +46,7 @@
               type="textarea"
               :autosize="{ minRows: 2, maxRows: 4 }"
               :placeholder="$t('role.setting.description-placeholder')"
+              :maxlength="1000"
             />
           </div>
         </div>
@@ -65,7 +67,7 @@
           </div>
           <NTransfer
             v-model:value="state.role.permissions"
-            class="!h-[32rem]"
+            class="h-[32rem]!"
             source-filterable
             source-filter-placeholder="Search"
             :options="permissionOptions"
@@ -107,7 +109,7 @@ import { create } from "@bufbuild/protobuf";
 import { cloneDeep, uniq } from "lodash-es";
 import { PlusIcon } from "lucide-vue-next";
 import { NButton, NInput, NTransfer } from "naive-ui";
-import { computed, reactive, watch, nextTick, ref } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { BBSpin } from "@/bbkit";
 import { FeatureBadge } from "@/components/FeatureGuard";
@@ -120,7 +122,6 @@ import type { Role } from "@/types/proto-es/v1/role_service_pb";
 import { RoleSchema } from "@/types/proto-es/v1/role_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import { extractRoleResourceName } from "@/utils";
-import { displayPermissionTitle } from "@/utils/permission";
 import { useCustomRoleSettingContext } from "../context";
 import ImportPermissionFromRoleModal from "./ImportPermissionFromRoleModal.vue";
 
@@ -163,7 +164,7 @@ const resourceId = computed({
 
 const permissionOptions = computed(() => {
   return PERMISSIONS.sort().map((p) => ({
-    label: displayPermissionTitle(p),
+    label: p,
     value: p,
   }));
 });

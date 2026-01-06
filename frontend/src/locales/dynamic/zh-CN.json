@@ -23,7 +23,8 @@
     "sentence": {
       "verb-type-target-by-people": "{verb} {type} {target}",
       "verb-type-target-by-system-bot": "{type} {target} {verb}",
-      "changed-x-link": "修改了 {name}。{link}"
+      "changed-x-link": "修改了 {name}。{link}",
+      "modified-sql-of-spec-link": "修改了 {spec} 的 SQL。{link}"
     }
   },
   "settings": {
@@ -114,14 +115,6 @@
       "FEATURE_SCHEMA_DRIFT_DETECTION": {
         "title": "Schema 偏差检测",
         "desc": "检测带外 schema 更改并报告差异。"
-      },
-      "FEATURE_CHANGELIST": {
-        "title": "变更列表",
-        "desc": "将多个数据库更改分组并一起管理。"
-      },
-      "FEATURE_SCHEMA_TEMPLATE": {
-        "title": "Schema 模板",
-        "desc": "创建可重用的字段模板以实现一致的 schema 设计。"
       },
       "FEATURE_ROLLOUT_POLICY": {
         "title": "发布策略",
@@ -279,9 +272,9 @@
         "title": "目录同步",
         "desc": "将用户和组从 Entra ID 同步到 Bytebase。"
       },
-      "FEATURE_SIGN_IN_FREQUENCY_CONTROL": {
-        "title": "登录频率控制",
-        "desc": "配置用户必须重新进行身份验证的频率。"
+      "FEATURE_TOKEN_DURATION_CONTROL": {
+        "title": "令牌时长控制",
+        "desc": "配置访问令牌和刷新令牌的有效时长。"
       },
       "FEATURE_EXTERNAL_SECRET_MANAGER": {
         "title": "外部密钥管理器",
@@ -359,7 +352,6 @@
     "project": "项目",
     "idp": "身份提供商",
     "database-group": "数据库分组",
-    "changelist": "变更列表",
     "review-config": "审查配置",
     "role": "角色"
   }

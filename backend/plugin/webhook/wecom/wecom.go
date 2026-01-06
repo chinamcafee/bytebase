@@ -20,6 +20,19 @@ import (
 	"github.com/bytebase/bytebase/backend/plugin/webhook"
 )
 
+// getWecomConfig extracts the WeCom configuration from the AppIMSetting.
+func getWecomConfig(setting *storepb.AppIMSetting) *storepb.AppIMSetting_Wecom {
+	if setting == nil {
+		return nil
+	}
+	for _, s := range setting.Settings {
+		if s.Type == storepb.WebhookType_WECOM {
+			return s.GetWecom()
+		}
+	}
+	return nil
+}
+
 // WebhookResponse is the API message for WeCom webhook response.
 type WebhookResponse struct {
 	ErrorCode    int    `json:"errcode"`
@@ -38,7 +51,7 @@ type Webhook struct {
 }
 
 func init() {
-	webhook.Register(storepb.ProjectWebhook_WECOM, &Receiver{})
+	webhook.Register(storepb.WebhookType_WECOM, &Receiver{})
 }
 
 // Receiver is the receiver for WeCom.
@@ -50,7 +63,9 @@ func getMessageCard(context webhook.Context) *WebhookMarkdown {
 	for _, meta := range context.GetMetaList() {
 		metaStrList = append(metaStrList, fmt.Sprintf("**%s**: %s", meta.Name, meta.Value))
 	}
-	metaStrList = append(metaStrList, fmt.Sprintf("**Actor**: %s (%s)", context.ActorName, context.ActorEmail))
+	if context.ActorName != "" {
+		metaStrList = append(metaStrList, fmt.Sprintf("**Actor**: %s (%s)", context.ActorName, context.ActorEmail))
+	}
 
 	status := ""
 	switch context.Level {
@@ -135,7 +150,7 @@ func (*Receiver) sendMessage(context webhook.Context) error {
 // sendDirectMessage sends direct message to users.
 // returns `true` if successfully sends messages to all users.
 func (*Receiver) sendDirectMessage(webhookCtx webhook.Context) bool {
-	wecom := webhookCtx.IMSetting.GetWecom()
+	wecom := getWecomConfig(webhookCtx.IMSetting)
 	if wecom == nil {
 		return false
 	}

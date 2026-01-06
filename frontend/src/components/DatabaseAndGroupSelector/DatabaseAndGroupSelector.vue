@@ -11,7 +11,7 @@
         :autofocus="false"
         :placeholder="$t('database.filter-database')"
         :scope-options="scopeOptions"
-        :override-route-query="false"
+        :cache-query="false"
       />
       <PagedDatabaseTable
         mode="PROJECT_SHORT"
@@ -46,20 +46,21 @@
 
 <script lang="ts" setup>
 import { head } from "lodash-es";
-import { NTabs, NTabPane } from "naive-ui";
+import { NTabPane, NTabs } from "naive-ui";
 import { computed, reactive, ref, watch } from "vue";
 import AdvancedSearch from "@/components/AdvancedSearch";
 import DatabaseGroupDataTable from "@/components/DatabaseGroup/DatabaseGroupDataTable.vue";
 import { PagedDatabaseTable } from "@/components/v2/Model/DatabaseV1Table";
 import { useDBGroupListByProject } from "@/store";
 import {
-  instanceNamePrefix,
   environmentNamePrefix,
+  instanceNamePrefix,
 } from "@/store/modules/v1/common";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import {
   CommonFilterScopeIdList,
   extractProjectResourceName,
+  getValueFromSearchParams,
   type SearchParams,
   type SearchScope,
 } from "@/utils";
@@ -99,23 +100,19 @@ const databaseSelectState = reactive<DatabaseSelectState>(
 const { dbGroupList } = useDBGroupListByProject(props.project.name);
 
 const selectedInstance = computed(() => {
-  const instanceId = searchParams.value.scopes.find(
-    (scope) => scope.id === "instance"
-  )?.value;
-  if (!instanceId) {
-    return;
-  }
-  return `${instanceNamePrefix}${instanceId}`;
+  return getValueFromSearchParams(
+    searchParams.value,
+    "instance",
+    instanceNamePrefix
+  );
 });
 
 const selectedEnvironment = computed(() => {
-  const environmentId = searchParams.value.scopes.find(
-    (scope) => scope.id === "environment"
-  )?.value;
-  if (!environmentId) {
-    return;
-  }
-  return `${environmentNamePrefix}${environmentId}`;
+  return getValueFromSearchParams(
+    searchParams.value,
+    "environment",
+    environmentNamePrefix
+  );
 });
 
 const filter = computed(() => ({

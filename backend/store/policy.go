@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"math"
 	"slices"
 	"time"
 
@@ -81,7 +82,7 @@ func (s *Store) PatchWorkspaceIamPolicy(ctx context.Context, patch *PatchIamPoli
 		return nil, err
 	}
 
-	if _, err := s.CreatePolicyV2(ctx, &PolicyMessage{
+	if _, err := s.CreatePolicy(ctx, &PolicyMessage{
 		ResourceType:      storepb.Policy_WORKSPACE,
 		Payload:           string(policyPayload),
 		Type:              storepb.Policy_IAM,
@@ -107,7 +108,7 @@ func (s *Store) GetProjectIamPolicy(ctx context.Context, projectID string) (*Iam
 func (s *Store) getIamPolicy(ctx context.Context, find *FindPolicyMessage) (*IamPolicyMessage, error) {
 	pType := storepb.Policy_IAM
 	find.Type = &pType
-	policy, err := s.GetPolicyV2(ctx, find)
+	policy, err := s.GetPolicy(ctx, find)
 	if err != nil {
 		return nil, err
 	}
@@ -128,11 +129,25 @@ func (s *Store) getIamPolicy(ctx context.Context, find *FindPolicyMessage) (*Iam
 	}, nil
 }
 
+// GetDefaultRolloutPolicy returns the default rollout policy when no custom policy exists.
+// This is used as a fallback for both API and store layers to ensure consistent defaults.
+// Default values:
+// - automatic: false (manual rollout required)
+// - roles: [] (no role restrictions)
+// - requiredIssueApproval: true (issue must be approved before rollout)
+// - planCheckEnforcement: ERROR_ONLY (block rollout only on errors, not warnings)
+func GetDefaultRolloutPolicy() *storepb.RolloutPolicy {
+	return &storepb.RolloutPolicy{
+		Automatic: false,
+		Roles:     []string{},
+	}
+}
+
 func (s *Store) GetRolloutPolicy(ctx context.Context, environment string) (*storepb.RolloutPolicy, error) {
 	resource := common.FormatEnvironment(environment)
 	resourceType := storepb.Policy_ENVIRONMENT
 	pType := storepb.Policy_ROLLOUT
-	policy, err := s.GetPolicyV2(ctx, &FindPolicyMessage{
+	policy, err := s.GetPolicy(ctx, &FindPolicyMessage{
 		ResourceType: &resourceType,
 		Resource:     &resource,
 		Type:         &pType,
@@ -141,15 +156,7 @@ func (s *Store) GetRolloutPolicy(ctx context.Context, environment string) (*stor
 		return nil, errors.Wrapf(err, "failed to get policy")
 	}
 	if policy == nil {
-		// Return default rollout policy with checkers.
-		return &storepb.RolloutPolicy{
-			Checkers: &storepb.RolloutPolicy_Checkers{
-				RequiredIssueApproval: true,
-				RequiredStatusChecks: &storepb.RolloutPolicy_Checkers_RequiredStatusChecks{
-					PlanCheckEnforcement: storepb.RolloutPolicy_Checkers_ERROR_ONLY,
-				},
-			},
-		}, nil
+		return GetDefaultRolloutPolicy(), nil
 	}
 
 	p := &storepb.RolloutPolicy{}
@@ -160,11 +167,70 @@ func (s *Store) GetRolloutPolicy(ctx context.Context, environment string) (*stor
 	return p, nil
 }
 
-func (s *Store) GetQueryDataPolicy(ctx context.Context) (*storepb.QueryDataPolicy, error) {
-	resourceType := storepb.Policy_WORKSPACE
-	resource := ""
+type EffectiveQueryDataPolicy struct {
+	MaximumResultSize        int64
+	MaximumResultRows        int32
+	DisableCopyData          bool
+	DisableExport            bool
+	MaxQueryTimeoutInSeconds int64
+}
+
+func formatEffectiveQueryDataPolicy(policy *storepb.QueryDataPolicy) *EffectiveQueryDataPolicy {
+	maximumResultSize := policy.GetMaximumResultSize()
+	if maximumResultSize <= 0 {
+		maximumResultSize = common.DefaultMaximumSQLResultSize
+	}
+	maximumResultRows := policy.GetMaximumResultRows()
+	if maximumResultRows <= 0 {
+		maximumResultRows = math.MaxInt32
+	}
+	timeoutInSeconds := policy.GetTimeout().GetSeconds()
+	if timeoutInSeconds <= 0 {
+		timeoutInSeconds = math.MaxInt64
+	}
+
+	return &EffectiveQueryDataPolicy{
+		MaximumResultSize:        maximumResultSize,
+		MaximumResultRows:        maximumResultRows,
+		MaxQueryTimeoutInSeconds: timeoutInSeconds,
+		DisableCopyData:          policy.GetDisableCopyData(),
+		DisableExport:            policy.GetDisableExport(),
+	}
+}
+
+func (s *Store) GetEffectiveQueryDataPolicy(ctx context.Context, project string) (*EffectiveQueryDataPolicy, error) {
+	projectPolicy, err := s.getQueryDataPolicy(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	workspacePolicy, err := s.getQueryDataPolicy(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+
+	formatPorjectPolicy := formatEffectiveQueryDataPolicy(projectPolicy)
+	formatWorkspacePolicy := formatEffectiveQueryDataPolicy(workspacePolicy)
+
+	maximumResultSize := min(formatPorjectPolicy.MaximumResultSize, formatWorkspacePolicy.MaximumResultSize)
+	maximumResultRows := min(formatPorjectPolicy.MaximumResultRows, formatWorkspacePolicy.MaximumResultRows)
+	maximumTimeout := min(formatPorjectPolicy.MaxQueryTimeoutInSeconds, formatWorkspacePolicy.MaxQueryTimeoutInSeconds)
+
+	return &EffectiveQueryDataPolicy{
+		DisableCopyData:          formatPorjectPolicy.DisableCopyData || formatWorkspacePolicy.DisableCopyData,
+		DisableExport:            formatPorjectPolicy.DisableExport || formatWorkspacePolicy.DisableExport,
+		MaximumResultSize:        maximumResultSize,
+		MaximumResultRows:        maximumResultRows,
+		MaxQueryTimeoutInSeconds: maximumTimeout,
+	}, nil
+}
+
+func (s *Store) getQueryDataPolicy(ctx context.Context, resource string) (*storepb.QueryDataPolicy, error) {
+	resourceType, _, err := common.GetPolicyResourceTypeAndResource(resource)
+	if err != nil {
+		return nil, err
+	}
 	pType := storepb.Policy_QUERY_DATA
-	policy, err := s.GetPolicyV2(ctx, &FindPolicyMessage{
+	policy, err := s.GetPolicy(ctx, &FindPolicyMessage{
 		ResourceType: &resourceType,
 		Resource:     &resource,
 		Type:         &pType,
@@ -174,19 +240,13 @@ func (s *Store) GetQueryDataPolicy(ctx context.Context) (*storepb.QueryDataPolic
 	}
 	if policy == nil {
 		return &storepb.QueryDataPolicy{
-			Timeout:           &durationpb.Duration{},
-			DisableExport:     false,
-			MaximumResultSize: common.DefaultMaximumSQLResultSize,
-			MaximumResultRows: -1,
+			Timeout: &durationpb.Duration{},
 		}, nil
 	}
 
 	p := &storepb.QueryDataPolicy{}
 	if err := common.ProtojsonUnmarshaler.Unmarshal([]byte(policy.Payload), p); err != nil {
 		return nil, errors.Wrapf(err, "failed to unmarshal query data policy")
-	}
-	if p.MaximumResultSize <= 0 {
-		p.MaximumResultSize = common.DefaultMaximumSQLResultSize
 	}
 	return p, nil
 }
@@ -228,7 +288,7 @@ func (s *Store) GetReviewConfigForDatabase(ctx context.Context, database *Databa
 func (s *Store) getReviewConfigByResource(ctx context.Context, resourceType storepb.Policy_Resource, resource string) (*storepb.ReviewConfigPayload, error) {
 	pType := storepb.Policy_TAG
 
-	policy, err := s.GetPolicyV2(ctx, &FindPolicyMessage{
+	policy, err := s.GetPolicy(ctx, &FindPolicyMessage{
 		ResourceType: &resourceType,
 		Resource:     &resource,
 		Type:         &pType,
@@ -274,7 +334,7 @@ func (s *Store) getReviewConfigByResource(ctx context.Context, resourceType stor
 // GetMaskingRulePolicy will get the masking rule policy.
 func (s *Store) GetMaskingRulePolicy(ctx context.Context) (*storepb.MaskingRulePolicy, error) {
 	pType := storepb.Policy_MASKING_RULE
-	policy, err := s.GetPolicyV2(ctx, &FindPolicyMessage{
+	policy, err := s.GetPolicy(ctx, &FindPolicyMessage{
 		Type: &pType,
 	})
 	if err != nil {
@@ -293,12 +353,12 @@ func (s *Store) GetMaskingRulePolicy(ctx context.Context) (*storepb.MaskingRuleP
 	return p, nil
 }
 
-// GetMaskingExceptionPolicyByProject gets the masking exception policy for a project.
-func (s *Store) GetMaskingExceptionPolicyByProject(ctx context.Context, projectID string) (*storepb.MaskingExceptionPolicy, error) {
+// GetMaskingExemptionPolicyByProject gets the masking exemption policy for a project.
+func (s *Store) GetMaskingExemptionPolicyByProject(ctx context.Context, projectID string) (*storepb.MaskingExemptionPolicy, error) {
 	resourceType := storepb.Policy_PROJECT
 	resource := common.FormatProject(projectID)
-	pType := storepb.Policy_MASKING_EXCEPTION
-	policy, err := s.GetPolicyV2(ctx, &FindPolicyMessage{
+	pType := storepb.Policy_MASKING_EXEMPTION
+	policy, err := s.GetPolicy(ctx, &FindPolicyMessage{
 		ResourceType: &resourceType,
 		Resource:     &resource,
 		Type:         &pType,
@@ -308,10 +368,10 @@ func (s *Store) GetMaskingExceptionPolicyByProject(ctx context.Context, projectI
 	}
 
 	if policy == nil {
-		return &storepb.MaskingExceptionPolicy{}, nil
+		return &storepb.MaskingExemptionPolicy{}, nil
 	}
 
-	p := new(storepb.MaskingExceptionPolicy)
+	p := new(storepb.MaskingExemptionPolicy)
 	if err := common.ProtojsonUnmarshaler.Unmarshal([]byte(policy.Payload), p); err != nil {
 		return nil, err
 	}
@@ -350,8 +410,8 @@ type UpdatePolicyMessage struct {
 	Enforce           *bool
 }
 
-// GetPolicyV2 gets a policy.
-func (s *Store) GetPolicyV2(ctx context.Context, find *FindPolicyMessage) (*PolicyMessage, error) {
+// GetPolicy gets a policy.
+func (s *Store) GetPolicy(ctx context.Context, find *FindPolicyMessage) (*PolicyMessage, error) {
 	if find.ResourceType != nil && find.Resource != nil && find.Type != nil {
 		if v, ok := s.policyCache.Get(getPolicyCacheKey(*find.ResourceType, *find.Resource, *find.Type)); ok && s.enableCache {
 			return v, nil
@@ -366,7 +426,7 @@ func (s *Store) GetPolicyV2(ctx context.Context, find *FindPolicyMessage) (*Poli
 
 	// We will always return the resource regardless of its deleted state.
 	find.ShowAll = true
-	policies, err := s.listPolicyImplV2(ctx, tx, find)
+	policies, err := s.ListPolicies(ctx, find)
 	if err != nil {
 		return nil, err
 	}
@@ -391,16 +451,79 @@ func (s *Store) GetPolicyV2(ctx context.Context, find *FindPolicyMessage) (*Poli
 	return policy, nil
 }
 
-// ListPoliciesV2 lists all policies.
-func (s *Store) ListPoliciesV2(ctx context.Context, find *FindPolicyMessage) ([]*PolicyMessage, error) {
+// ListPolicies lists all policies.
+func (s *Store) ListPolicies(ctx context.Context, find *FindPolicyMessage) ([]*PolicyMessage, error) {
 	tx, err := s.GetDB().BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
-	policies, err := s.listPolicyImplV2(ctx, tx, find)
+	q := qb.Q().Space(`
+		SELECT
+			updated_at,
+			resource_type,
+			resource,
+			inherit_from_parent,
+			type,
+			payload,
+			enforce
+		FROM policy
+		WHERE TRUE
+	`)
+
+	if v := find.ResourceType; v != nil {
+		q.And("resource_type = ?", v.String())
+	}
+	if v := find.Resource; v != nil {
+		q.And("resource = ?", *v)
+	}
+	if v := find.Type; v != nil {
+		q.And("type = ?", v.String())
+	}
+	if !find.ShowAll {
+		q.And("enforce = ?", true)
+	}
+
+	query, args, err := q.ToSQL()
 	if err != nil {
+		return nil, errors.Wrapf(err, "failed to build sql")
+	}
+
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var policyList []*PolicyMessage
+	for rows.Next() {
+		var policyMessage PolicyMessage
+		var resourceTypeString, typeString string
+		if err := rows.Scan(
+			&policyMessage.UpdatedAt,
+			&resourceTypeString,
+			&policyMessage.Resource,
+			&policyMessage.InheritFromParent,
+			&typeString,
+			&policyMessage.Payload,
+			&policyMessage.Enforce,
+		); err != nil {
+			return nil, err
+		}
+		resourceTypeValue, ok := storepb.Policy_Resource_value[resourceTypeString]
+		if !ok {
+			return nil, errors.Errorf("invalid policy resource type string: %s", resourceTypeString)
+		}
+		policyMessage.ResourceType = storepb.Policy_Resource(resourceTypeValue)
+		value, ok := storepb.Policy_Type_value[typeString]
+		if !ok {
+			return nil, errors.Errorf("invalid policy type string: %s", typeString)
+		}
+		policyMessage.Type = storepb.Policy_Type(value)
+		policyList = append(policyList, &policyMessage)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
@@ -408,22 +531,22 @@ func (s *Store) ListPoliciesV2(ctx context.Context, find *FindPolicyMessage) ([]
 		return nil, err
 	}
 
-	for _, policy := range policies {
+	for _, policy := range policyList {
 		s.policyCache.Add(getPolicyCacheKey(policy.ResourceType, policy.Resource, policy.Type), policy)
 	}
 
-	return policies, nil
+	return policyList, nil
 }
 
-// CreatePolicyV2 creates a policy.
-func (s *Store) CreatePolicyV2(ctx context.Context, create *PolicyMessage) (*PolicyMessage, error) {
+// CreatePolicy creates a policy.
+func (s *Store) CreatePolicy(ctx context.Context, create *PolicyMessage) (*PolicyMessage, error) {
 	tx, err := s.GetDB().BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
-	policy, err := upsertPolicyV2Impl(ctx, tx, create)
+	policy, err := upsertPolicyImpl(ctx, tx, create)
 	if err != nil {
 		return nil, err
 	}
@@ -437,8 +560,8 @@ func (s *Store) CreatePolicyV2(ctx context.Context, create *PolicyMessage) (*Pol
 	return policy, nil
 }
 
-// UpdatePolicyV2 updates the policy.
-func (s *Store) UpdatePolicyV2(ctx context.Context, patch *UpdatePolicyMessage) (*PolicyMessage, error) {
+// UpdatePolicy updates the policy.
+func (s *Store) UpdatePolicy(ctx context.Context, patch *UpdatePolicyMessage) (*PolicyMessage, error) {
 	set := qb.Q()
 	set.Comma("updated_at = ?", time.Now())
 	if v := patch.InheritFromParent; v != nil {
@@ -489,8 +612,8 @@ func (s *Store) UpdatePolicyV2(ctx context.Context, patch *UpdatePolicyMessage) 
 	return policy, nil
 }
 
-// DeletePolicyV2 deletes the policy.
-func (s *Store) DeletePolicyV2(ctx context.Context, policy *PolicyMessage) error {
+// DeletePolicy deletes the policy.
+func (s *Store) DeletePolicy(ctx context.Context, policy *PolicyMessage) error {
 	q := qb.Q().Space("DELETE FROM policy WHERE resource_type = ? AND resource = ? AND type = ?",
 		policy.ResourceType,
 		policy.Resource,
@@ -520,7 +643,7 @@ func (s *Store) DeletePolicyV2(ctx context.Context, policy *PolicyMessage) error
 	return nil
 }
 
-func upsertPolicyV2Impl(ctx context.Context, txn *sql.Tx, create *PolicyMessage) (*PolicyMessage, error) {
+func upsertPolicyImpl(ctx context.Context, txn *sql.Tx, create *PolicyMessage) (*PolicyMessage, error) {
 	create.UpdatedAt = time.Now()
 
 	q := qb.Q().Space(`
@@ -558,75 +681,4 @@ func upsertPolicyV2Impl(ctx context.Context, txn *sql.Tx, create *PolicyMessage)
 		return nil, err
 	}
 	return create, nil
-}
-
-func (*Store) listPolicyImplV2(ctx context.Context, txn *sql.Tx, find *FindPolicyMessage) ([]*PolicyMessage, error) {
-	q := qb.Q().Space(`
-		SELECT
-			updated_at,
-			resource_type,
-			resource,
-			inherit_from_parent,
-			type,
-			payload,
-			enforce
-		FROM policy
-		WHERE TRUE
-	`)
-
-	if v := find.ResourceType; v != nil {
-		q.And("resource_type = ?", v.String())
-	}
-	if v := find.Resource; v != nil {
-		q.And("resource = ?", *v)
-	}
-	if v := find.Type; v != nil {
-		q.And("type = ?", v.String())
-	}
-	if !find.ShowAll {
-		q.And("enforce = ?", true)
-	}
-
-	query, args, err := q.ToSQL()
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to build sql")
-	}
-
-	rows, err := txn.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var policyList []*PolicyMessage
-	for rows.Next() {
-		var policyMessage PolicyMessage
-		var resourceTypeString, typeString string
-		if err := rows.Scan(
-			&policyMessage.UpdatedAt,
-			&resourceTypeString,
-			&policyMessage.Resource,
-			&policyMessage.InheritFromParent,
-			&typeString,
-			&policyMessage.Payload,
-			&policyMessage.Enforce,
-		); err != nil {
-			return nil, err
-		}
-		resourceTypeValue, ok := storepb.Policy_Resource_value[resourceTypeString]
-		if !ok {
-			return nil, errors.Errorf("invalid policy resource type string: %s", resourceTypeString)
-		}
-		policyMessage.ResourceType = storepb.Policy_Resource(resourceTypeValue)
-		value, ok := storepb.Policy_Type_value[typeString]
-		if !ok {
-			return nil, errors.Errorf("invalid policy type string: %s", typeString)
-		}
-		policyMessage.Type = storepb.Policy_Type(value)
-		policyList = append(policyList, &policyMessage)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return policyList, nil
 }

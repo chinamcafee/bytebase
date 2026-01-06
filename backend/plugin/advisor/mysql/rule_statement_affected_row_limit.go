@@ -7,12 +7,14 @@ import (
 	"strconv"
 
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/bytebase/parser/mysql"
 	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -21,8 +23,8 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleStatementAffectedRowLimit, &StatementAffectedRowLimitAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleStatementAffectedRowLimit, &StatementAffectedRowLimitAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_STATEMENT_AFFECTED_ROW_LIMIT, &StatementAffectedRowLimitAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_STATEMENT_AFFECTED_ROW_LIMIT, &StatementAffectedRowLimitAdvisor{})
 }
 
 // StatementAffectedRowLimitAdvisor is the advisor checking for UPDATE/DELETE affected row limit.
@@ -31,31 +33,33 @@ type StatementAffectedRowLimitAdvisor struct {
 
 // Check checks for UPDATE/DELETE affected row limit.
 func (*StatementAffectedRowLimitAdvisor) Check(ctx context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalNumberTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	numberPayload := checkCtx.Rule.GetNumberPayload()
+	if numberPayload == nil {
+		return nil, errors.New("number_payload is required for this rule")
 	}
 
 	// Create the rule
-	rule := NewStatementAffectedRowLimitRule(ctx, level, string(checkCtx.Rule.Type), payload.Number, checkCtx.Driver)
+	rule := NewStatementAffectedRowLimitRule(ctx, level, checkCtx.Rule.Type.String(), int(numberPayload.Number), checkCtx.Driver)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
 	if checkCtx.Driver != nil {
-		for _, stmt := range stmtList {
-			rule.SetBaseLine(stmt.BaseLine)
-			checker.SetBaseLine(stmt.BaseLine)
-			antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+		for _, stmt := range checkCtx.ParsedStatements {
+			rule.SetBaseLine(stmt.BaseLine())
+			checker.SetBaseLine(stmt.BaseLine())
+			if stmt.AST == nil {
+				continue
+			}
+			antlrAST, ok := base.GetANTLRAST(stmt.AST)
+			if !ok {
+				continue
+			}
+			antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 			if rule.explainCount >= common.MaximumLintExplainSize {
 				break
 			}
@@ -127,7 +131,7 @@ func (r *StatementAffectedRowLimitRule) handleStmt(lineNumber int) {
 	if err != nil {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.StatementAffectedRowExceedsLimit.Int32(),
+			Code:          code.StatementAffectedRowExceedsLimit.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("\"%s\" dry runs failed: %s", r.text, err.Error()),
 			StartPosition: common.ConvertANTLRLineToPosition(lineNumber),
@@ -137,7 +141,7 @@ func (r *StatementAffectedRowLimitRule) handleStmt(lineNumber int) {
 		if err != nil {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.Internal.Int32(),
+				Code:          code.Internal.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("failed to get row count for \"%s\": %s", r.text, err.Error()),
 				StartPosition: common.ConvertANTLRLineToPosition(lineNumber),
@@ -145,7 +149,7 @@ func (r *StatementAffectedRowLimitRule) handleStmt(lineNumber int) {
 		} else if rowCount > int64(r.maxRow) {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.StatementAffectedRowExceedsLimit.Int32(),
+				Code:          code.StatementAffectedRowExceedsLimit.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("\"%s\" affected %d rows (estimated). The count exceeds %d.", r.text, rowCount, r.maxRow),
 				StartPosition: common.ConvertANTLRLineToPosition(lineNumber),

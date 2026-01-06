@@ -8,7 +8,7 @@ import (
 	"unicode"
 
 	"github.com/antlr4-go/antlr/v4"
-	trinoparser "github.com/bytebase/trino-parser"
+	trinoparser "github.com/bytebase/parser/trino"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
@@ -204,7 +204,7 @@ func (m CompletionMap) insertMetadataTables(c *Completer, catalog string, schema
 		}
 	}
 
-	schemaMetadata := catalogMetadata.GetSchema(schemaName)
+	schemaMetadata := catalogMetadata.GetSchemaMetadata(schemaName)
 	if schemaMetadata == nil {
 		return
 	}
@@ -224,7 +224,7 @@ func (m CompletionMap) insertAllColumns(c *Completer) {
 		return
 	}
 	for _, schema := range catalogMeta.ListSchemaNames() {
-		schemaMeta := catalogMeta.GetSchema(schema)
+		schemaMeta := catalogMeta.GetSchemaMetadata(schema)
 		if schemaMeta == nil {
 			continue
 		}
@@ -233,19 +233,18 @@ func (m CompletionMap) insertAllColumns(c *Completer) {
 			if tableMeta == nil {
 				continue
 			}
-			for _, column := range tableMeta.GetColumns() {
+			for _, column := range tableMeta.GetProto().GetColumns() {
 				columnID := getColumnID(c.defaultCatalog, schema, table, column.Name)
 				if _, ok := m[columnID]; !ok {
 					definition := fmt.Sprintf("%s.%s.%s | %s", c.defaultCatalog, schema, table, column.Type)
 					if !column.Nullable {
 						definition += ", NOT NULL"
 					}
-					comment := column.UserComment
 					m[columnID] = base.Candidate{
 						Type:       base.CandidateTypeColumn,
 						Text:       c.quotedIdentifierIfNeeded(column.Name),
 						Definition: definition,
-						Comment:    comment,
+						Comment:    column.Comment,
 						Priority:   c.getPriority(c.defaultCatalog, schema, table),
 					}
 				}
@@ -308,7 +307,7 @@ func (m CompletionMap) insertMetadataColumns(c *Completer, catalog string, schem
 			break
 		}
 	}
-	schemaMetadata := catalogMetadata.GetSchema(schemaName)
+	schemaMetadata := catalogMetadata.GetSchemaMetadata(schemaName)
 	if schemaMetadata == nil {
 		return
 	}
@@ -323,19 +322,18 @@ func (m CompletionMap) insertMetadataColumns(c *Completer, catalog string, schem
 	}
 	for _, table := range tableNames {
 		tableMetadata := schemaMetadata.GetTable(table)
-		for _, column := range tableMetadata.GetColumns() {
+		for _, column := range tableMetadata.GetProto().GetColumns() {
 			columnID := getColumnID(catalogName, schemaName, table, column.Name)
 			if _, ok := m[columnID]; !ok {
 				definition := fmt.Sprintf("%s.%s.%s | %s", catalogName, schemaName, table, column.Type)
 				if !column.Nullable {
 					definition += ", NOT NULL"
 				}
-				comment := column.UserComment
 				m[columnID] = base.Candidate{
 					Type:       base.CandidateTypeColumn,
 					Text:       c.quotedIdentifierIfNeeded(column.Name),
 					Definition: definition,
-					Comment:    comment,
+					Comment:    column.Comment,
 					Priority:   c.getPriority(c.defaultCatalog, schema, table),
 				}
 			}
@@ -394,7 +392,7 @@ func (m CompletionMap) insertMetadataViews(c *Completer, catalog string, schema 
 		return
 	}
 
-	schemaMetadata := catalogMetadata.GetSchema(schemaName)
+	schemaMetadata := catalogMetadata.GetSchemaMetadata(schemaName)
 	if schemaMetadata == nil {
 		return
 	}
@@ -1132,7 +1130,8 @@ func skipHeadingSQLs(statement string, caretLine int, caretOffset int) (string, 
 
 	start := 0
 	for i, sql := range list {
-		sqlEndLine := int(sql.End.GetLine())
+		// End.Line is 1-based per proto spec, convert to 0-based for comparison with caretLine
+		sqlEndLine := int(sql.End.GetLine()) - 1
 		sqlEndColumn := int(sql.End.GetColumn())
 		if sqlEndLine > caretLine || (sqlEndLine == caretLine && sqlEndColumn >= caretOffset) {
 			start = i
@@ -1140,13 +1139,15 @@ func skipHeadingSQLs(statement string, caretLine int, caretOffset int) (string, 
 				// The caret is in the first SQL statement, so we don't need to skip any SQL statements.
 				break
 			}
-			previousSQLEndLine := int(list[i-1].End.GetLine())
+			// End.Line is 1-based per proto spec, convert to 0-based
+			previousSQLEndLine := int(list[i-1].End.GetLine()) - 1
 			previousSQLEndColumn := int(list[i-1].End.GetColumn())
 			newCaretLine = caretLine - previousSQLEndLine + 1 // Convert to 1-based.
 			if caretLine == previousSQLEndLine {
 				// The caret is in the same line as the last line of the previous SQL statement.
-				// We need to adjust the caret offset.
-				newCaretOffset = caretOffset - previousSQLEndColumn - 1 // Convert to 0-based.
+				// End.Column is 1-based exclusive, so (End.Column - 1) gives 0-based start of next statement.
+				// newCaretOffset = caretOffset - (previousSQLEndColumn - 1)
+				newCaretOffset = caretOffset - previousSQLEndColumn + 1
 			}
 			break
 		}
@@ -1162,7 +1163,7 @@ func skipHeadingSQLs(statement string, caretLine int, caretOffset int) (string, 
 	return buf.String(), newCaretLine, newCaretOffset
 }
 
-func notEmptySQLCount(list []base.SingleSQL) int {
+func notEmptySQLCount(list []base.Statement) int {
 	count := 0
 	for _, sql := range list {
 		if !sql.Empty {

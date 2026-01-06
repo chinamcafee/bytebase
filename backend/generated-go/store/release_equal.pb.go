@@ -10,25 +10,16 @@ func (x *ReleasePayload_File) Equal(y *ReleasePayload_File) bool {
 	if x == nil || y == nil {
 		return x == nil && y == nil
 	}
-	if x.Id != y.Id {
-		return false
-	}
 	if x.Path != y.Path {
-		return false
-	}
-	if x.Sheet != y.Sheet {
 		return false
 	}
 	if x.SheetSha256 != y.SheetSha256 {
 		return false
 	}
-	if x.Type != y.Type {
-		return false
-	}
 	if x.Version != y.Version {
 		return false
 	}
-	if x.MigrationType != y.MigrationType {
+	if x.EnableGhost != y.EnableGhost {
 		return false
 	}
 	return true
@@ -69,6 +60,9 @@ func (x *ReleasePayload) Equal(y *ReleasePayload) bool {
 		}
 	}
 	if !x.VcsSource.Equal(y.VcsSource) {
+		return false
+	}
+	if x.Type != y.Type {
 		return false
 	}
 	return true

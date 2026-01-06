@@ -70,29 +70,27 @@ import { create } from "@bufbuild/protobuf";
 import { asyncComputed } from "@vueuse/core";
 import type { ButtonProps } from "naive-ui";
 import { NButton, NPopover } from "naive-ui";
-import { computed, onUnmounted, ref, watch } from "vue";
-import { onMounted } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { BBSpin } from "@/bbkit";
-import { releaseServiceClientConnect } from "@/grpcweb";
+import { releaseServiceClientConnect } from "@/connect";
 import type { ComposedDatabase } from "@/types";
 import type { DatabaseMetadata } from "@/types/proto-es/v1/database_service_pb";
 import type { CheckReleaseResponse } from "@/types/proto-es/v1/release_service_pb";
 import {
   CheckReleaseRequestSchema,
   CheckReleaseResponseSchema,
-  Release_File_Type,
-  Release_File_MigrationType,
+  Release_Type,
 } from "@/types/proto-es/v1/release_service_pb";
 import type { Advice } from "@/types/proto-es/v1/sql_service_pb";
-import { AdviceSchema, Advice_Level } from "@/types/proto-es/v1/sql_service_pb";
+import { Advice_Level, AdviceSchema } from "@/types/proto-es/v1/sql_service_pb";
 import type { Defer, VueStyle } from "@/utils";
 import { defer } from "@/utils";
 import ErrorList from "../misc/ErrorList.vue";
-import SQLCheckPanel from "./SQLCheckPanel.vue";
-import SQLCheckSummary from "./SQLCheckSummary.vue";
 import { STATEMENT_SKIP_CHECK_THRESHOLD } from "./common";
 import { useSQLCheckContext } from "./context";
+import SQLCheckPanel from "./SQLCheckPanel.vue";
+import SQLCheckSummary from "./SQLCheckSummary.vue";
 
 const props = withDefaults(
   defineProps<{
@@ -104,7 +102,7 @@ const props = withDefaults(
     databaseMetadata?: DatabaseMetadata;
     buttonProps?: ButtonProps;
     buttonStyle?: VueStyle;
-    migrationType?: Release_File_MigrationType;
+    enableGhost?: boolean;
     showCodeLocation?: boolean;
     ignoreIssueCreationRestriction?: boolean;
     adviceFilter?: (advices: Advice, index: number) => boolean;
@@ -157,18 +155,17 @@ const statementErrors = asyncComputed(async () => {
 }, []);
 
 const runCheckInternal = async (statement: string) => {
-  const { database, migrationType } = props;
+  const { database, enableGhost } = props;
   const request = create(CheckReleaseRequestSchema, {
     parent: database.project,
     release: {
+      type: Release_Type.VERSIONED,
       files: [
         {
           // Use "0" for dummy version.
           version: "0",
-          type: Release_File_Type.VERSIONED,
           statement: new TextEncoder().encode(statement),
-          // Default to DDL migration type.
-          migrationType: migrationType || Release_File_MigrationType.DDL,
+          enableGhost: enableGhost ?? false,
         },
       ],
     },

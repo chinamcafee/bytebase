@@ -2,13 +2,13 @@ import { create } from "@bufbuild/protobuf";
 import dayjs from "dayjs";
 import { uniq } from "lodash-es";
 import { defineStore } from "pinia";
-import { planServiceClientConnect } from "@/grpcweb";
+import { planServiceClientConnect } from "@/connect";
+import type { Plan } from "@/types/proto-es/v1/plan_service_pb";
 import {
-  SearchPlansRequestSchema,
   GetPlanRequestSchema,
+  ListPlansRequestSchema,
   UpdatePlanRequestSchema,
 } from "@/types/proto-es/v1/plan_service_pb";
-import type { Plan } from "@/types/proto-es/v1/plan_service_pb";
 import {
   getTsRangeFromSearchParams,
   getValueFromSearchParams,
@@ -23,7 +23,7 @@ export interface PlanFind {
   createdTsAfter?: number;
   createdTsBefore?: number;
   hasIssue?: boolean;
-  hasPipeline?: boolean;
+  hasRollout?: boolean;
   specType?: string;
   state?: "ACTIVE" | "DELETED";
 }
@@ -49,8 +49,8 @@ export const buildPlanFilter = (find: PlanFind): string => {
   if (find.hasIssue !== undefined) {
     filter.push(`has_issue == ${find.hasIssue}`);
   }
-  if (find.hasPipeline !== undefined) {
-    filter.push(`has_pipeline == ${find.hasPipeline}`);
+  if (find.hasRollout !== undefined) {
+    filter.push(`has_rollout == ${find.hasRollout}`);
   }
   if (find.specType) {
     filter.push(`spec_type == "${find.specType}"`);
@@ -65,8 +65,7 @@ export const buildPlanFindBySearchParams = (
   params: SearchParams,
   defaultFind?: Partial<PlanFind>
 ) => {
-  const { scopes } = params;
-  const projectScope = scopes.find((s) => s.id === "project");
+  const projectScope = getValueFromSearchParams(params, "project");
 
   const createdTsRange = getTsRangeFromSearchParams(params, "created");
   const state = getValueFromSearchParams(params, "state", "" /* prefix='' */, [
@@ -76,7 +75,7 @@ export const buildPlanFindBySearchParams = (
 
   const filter: PlanFind = {
     ...defaultFind,
-    project: `projects/${projectScope?.value ?? "-"}`,
+    project: `projects/${projectScope || "-"}`,
     query: params.query,
     createdTsAfter: createdTsRange?.[0],
     createdTsBefore: createdTsRange?.[1],
@@ -93,18 +92,18 @@ export type ListPlanParams = {
 };
 
 export const usePlanStore = defineStore("plan", () => {
-  const searchPlans = async ({ find, pageSize, pageToken }: ListPlanParams) => {
-    const request = create(SearchPlansRequestSchema, {
+  const listPlans = async ({ find, pageSize, pageToken }: ListPlanParams) => {
+    const request = create(ListPlansRequestSchema, {
       parent: find.project,
       filter: buildPlanFilter(find),
       pageSize,
       pageToken,
     });
     const { plans, nextPageToken } =
-      await planServiceClientConnect.searchPlans(request);
+      await planServiceClientConnect.listPlans(request);
     // Prepare creator for the plans.
-    const users = uniq(plans.map((plan) => plan.creator));
-    await useUserStore().batchGetUsers(users);
+    const users = uniq(plans.map((plan: Plan) => plan.creator));
+    await useUserStore().batchGetOrFetchUsers(users);
     return {
       nextPageToken: nextPageToken,
       plans,
@@ -132,7 +131,7 @@ export const usePlanStore = defineStore("plan", () => {
   };
 
   return {
-    searchPlans,
+    listPlans,
     fetchPlanByName,
     updatePlan,
   };

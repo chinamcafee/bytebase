@@ -15,23 +15,87 @@ import (
 func init() {
 	base.RegisterSplitterFunc(storepb.Engine_CLICKHOUSE, SplitSQL)
 	base.RegisterSplitterFunc(storepb.Engine_SQLITE, SplitSQL)
-	base.RegisterSplitterFunc(storepb.Engine_SPANNER, SplitSQL)
 	base.RegisterSplitterFunc(storepb.Engine_HIVE, SplitSQL)
 	base.RegisterSplitterFunc(storepb.Engine_DATABRICKS, SplitSQL)
 }
 
 // SplitSQL splits the given SQL statement into multiple SQL statements.
-func SplitSQL(statement string) ([]base.SingleSQL, error) {
-	var list []base.SingleSQL
+func SplitSQL(statement string) ([]base.Statement, error) {
+	var list []base.Statement
+	byteOffset := 0
 	err := applyMultiStatements(strings.NewReader(statement), func(sql string) error {
-		list = append(list, base.SingleSQL{
-			Text:  sql,
-			End:   &storepb.Position{Line: 0, Column: 0},
-			Empty: false,
+		// sql may have trailing newline added by applyMultiStatements
+		// Strip trailing whitespace for searching in the original statement
+		sqlTrimmed := strings.TrimRight(sql, "\n\r\t ")
+
+		// Find where the SQL content exists in the remaining statement
+		sqlPos := strings.Index(statement[byteOffset:], sqlTrimmed)
+		if sqlPos == -1 {
+			sqlPos = 0
+		}
+
+		// startPos includes leading whitespace from where previous statement ended
+		startPos := byteOffset
+		// endPos is where the SQL content ends
+		endPos := byteOffset + sqlPos + len(sqlTrimmed)
+
+		// The actual text includes leading whitespace + SQL content
+		text := statement[startPos:endPos]
+
+		// Calculate line and column for Start position
+		startLine, startColumn := base.CalculateLineAndColumn(statement, startPos)
+		// Calculate line and column for End position
+		endLine, endColumn := base.CalculateLineAndColumn(statement, endPos)
+
+		list = append(list, base.Statement{
+			Text: text,
+			Start: &storepb.Position{
+				Line:   int32(startLine + 1),   // 1-based
+				Column: int32(startColumn + 1), // 1-based per proto spec
+			},
+			End: &storepb.Position{
+				Line:   int32(endLine + 1),   // 1-based
+				Column: int32(endColumn + 1), // 1-based per proto spec
+			},
+			Range: &storepb.Range{
+				Start: int32(startPos),
+				End:   int32(endPos),
+			},
+			Empty: isEmptySQL(text),
 		})
+		byteOffset = endPos
 		return nil
 	})
 	return list, err
+}
+
+// isEmptySQL checks if the SQL contains only whitespace and comments.
+func isEmptySQL(sql string) bool {
+	trimmed := strings.TrimSpace(sql)
+	if trimmed == "" {
+		return true
+	}
+	// Check if it's only comments
+	if strings.HasPrefix(trimmed, "--") || strings.HasPrefix(trimmed, "/*") {
+		// Simple heuristic: if after removing comment markers there's no SQL
+		lines := strings.Split(trimmed, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if strings.HasPrefix(line, "--") {
+				continue
+			}
+			if strings.HasPrefix(line, "/*") && strings.HasSuffix(line, "*/") {
+				continue
+			}
+			// Found non-comment content
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 // applyMultiStatements will apply the split statements from scanner.
@@ -99,7 +163,7 @@ func applyMultiStatements(sc io.Reader, f func(string) error) error {
 		}
 		if execute {
 			s := sb.String()
-			s = strings.Trim(s, "\n\t ")
+			// Don't trim - include leading whitespace in Text for position consistency
 			if s != "" {
 				if err := f(s); err != nil {
 					return errors.Wrapf(err, "execute query %q failed", s)
@@ -110,7 +174,7 @@ func applyMultiStatements(sc io.Reader, f func(string) error) error {
 	}
 	// Apply the remaining content.
 	s := sb.String()
-	s = strings.Trim(s, "\n\t ")
+	// Don't trim - include leading whitespace in Text for position consistency
 	if s != "" {
 		if err := f(s); err != nil {
 			return errors.Wrapf(err, "execute query %q failed", s)

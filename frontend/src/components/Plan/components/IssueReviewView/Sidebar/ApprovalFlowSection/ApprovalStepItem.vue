@@ -29,27 +29,40 @@
       </div>
       <div class="mt-1 text-sm text-gray-600">
         <template v-if="status === 'approved'">
-          <div class="flex items-center gap-1">
+          <div class="flex flex-col items-start gap-1">
             <span class="text-xs">{{
               $t("custom-approval.issue-review.approved-by")
             }}</span>
             <ApprovalUserView
               v-if="stepApprover"
               :candidate="stepApprover.principal"
-              size="tiny"
             />
           </div>
         </template>
         <template v-else-if="status === 'rejected'">
-          <div class="flex items-center gap-1">
-            <span class="text-xs">{{
-              $t("custom-approval.issue-review.rejected-by")
-            }}</span>
-            <ApprovalUserView
-              v-if="stepApprover"
-              :candidate="stepApprover.principal"
-              size="tiny"
-            />
+          <div class="flex flex-col gap-1">
+            <div class="flex flex-col items-start gap-1">
+              <span class="text-xs">{{
+                $t("custom-approval.issue-review.rejected-by")
+              }}</span>
+              <ApprovalUserView
+                v-if="stepApprover"
+                :candidate="stepApprover.principal"
+              />
+            </div>
+            <!-- Re-request review button for issue creator -->
+            <div v-if="canReRequest" class="mt-1">
+              <NButton
+                size="tiny"
+                :loading="reRequesting"
+                @click="handleReRequestReview"
+              >
+                <template #icon>
+                  <RotateCcwIcon class="w-3 h-3" />
+                </template>
+                {{ $t("custom-approval.issue-review.re-request-review") }}
+              </NButton>
+            </div>
           </div>
         </template>
         <template v-else-if="status === 'current'">
@@ -57,7 +70,7 @@
             <PotentialApprovers :users="potentialApprovers" />
             <div
               v-if="showSelfApprovalTip"
-              class="px-1 py-0.5 border rounded text-xs bg-yellow-50 border-yellow-600 text-yellow-600"
+              class="px-1 py-0.5 border rounded-sm text-xs bg-yellow-50 border-yellow-600 text-yellow-600"
             >
               {{ $t("custom-approval.issue-review.self-approval-not-allowed") }}
             </div>
@@ -69,29 +82,42 @@
 </template>
 
 <script setup lang="ts">
+import { create } from "@bufbuild/protobuf";
 import { computedAsync } from "@vueuse/core";
 import { uniq } from "lodash-es";
-import { ThumbsUp, User, X } from "lucide-vue-next";
-import { NTimelineItem } from "naive-ui";
-import { computed, watchEffect } from "vue";
+import { RotateCcwIcon, ThumbsUp, User, X } from "lucide-vue-next";
+import { NButton, NTimelineItem } from "naive-ui";
+import { computed, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
+import { useIssueContext } from "@/components/IssueV1";
+import { tryUsePlanContext } from "@/components/Plan/logic";
+import { issueServiceClientConnect } from "@/connect";
 import {
-  useCurrentUserV1,
-  useUserStore,
+  pushNotification,
   useCurrentProjectV1,
+  useCurrentUserV1,
   useGroupStore,
   useProjectIamPolicyStore,
+  useRoleStore,
+  useUserStore,
 } from "@/store";
 import { userNamePrefix } from "@/store/modules/v1/common";
-import { SYSTEM_BOT_EMAIL, groupBindingPrefix, PresetRoleType } from "@/types";
+import { groupBindingPrefix, PresetRoleType, SYSTEM_BOT_EMAIL } from "@/types";
 import { State } from "@/types/proto-es/v1/common_pb";
-import { Issue_Approver_Status } from "@/types/proto-es/v1/issue_service_pb";
 import type {
   Issue,
   Issue_Approver,
 } from "@/types/proto-es/v1/issue_service_pb";
+import {
+  Issue_Approver_Status,
+  RequestIssueRequestSchema,
+} from "@/types/proto-es/v1/issue_service_pb";
 import type { User as UserType } from "@/types/proto-es/v1/user_service_pb";
-import { memberMapToRolesInProjectIAM, isBindingPolicyExpired } from "@/utils";
+import {
+  ensureUserFullName,
+  isBindingPolicyExpired,
+  memberMapToRolesInProjectIAM,
+} from "@/utils";
 import ApprovalUserView from "./ApprovalUserView.vue";
 import PotentialApprovers from "./PotentialApprovers.vue";
 
@@ -104,11 +130,59 @@ const props = defineProps<{
 
 const { t } = useI18n();
 const { project } = useCurrentProjectV1();
-const groupStore = useGroupStore();
+
+// Try to get plan context, fallback to issue context if not available (legacy layout)
+const planContext = tryUsePlanContext();
+const issueContext = planContext ? undefined : useIssueContext();
 const currentUser = useCurrentUserV1();
 const userStore = useUserStore();
+const roleStore = useRoleStore();
+const groupStore = useGroupStore();
 const projectIamPolicyStore = useProjectIamPolicyStore();
 const currentUserEmail = computed(() => currentUser.value.email);
+
+const reRequesting = ref(false);
+
+// Check if current user can re-request review (must be issue creator and step is rejected)
+const canReRequest = computed(() => {
+  const isCreator = props.issue.creator === `users/${currentUserEmail.value}`;
+  const stepIsRejected =
+    stepApprover.value?.status === Issue_Approver_Status.REJECTED;
+  return isCreator && stepIsRejected;
+});
+
+const handleReRequestReview = async () => {
+  if (reRequesting.value) return;
+
+  reRequesting.value = true;
+  try {
+    const request = create(RequestIssueRequestSchema, {
+      name: props.issue.name,
+    });
+    await issueServiceClientConnect.requestIssue(request);
+    // Emit event to trigger issue refresh
+    if (planContext) {
+      planContext.events.emit("status-changed", { eager: true });
+    } else {
+      issueContext?.events.emit("status-changed", { eager: true });
+    }
+
+    pushNotification({
+      module: "bytebase",
+      style: "SUCCESS",
+      title: t("custom-approval.issue-review.re-request-review-success"),
+    });
+  } catch (error) {
+    pushNotification({
+      module: "bytebase",
+      style: "CRITICAL",
+      title: t("common.failed"),
+      description: String(error),
+    });
+  } finally {
+    reRequesting.value = false;
+  }
+};
 
 // Get the approver for this specific step
 const stepApprover = computed(
@@ -180,6 +254,10 @@ const roleName = computed((): string => {
     } else if (role === PresetRoleType.WORKSPACE_ADMIN) {
       return t("role.workspace-admin.self");
     }
+    const customRole = roleStore.getRoleByName(role);
+    if (customRole) {
+      return customRole.title;
+    }
   }
   return t("custom-approval.approval-flow.node.approver");
 });
@@ -189,7 +267,7 @@ const stepRoles = computed(() => {
 });
 
 watchEffect(async () => {
-  const groupNames = new Set<string>();
+  const groupNames: string[] = [];
 
   for (const role of stepRoles.value) {
     const policy = projectIamPolicyStore.getProjectIamPolicy(
@@ -200,17 +278,14 @@ watchEffect(async () => {
         continue;
       }
       for (const member of binding.members) {
-        if (
-          member.startsWith(groupBindingPrefix) &&
-          !groupStore.getGroupByIdentifier(member)
-        ) {
-          groupNames.add(member);
+        if (member.startsWith(groupBindingPrefix)) {
+          groupNames.push(member);
         }
       }
     }
   }
 
-  await groupStore.batchFetchGroups([...groupNames]);
+  await groupStore.batchGetOrFetchGroups(groupNames);
 });
 
 // Get candidates for this approval step
@@ -276,16 +351,15 @@ const potentialApprovers = computedAsync(async () => {
     return [];
   }
 
-  const users: UserType[] = [];
-  for (const email of filteredCandidateEmails.value) {
-    const user = await userStore.getOrFetchUserByIdentifier(email);
-    if (user && user.state === State.ACTIVE) {
-      users.push(user);
-    }
-  }
-
+  const users = await userStore.batchGetOrFetchUsers(
+    filteredCandidateEmails.value.map(ensureUserFullName)
+  );
   // Sort to put current user first if they're in the list
-  return users.sort((a, b) => {
+  return (
+    users.filter((user) => {
+      return user && user.state === State.ACTIVE;
+    }) as UserType[]
+  ).sort((a, b) => {
     if (a.email === currentUserEmail.value) return -1;
     if (b.email === currentUserEmail.value) return 1;
     return a.title.localeCompare(b.title);

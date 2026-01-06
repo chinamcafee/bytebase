@@ -13,14 +13,13 @@
 <script lang="ts" setup>
 import type { DataTableColumn } from "naive-ui";
 import { NCheckbox, NDataTable } from "naive-ui";
-import { computed } from "vue";
-import { h } from "vue";
+import { computed, h } from "vue";
 import { useI18n } from "vue-i18n";
 import { getColumnDefaultValuePlaceholder } from "@/components/SchemaEditorLite";
 import {
-  useSubscriptionV1Store,
-  useDatabaseCatalog,
   getColumnCatalog,
+  useDatabaseCatalog,
+  useSubscriptionV1Store,
 } from "@/store";
 import type { ComposedDatabase } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
@@ -228,7 +227,7 @@ const columns = computed(() => {
       width: 140,
       ellipsis: true,
       render: (column) => {
-        return column.userComment;
+        return column.comment;
       },
     },
     {

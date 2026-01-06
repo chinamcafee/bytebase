@@ -15,10 +15,9 @@
         @click="state.showPopover = !state.showPopover"
         icon-placement="right"
       >
-        <div class="min-w-[8rem] text-left">
+        <div class="min-w-32 text-left">
           <ProjectNameCell
             v-if="isValidProjectName(project.name)"
-            mode="ALL_SHORT"
             :project="project"
           />
           <span v-else class="text-control-placeholder text-sm">

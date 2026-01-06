@@ -112,7 +112,8 @@ type controller struct {
 	workspaceServiceClient       v1connect.WorkspaceServiceClient
 	releaseServiceClient         v1connect.ReleaseServiceClient
 	revisionServiceClient        v1connect.RevisionServiceClient
-	riskServiceClient            v1connect.RiskServiceClient
+	groupServiceClient           v1connect.GroupServiceClient
+	auditLogServiceClient        v1connect.AuditLogServiceClient
 
 	project *v1pb.Project
 
@@ -214,14 +215,15 @@ func (ctl *controller) StartServerWithExternalPg(ctx context.Context) (context.C
 }
 
 func (ctl *controller) initWorkspaceProfile(ctx context.Context) error {
+	// Don't set external_url in the database if it's set via profile (command-line flag),
+	// as our validation will reject it. The profile value takes precedence at runtime.
 	_, err := ctl.settingServiceClient.UpdateSetting(ctx, connect.NewRequest(&v1pb.UpdateSettingRequest{
 		AllowMissing: true,
 		Setting: &v1pb.Setting{
 			Name: "settings/" + v1pb.Setting_WORKSPACE_PROFILE.String(),
-			Value: &v1pb.Value{
-				Value: &v1pb.Value_WorkspaceProfileSettingValue{
-					WorkspaceProfileSettingValue: &v1pb.WorkspaceProfileSetting{
-						ExternalUrl:    ctl.profile.ExternalURL,
+			Value: &v1pb.SettingValue{
+				Value: &v1pb.SettingValue_WorkspaceProfile{
+					WorkspaceProfile: &v1pb.WorkspaceProfileSetting{
 						DisallowSignup: false,
 					},
 				},
@@ -229,8 +231,7 @@ func (ctl *controller) initWorkspaceProfile(ctx context.Context) error {
 		},
 		UpdateMask: &fieldmaskpb.FieldMask{
 			Paths: []string{
-				"value.workspace_profile_setting_value.disallow_signup",
-				"value.workspace_profile_setting_value.external_url",
+				"value.workspace_profile.disallow_signup",
 			},
 		},
 	}))
@@ -297,7 +298,8 @@ func (ctl *controller) start(ctx context.Context, port int) (context.Context, er
 	ctl.workspaceServiceClient = v1connect.NewWorkspaceServiceClient(ctl.client, baseURL, interceptors)
 	ctl.releaseServiceClient = v1connect.NewReleaseServiceClient(ctl.client, baseURL, interceptors)
 	ctl.revisionServiceClient = v1connect.NewRevisionServiceClient(ctl.client, baseURL, interceptors)
-	ctl.riskServiceClient = v1connect.NewRiskServiceClient(ctl.client, baseURL, interceptors)
+	ctl.groupServiceClient = v1connect.NewGroupServiceClient(ctl.client, baseURL, interceptors)
+	ctl.auditLogServiceClient = v1connect.NewAuditLogServiceClient(ctl.client, baseURL, interceptors)
 
 	if err := ctl.waitForHealthz(ctx); err != nil {
 		return nil, errors.Wrap(err, "failed to wait for healthz")

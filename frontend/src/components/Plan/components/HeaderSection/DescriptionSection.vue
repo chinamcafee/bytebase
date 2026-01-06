@@ -23,7 +23,6 @@
           class="pointer-events-none"
           :content="state.description"
           :project="project"
-          :issue-list="[]"
         />
       </div>
     </template>
@@ -63,7 +62,6 @@
         :autofocus="state.shouldAutoFocus"
         :project="project"
         :placeholder="$t('plan.description.placeholder')"
-        :issue-list="[]"
         @change="onUpdateValue"
       />
     </div>
@@ -72,21 +70,27 @@
 
 <script setup lang="ts">
 import { create } from "@bufbuild/protobuf";
-import { PlusIcon, ChevronUpIcon } from "lucide-vue-next";
+import { ChevronUpIcon, PlusIcon } from "lucide-vue-next";
 import { NButton } from "naive-ui";
 import { computed, reactive, watch } from "vue";
 import MarkdownEditor from "@/components/MarkdownEditor";
 import { useResourcePoller } from "@/components/Plan/logic/poller";
-import { planServiceClientConnect } from "@/grpcweb";
-import { useCurrentUserV1, extractUserId, useCurrentProjectV1 } from "@/store";
-import { UpdatePlanRequestSchema } from "@/types/proto-es/v1/plan_service_pb";
-import { PlanSchema } from "@/types/proto-es/v1/plan_service_pb";
-import { hasProjectPermissionV2 } from "@/utils";
+import { planServiceClientConnect } from "@/connect";
+import { useCurrentProjectV1 } from "@/store";
+import {
+  PlanSchema,
+  UpdatePlanRequestSchema,
+} from "@/types/proto-es/v1/plan_service_pb";
 import { usePlanContext } from "../../logic";
 
-const currentUser = useCurrentUserV1();
 const { project } = useCurrentProjectV1();
-const { isCreating, plan, readonly } = usePlanContext();
+const {
+  isCreating,
+  plan,
+  readonly,
+  issue,
+  allowEdit: hasPermission,
+} = usePlanContext();
 const { refreshResources } = useResourcePoller();
 
 const state = reactive({
@@ -104,13 +108,11 @@ const allowEdit = computed(() => {
   if (isCreating.value) {
     return true;
   }
-  if (extractUserId(plan.value.creator) === currentUser.value.email) {
-    return true;
+  // Plans with rollout should have readonly description
+  if (!issue.value && plan.value.hasRollout) {
+    return false;
   }
-  if (hasProjectPermissionV2(project.value, "bb.plans.update")) {
-    return true;
-  }
-  return false;
+  return hasPermission.value;
 });
 
 const handleExpand = (event: MouseEvent) => {

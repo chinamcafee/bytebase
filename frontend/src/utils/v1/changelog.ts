@@ -1,16 +1,13 @@
 import { create } from "@bufbuild/protobuf";
-import { isEqual, isUndefined, orderBy, uniqBy } from "lodash-es";
 import { t } from "@/plugins/i18n";
-import { useDBSchemaV1Store, useDatabaseV1Store } from "@/store";
+import { useDatabaseV1Store } from "@/store";
 import type { ComposedDatabase } from "@/types";
 import { UNKNOWN_ID } from "@/types";
-import { type AffectedTable, EmptyAffectedTable } from "@/types";
+import type { Changelog } from "@/types/proto-es/v1/database_service_pb";
 import {
-  Changelog_MigrationType,
   Changelog_Type,
   ChangelogSchema,
 } from "@/types/proto-es/v1/database_service_pb";
-import type { Changelog } from "@/types/proto-es/v1/database_service_pb";
 import { databaseV1Url, extractDatabaseResourceName } from "./database";
 
 export const extractChangelogUID = (name: string) => {
@@ -47,57 +44,6 @@ export const changelogLink = (changelog: Changelog): string => {
   );
 };
 
-export const getAffectedTablesOfChangelog = (
-  changelog: Changelog
-): AffectedTable[] => {
-  const { databaseName } = extractDatabaseNameAndChangelogUID(changelog.name);
-  const database = useDatabaseV1Store().getDatabaseByName(databaseName);
-  const metadata = useDBSchemaV1Store().getDatabaseMetadata(database.name);
-  return uniqBy(
-    orderBy(
-      changelog.changedResources?.databases
-        .find((db) => db.name === database.databaseName)
-        ?.schemas.map((schema) => {
-          return schema.tables.map((table) => {
-            const dropped = isUndefined(
-              metadata.schemas
-                .find((s) => s.name === schema.name)
-                ?.tables.find((t) => t.name === table.name)
-            );
-            return {
-              schema: schema.name,
-              table: table.name,
-              dropped,
-            };
-          });
-        })
-        .flat() || [],
-      ["dropped"]
-    ),
-    (affectedTable) => `${affectedTable.schema}.${affectedTable.table}`
-  );
-};
-
-export const stringifyAffectedTable = (affectedTable: AffectedTable) => {
-  const { schema, table } = affectedTable;
-  if (schema !== "") {
-    return `${schema}.${table}`;
-  }
-  return table;
-};
-
-export const getAffectedTableDisplayName = (affectedTable: AffectedTable) => {
-  if (isEqual(affectedTable, EmptyAffectedTable)) {
-    return t("changelog.all-tables");
-  }
-
-  let name = stringifyAffectedTable(affectedTable);
-  if (affectedTable.dropped) {
-    name = `${name}(deleted)`;
-  }
-  return name;
-};
-
 export const mockLatestChangelog = (
   database: ComposedDatabase,
   schema: string = ""
@@ -109,23 +55,12 @@ export const mockLatestChangelog = (
   });
 };
 
-export const getChangelogChangeType = (
-  type: Changelog_Type,
-  migrationType?: Changelog_MigrationType
-) => {
+export const getChangelogChangeType = (type: Changelog_Type) => {
   switch (type) {
     case Changelog_Type.SDL:
       return "SDL";
     case Changelog_Type.MIGRATE:
-      switch (migrationType) {
-        case Changelog_MigrationType.DDL:
-        case Changelog_MigrationType.GHOST:
-          return "DDL";
-        case Changelog_MigrationType.DML:
-          return "DML";
-        default:
-          return "DDL";
-      }
+      return t("changelog.type.migrate");
     case Changelog_Type.BASELINE:
       return t("common.baseline");
     default:

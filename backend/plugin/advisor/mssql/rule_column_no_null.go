@@ -5,12 +5,13 @@ import (
 	"fmt"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/tsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/tsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	tsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/tsql"
 )
 
@@ -19,7 +20,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MSSQL, advisor.SchemaRuleColumnNotNull, &ColumnNoNullAdvisor{})
+	advisor.Register(storepb.Engine_MSSQL, storepb.SQLReviewRule_COLUMN_NO_NULL, &ColumnNoNullAdvisor{})
 }
 
 // ColumnNoNullAdvisor is the advisor checking for column no NULL value..
@@ -28,23 +29,28 @@ type ColumnNoNullAdvisor struct {
 
 // Check checks for column no NULL value..
 func (*ColumnNoNullAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewColumnNoNullRule(level, string(checkCtx.Rule.Type))
+	rule := NewColumnNoNullRule(level, checkCtx.Rule.Type.String())
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList(), nil
 }
@@ -123,7 +129,7 @@ func (r *ColumnNoNullRule) exitCreateTable(_ *parser.Create_tableContext) {
 		}
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.ColumnCannotNull.Int32(),
+			Code:          code.ColumnCannotNull.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("Column [%s] is nullable, which is not allowed.", columnName),
 			StartPosition: common.ConvertANTLRLineToPosition(r.currentTableColumnIsNullableLine[columnName]),
@@ -195,7 +201,7 @@ func (r *ColumnNoNullRule) exitAlterTable(_ *parser.Alter_tableContext) {
 		}
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.ColumnCannotNull.Int32(),
+			Code:          code.ColumnCannotNull.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("Column [%s] is nullable, which is not allowed.", columnName),
 			StartPosition: common.ConvertANTLRLineToPosition(r.currentTableColumnIsNullableLine[columnName]),

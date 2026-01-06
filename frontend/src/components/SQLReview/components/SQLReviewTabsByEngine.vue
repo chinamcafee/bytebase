@@ -6,11 +6,11 @@
       :name="engine"
     >
       <template #tab>
-        <div class="flex items-center space-x-2">
+        <div class="flex items-center gap-x-2">
           <RichEngineName
             :engine="engine"
             tag="p"
-            class="text-center text-sm !text-main"
+            class="text-center text-sm text-main!"
           />
           <span
             class="items-center text-xs px-1 py-0.5 rounded-full bg-gray-200 text-gray-800"
@@ -27,17 +27,18 @@
 </template>
 
 <script setup lang="ts">
-import { NTabs, NTabPane } from "naive-ui";
-import { ref, watch, computed } from "vue";
+import { NTabPane, NTabs } from "naive-ui";
+import { computed, ref, watch } from "vue";
 import { RichEngineName } from "@/components/v2";
 import type { RuleTemplateV2 } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
+import { SQLReviewRule_Type } from "@/types/proto-es/v1/review_config_service_pb";
 import { supportedEngineV1List } from "@/utils";
 
 const selectedEngine = ref<Engine>(0); // UNSPECIFIED
 
 const props = defineProps<{
-  ruleMapByEngine: Map<Engine, Map<string, RuleTemplateV2>>;
+  ruleMapByEngine: Map<Engine, Map<SQLReviewRule_Type, RuleTemplateV2>>;
 }>();
 
 watch(
@@ -53,12 +54,14 @@ const engineWithOrderRank = computed(() => {
   }, new Map<Engine, number>());
 });
 
-const sortedData = computed((): [Engine, Map<string, RuleTemplateV2>][] => {
-  return [...props.ruleMapByEngine.entries()].sort(([e1], [e2]) => {
-    return (
-      (engineWithOrderRank.value.get(e1) ?? 0) -
-      (engineWithOrderRank.value.get(e2) ?? 0)
-    );
-  });
-});
+const sortedData = computed(
+  (): [Engine, Map<SQLReviewRule_Type, RuleTemplateV2>][] => {
+    return [...props.ruleMapByEngine.entries()].sort(([e1], [e2]) => {
+      return (
+        (engineWithOrderRank.value.get(e1) ?? 0) -
+        (engineWithOrderRank.value.get(e2) ?? 0)
+      );
+    });
+  }
+);
 </script>

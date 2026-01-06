@@ -46,17 +46,16 @@ type StatementReportExecutor struct {
 	dbFactory    *dbfactory.DBFactory
 }
 
-// Run runs the statement report executor.
-func (e *StatementReportExecutor) Run(ctx context.Context, config *storepb.PlanCheckRunConfig) ([]*storepb.PlanCheckRunResult_Result, error) {
-	sheetUID := int(config.SheetUid)
-	sheet, err := e.store.GetSheet(ctx, &store.FindSheetMessage{UID: &sheetUID})
+// RunForTarget runs the statement report check for a single target.
+func (e *StatementReportExecutor) RunForTarget(ctx context.Context, target *CheckTarget) ([]*storepb.PlanCheckRunResult_Result, error) {
+	fullSheet, err := e.store.GetSheetFull(ctx, target.SheetSha256)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get sheet %d", sheetUID)
+		return nil, err
 	}
-	if sheet == nil {
-		return nil, errors.Errorf("sheet %d not found", sheetUID)
+	if fullSheet == nil {
+		return nil, errors.Errorf("sheet full %s not found", target.SheetSha256)
 	}
-	if sheet.Size > common.MaxSheetCheckSize {
+	if fullSheet.Size > common.MaxSheetCheckSize {
 		return []*storepb.PlanCheckRunResult_Result{
 			{
 				Status:  storepb.Advice_WARNING,
@@ -66,17 +65,18 @@ func (e *StatementReportExecutor) Run(ctx context.Context, config *storepb.PlanC
 			},
 		}, nil
 	}
-	statement, err := e.store.GetSheetStatementByID(ctx, sheetUID)
+
+	instanceID, databaseName, err := common.GetInstanceDatabaseID(target.Target)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to parse target %s", target.Target)
 	}
 
-	instance, err := e.store.GetInstanceV2(ctx, &store.FindInstanceMessage{ResourceID: &config.InstanceId})
+	instance, err := e.store.GetInstance(ctx, &store.FindInstanceMessage{ResourceID: &instanceID})
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get instance %v", config.InstanceId)
+		return nil, errors.Wrapf(err, "failed to get instance %v", instanceID)
 	}
 	if instance == nil {
-		return nil, errors.Errorf("instance %s not found", config.InstanceId)
+		return nil, errors.Errorf("instance %s not found", instanceID)
 	}
 	if !common.EngineSupportStatementReport(instance.Metadata.GetEngine()) {
 		return []*storepb.PlanCheckRunResult_Result{
@@ -89,16 +89,16 @@ func (e *StatementReportExecutor) Run(ctx context.Context, config *storepb.PlanC
 		}, nil
 	}
 
-	database, err := e.store.GetDatabaseV2(ctx, &store.FindDatabaseMessage{InstanceID: &instance.ResourceID, DatabaseName: &config.DatabaseName})
+	database, err := e.store.GetDatabase(ctx, &store.FindDatabaseMessage{InstanceID: &instance.ResourceID, DatabaseName: &databaseName})
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get database %q", config.DatabaseName)
+		return nil, errors.Wrapf(err, "failed to get database %q", databaseName)
 	}
 	if database == nil {
-		return nil, errors.Errorf("database not found %q", config.DatabaseName)
+		return nil, errors.Errorf("database not found %q", databaseName)
 	}
 
 	// Check statement syntax error.
-	_, syntaxAdvices := e.sheetManager.GetASTsForChecks(instance.Metadata.GetEngine(), statement)
+	_, syntaxAdvices := e.sheetManager.GetStatementsForChecks(instance.Metadata.GetEngine(), fullSheet.Statement)
 	if len(syntaxAdvices) > 0 {
 		advice := syntaxAdvices[0]
 		return []*storepb.PlanCheckRunResult_Result{
@@ -122,7 +122,7 @@ func (e *StatementReportExecutor) Run(ctx context.Context, config *storepb.PlanC
 		Code:   common.Ok.Int32(),
 		Title:  "OK",
 	}
-	summaryReport, err := GetSQLSummaryReport(ctx, e.store, e.sheetManager, e.dbFactory, database, statement)
+	summaryReport, err := GetSQLSummaryReport(ctx, e.store, e.sheetManager, e.dbFactory, database, fullSheet.Statement)
 	if err != nil {
 		return nil, err
 	}
@@ -146,10 +146,10 @@ func GetSQLSummaryReport(ctx context.Context, stores *store.Store, sheetManager 
 	if databaseSchema == nil {
 		return nil, errors.Errorf("database schema %s not found", database.String())
 	}
-	if databaseSchema.GetMetadata() == nil {
+	if databaseSchema.GetProto() == nil {
 		return nil, errors.Errorf("database schema metadata %s not found", database.String())
 	}
-	instance, err := stores.GetInstanceV2(ctx, &store.FindInstanceMessage{ResourceID: &database.InstanceID})
+	instance, err := stores.GetInstance(ctx, &store.FindInstanceMessage{ResourceID: &database.InstanceID})
 	if err != nil {
 		return nil, err
 	}
@@ -157,21 +157,22 @@ func GetSQLSummaryReport(ctx context.Context, stores *store.Store, sheetManager 
 		return nil, errors.Errorf("instance not found: %s", database.InstanceID)
 	}
 
-	asts, syntaxAdvices := sheetManager.GetASTsForChecks(instance.Metadata.GetEngine(), statement)
+	stmts, syntaxAdvices := sheetManager.GetStatementsForChecks(instance.Metadata.GetEngine(), statement)
 	if len(syntaxAdvices) > 0 {
 		// Return nil as it should already be checked before running this function.
 		return nil, nil
 	}
+	asts := parserbase.ExtractASTs(stmts)
 
 	var explainCalculator getAffectedRowsFromExplain
 	var sqlTypes []string
 	var defaultSchema string
-	useDatabaseOwner, err := getUseDatabaseOwner(ctx, stores, instance, database)
+	project, err := stores.GetProject(ctx, &store.FindProjectMessage{ResourceID: &database.ProjectID})
 	if err != nil {
 		return nil, err
 	}
 	driver, err := dbFactory.GetAdminDatabaseDriver(ctx, instance, database, db.ConnectionContext{
-		UseDatabaseOwner: useDatabaseOwner,
+		TenantMode: project.Setting.GetPostgresDatabaseTenantMode(),
 	})
 	if err != nil {
 		return nil, err
@@ -186,9 +187,13 @@ func GetSQLSummaryReport(ctx context.Context, stores *store.Store, sheetManager 
 		}
 		explainCalculator = pd.CountAffectedRows
 
-		sqlTypes, err = pg.GetStatementTypes(asts)
+		stmtsWithPos, err := pg.GetStatementTypes(asts)
 		if err != nil {
 			return nil, err
+		}
+		sqlTypes = make([]string, len(stmtsWithPos))
+		for i, stmt := range stmtsWithPos {
+			sqlTypes[i] = stmt.Type
 		}
 		defaultSchema = "public"
 	case storepb.Engine_REDSHIFT:
@@ -273,24 +278,6 @@ func GetSQLSummaryReport(ctx context.Context, stores *store.Store, sheetManager 
 		AffectedRows:     totalAffectedRows,
 		ChangedResources: changeSummary.ChangedResources.Build(),
 	}, nil
-}
-
-func getUseDatabaseOwner(ctx context.Context, stores *store.Store, instance *store.InstanceMessage, database *store.DatabaseMessage) (bool, error) {
-	if instance.Metadata.GetEngine() != storepb.Engine_POSTGRES {
-		return false, nil
-	}
-
-	// Check the project setting to see if we should use the database owner.
-	project, err := stores.GetProjectV2(ctx, &store.FindProjectMessage{ResourceID: &database.ProjectID})
-	if err != nil {
-		return false, errors.Wrapf(err, "failed to get project")
-	}
-
-	if project.Setting == nil {
-		return false, nil
-	}
-
-	return project.Setting.PostgresDatabaseTenantMode, nil
 }
 
 type getAffectedRowsFromExplain func(context.Context, string) (int64, error)

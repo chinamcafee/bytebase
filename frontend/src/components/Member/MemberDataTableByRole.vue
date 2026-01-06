@@ -14,15 +14,15 @@
 import { orderBy } from "lodash-es";
 import { Building2Icon, Trash2Icon } from "lucide-vue-next";
 import type { DataTableColumn } from "naive-ui";
-import { NDataTable, NTooltip, NPopconfirm } from "naive-ui";
+import { NDataTable, NPopconfirm, NTooltip } from "naive-ui";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import GroupNameCell from "@/components/User/Settings/UserDataTableByGroup/cells/GroupNameCell.vue";
-import { PresetRoleType } from "@/types";
+import { UserNameCell } from "@/components/v2/Model/cells";
+import { PresetRoleType, unknownUser } from "@/types";
 import type { Binding } from "@/types/proto-es/v1/iam_policy_pb";
 import type { User } from "@/types/proto-es/v1/user_service_pb";
 import { displayRoleTitle, isBindingPolicyExpired } from "@/utils";
-import UserNameCell from "./MemberDataTable/cells/UserNameCell.vue";
 import UserOperationsCell from "./MemberDataTable/cells/UserOperationsCell.vue";
 import type { MemberBinding } from "./types";
 
@@ -67,7 +67,7 @@ const columns = computed(() => {
       render: (row: RoleRowData | BindingRowData) => {
         if (row.type === "role") {
           return (
-            <div class="flex items-center space-x-1">
+            <div class="flex items-center gap-x-1">
               {row.scope === "workspace" && (
                 <NTooltip
                   v-slots={{
@@ -98,7 +98,12 @@ const columns = computed(() => {
         }
 
         return (
-          <UserNameCell binding={row.member} onClickUser={props.onClickUser} />
+          <UserNameCell
+            user={row.member.user ?? unknownUser()}
+            onClickUser={props.onClickUser}
+            allowEdit={false}
+            showMfaEnabled={false}
+          />
         );
       },
     },
@@ -112,12 +117,15 @@ const columns = computed(() => {
             row.scope === "project" &&
             props.allowEdit && (
               <NPopconfirm
+                positiveButtonProps={{
+                  type: "error",
+                }}
                 onPositiveClick={() =>
                   emit("revoke-role", row.name, row.id.endsWith(".expired"))
                 }
                 v-slots={{
                   trigger: () => (
-                    <Trash2Icon class="w-4 h-auto ml-auto mr-3 cursor-pointer" />
+                    <Trash2Icon class=" text-red-600 w-4 h-auto ml-auto mr-3 cursor-pointer" />
                   ),
                   default: () => t("settings.members.revoke-access-alert"),
                 }}

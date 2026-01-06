@@ -29,17 +29,17 @@
         />
       </div>
       <div
-        class="flex flex-col lg:hidden border px-2 pb-4 divide-y space-y-4 divide-block-border"
+        class="flex flex-col lg:hidden border px-2 pb-4 divide-y divide-block-border"
       >
         <div
           v-for="rule in category.ruleList"
           :key="rule.type"
-          class="pt-4 space-y-3"
+          class="pt-4 flex flex-col gap-y-3"
         >
           <div class="flex justify-between items-center gap-x-2">
             <div class="flex items-center gap-x-1">
               <span>
-                {{ getRuleLocalization(rule.type, rule.engine).title }}
+                {{ getRuleLocalization(ruleTypeToString(rule.type), rule.engine).title }}
                 <a
                   :href="`https://docs.bytebase.com/sql-review/review-rules#${rule.type}`"
                   target="_blank"
@@ -79,7 +79,7 @@
             @level-change="updateLevel(rule, $event)"
           />
           <p class="textinfolabel">
-            {{ getRuleLocalization(rule.type, rule.engine).description }}
+            {{ getRuleLocalization(ruleTypeToString(rule.type), rule.engine).description }}
           </p>
         </div>
       </div>
@@ -97,13 +97,13 @@
 
 <script lang="tsx" setup>
 import { ExternalLinkIcon, PencilIcon } from "lucide-vue-next";
-import { NCheckbox, NDataTable, NButton, NDivider } from "naive-ui";
 import type { DataTableColumn } from "naive-ui";
+import { NButton, NCheckbox, NDataTable, NDivider } from "naive-ui";
 import { computed, reactive } from "vue";
 import { useI18n } from "vue-i18n";
 import type { RuleTemplateV2 } from "@/types";
-import { getRuleLocalization } from "@/types";
-import { SQLReviewRuleLevel } from "@/types/proto-es/v1/org_policy_service_pb";
+import { getRuleLocalization, ruleTypeToString } from "@/types";
+import { SQLReviewRule_Level } from "@/types/proto-es/v1/review_config_service_pb";
 import RuleConfig from "./RuleConfigComponents/RuleConfig.vue";
 import RuleLevelSwitch from "./RuleLevelSwitch.vue";
 import type { RuleListWithCategory } from "./SQLReviewCategoryTabFilter.vue";
@@ -165,20 +165,20 @@ const columns = computed(() => {
       type: "expand",
       expandable: (rule: RuleTemplateV2) => {
         return !!(
-          rule.comment ||
-          getRuleLocalization(rule.type, rule.engine).description ||
-          rule.componentList.length > 0
+          getRuleLocalization(ruleTypeToString(rule.type), rule.engine)
+            .description || rule.componentList.length > 0
         );
       },
       renderExpand: (rule: RuleTemplateV2) => {
-        const comment =
-          rule.comment ||
-          getRuleLocalization(rule.type, rule.engine).description;
+        const comment = getRuleLocalization(
+          ruleTypeToString(rule.type),
+          rule.engine
+        ).description;
         return (
           <div class="px-10">
             <p class="w-full text-left text-gray-500">{comment}</p>
             {rule.componentList.length > 0 && !!comment && (
-              <NDivider class={"!my-4"} />
+              <NDivider class={"my-4!"} />
             )}
             {rule.componentList.length > 0 && (
               <RuleConfig
@@ -205,12 +205,17 @@ const columns = computed(() => {
       key: "name",
       render: (rule: RuleTemplateV2) => {
         return (
-          <div class="flex items-center space-x-2">
-            <span>{getRuleLocalization(rule.type, rule.engine).title}</span>
+          <div class="flex items-center gap-x-2">
+            <span>
+              {
+                getRuleLocalization(ruleTypeToString(rule.type), rule.engine)
+                  .title
+              }
+            </span>
             <a
               href={`https://docs.bytebase.com/sql-review/review-rules#${rule.type}`}
               target="_blank"
-              class="flex flex-row space-x-2 items-center text-base text-gray-500 hover:text-gray-900"
+              class="flex flex-row gap-x-2 items-center text-base text-gray-500 hover:text-gray-900"
             >
               <ExternalLinkIcon class="w-4 h-4" />
             </a>
@@ -297,7 +302,7 @@ const onRuleChanged = (update: Partial<RuleTemplateV2>) => {
   emit("rule-upsert", state.activeRule, update);
 };
 
-const updateLevel = (rule: RuleTemplateV2, level: SQLReviewRuleLevel) => {
+const updateLevel = (rule: RuleTemplateV2, level: SQLReviewRule_Level) => {
   emit("rule-upsert", rule, { level });
 };
 </script>

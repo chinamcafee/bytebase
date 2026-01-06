@@ -6,7 +6,7 @@
       <div class="radio-set-row">
         <NRadioGroup
           :value="transferSource"
-          class="space-x-4"
+          class="gap-x-4"
           size="large"
           @update:value="$emit('update:transferSource', $event)"
         >
@@ -20,20 +20,21 @@
       </div>
       <NInputGroup style="width: auto">
         <EnvironmentSelect
-          class="!w-40"
-          :environment-name="
+          class="w-40!"
+          :value="
             environment ? formatEnvironmentName(environment.id) : undefined
           "
-          @update:environment-name="changeEnvironmentFilter"
+          @update:value="changeEnvironmentFilter($event as (string | undefined))"
         />
         <InstanceSelect
-          class="!w-40"
+          class="w-40!"
           :project-name="sourceProjectName"
-          :instance="instance?.name"
-          @update:instance-name="changeInstanceFilter"
+          :value="instance?.name ?? ''"
+          :environment-name="environment?.name"
+          @update:value="changeInstanceFilter"
         />
         <SearchBox
-          class="!w-40"
+          class="w-40!"
           :value="searchText"
           :placeholder="$t('database.filter-database')"
           @update:value="$emit('update:search-text', $event)"
@@ -84,6 +85,7 @@ const emit = defineEmits<{
 }>();
 
 const changeEnvironmentFilter = (name: string | undefined) => {
+  emit("update:instance", undefined);
   if (!isValidEnvironmentName(name)) {
     return emit("update:environment", undefined);
   }

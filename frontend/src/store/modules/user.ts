@@ -4,13 +4,13 @@ import { computedAsync } from "@vueuse/core";
 import { isEqual, isUndefined, uniq } from "lodash-es";
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { userServiceClientConnect } from "@/grpcweb";
-import { silentContextKey } from "@/grpcweb/context-key";
+import { userServiceClientConnect } from "@/connect";
+import { silentContextKey } from "@/connect/context-key";
 import {
-  isValidProjectName,
   allUsersUser,
-  SYSTEM_BOT_USER_NAME,
+  isValidProjectName,
   isValidUserName,
+  SYSTEM_BOT_USER_NAME,
   unknownUser,
   userBindingPrefix,
 } from "@/types";
@@ -19,19 +19,19 @@ import type {
   UpdateUserRequest,
   User,
 } from "@/types/proto-es/v1/user_service_pb";
-import { UserType } from "@/types/proto-es/v1/user_service_pb";
 import {
+  BatchGetUsersRequestSchema,
+  CreateUserRequestSchema,
+  DeleteUserRequestSchema,
   GetUserRequestSchema,
   ListUsersRequestSchema,
-  CreateUserRequestSchema,
-  UpdateUserRequestSchema,
-  DeleteUserRequestSchema,
   UndeleteUserRequestSchema,
-  BatchGetUsersRequestSchema,
+  UpdateUserRequestSchema,
+  UserType,
 } from "@/types/proto-es/v1/user_service_pb";
 import { ensureUserFullName } from "@/utils";
 import { useActuatorV1Store } from "./v1/actuator";
-import { userNamePrefix, extractUserId } from "./v1/common";
+import { extractUserId, userNamePrefix } from "./v1/common";
 import { usePermissionStore } from "./v1/permission";
 
 export interface UserFilter {
@@ -143,6 +143,18 @@ export const useUserStore = defineStore("user", () => {
     return setUser(response);
   };
 
+  const updateEmail = async (oldEmail: string, newEmail: string) => {
+    const originData = await getOrFetchUserByIdentifier(oldEmail);
+    if (!originData) {
+      throw new Error(`user with email ${oldEmail} not found`);
+    }
+    const response = await userServiceClientConnect.updateEmail({
+      name: `users/${oldEmail}`,
+      email: newEmail,
+    });
+    return setUser(response);
+  };
+
   const archiveUser = async (user: User) => {
     const request = create(DeleteUserRequestSchema, {
       name: user.name,
@@ -162,30 +174,36 @@ export const useUserStore = defineStore("user", () => {
     return setUser(response);
   };
 
-  const batchGetUsers = async (userNameList: string[]) => {
-    const distinctList = uniq(userNameList)
-      .filter(
-        (name) =>
-          Boolean(name) &&
-          (name.startsWith(userNamePrefix) ||
-            name.startsWith(userBindingPrefix))
-      )
-      .map((name) => ensureUserFullName(name))
-      .filter(
-        (name) =>
-          isValidUserName(name) && getUserByIdentifier(name) === undefined
+  const batchGetOrFetchUsers = async (userNameList: string[]) => {
+    const validList = uniq(userNameList).filter(
+      (name) =>
+        Boolean(name) &&
+        (name.startsWith(userNamePrefix) || name.startsWith(userBindingPrefix))
+    );
+    const pendingFetch = validList
+      .filter((name) => {
+        return getUserByIdentifier(name) === undefined;
+      })
+      .map((name) => ensureUserFullName(name));
+    if (pendingFetch.length === 0) {
+      return validList.map(getUserByIdentifier);
+    }
+
+    try {
+      const request = create(BatchGetUsersRequestSchema, {
+        names: pendingFetch,
+      });
+      const response = await userServiceClientConnect.batchGetUsers(request, {
+        contextValues: createContextValues().set(silentContextKey, true),
+      });
+      for (const user of response.users) {
+        setUser(user);
+      }
+    } finally {
+      return validList.map(
+        (name) => getUserByIdentifier(name) ?? unknownUser(name)
       );
-    if (distinctList.length === 0) {
-      return [];
     }
-    const request = create(BatchGetUsersRequestSchema, {
-      names: distinctList,
-    });
-    const response = await userServiceClientConnect.batchGetUsers(request);
-    for (const user of response.users) {
-      setUser(user);
-    }
-    return response.users;
   };
 
   const getOrFetchUserByIdentifier = async (
@@ -203,7 +221,9 @@ export const useUserStore = defineStore("user", () => {
     }
     const cached = userRequestCache.get(fullname);
     if (cached) return cached;
-    const request = fetchUser(fullname, silent).then((user) => setUser(user));
+    const request = fetchUser(fullname, silent)
+      .then((user) => setUser(user))
+      .catch(() => unknownUser(fullname));
     userRequestCache.set(fullname, request);
     return request;
   };
@@ -232,7 +252,8 @@ export const useUserStore = defineStore("user", () => {
     fetchUserList,
     createUser,
     updateUser,
-    batchGetUsers,
+    updateEmail,
+    batchGetOrFetchUsers,
     getOrFetchUserByIdentifier,
     getUserByIdentifier,
     archiveUser,

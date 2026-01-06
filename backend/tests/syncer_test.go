@@ -217,7 +217,7 @@ func TestSyncerForPostgreSQL(t *testing.T) {
 	a.NoError(err)
 	instance := instanceResp.Msg
 
-	err = ctl.createDatabaseV2(ctx, ctl.project, instance, nil /* environment */, databaseName, "bytebase")
+	err = ctl.createDatabase(ctx, ctl.project, instance, nil /* environment */, databaseName, "bytebase")
 	a.NoError(err)
 
 	databaseResp, err := ctl.databaseServiceClient.GetDatabase(ctx, connect.NewRequest(&v1pb.GetDatabaseRequest{
@@ -229,7 +229,6 @@ func TestSyncerForPostgreSQL(t *testing.T) {
 	sheetResp, err := ctl.sheetServiceClient.CreateSheet(ctx, connect.NewRequest(&v1pb.CreateSheetRequest{
 		Parent: ctl.project.Name,
 		Sheet: &v1pb.Sheet{
-			Title:   "create schema",
 			Content: []byte(createSchema),
 		},
 	}))
@@ -237,7 +236,7 @@ func TestSyncerForPostgreSQL(t *testing.T) {
 	sheet := sheetResp.Msg
 
 	// Create an issue that updates database schema.
-	err = ctl.changeDatabase(ctx, ctl.project, database, sheet, v1pb.MigrationType_DDL)
+	err = ctl.changeDatabase(ctx, ctl.project, database, sheet, false)
 	a.NoError(err)
 
 	latestSchemaMetadataResp, err := ctl.databaseServiceClient.GetDatabaseMetadata(ctx, connect.NewRequest(&v1pb.GetDatabaseMetadataRequest{
@@ -501,7 +500,7 @@ func TestSyncerForMySQL(t *testing.T) {
 	a.NoError(err)
 	instance := instanceResp.Msg
 
-	err = ctl.createDatabaseV2(ctx, ctl.project, instance, nil /* environment */, databaseName, "")
+	err = ctl.createDatabase(ctx, ctl.project, instance, nil /* environment */, databaseName, "")
 	a.NoError(err)
 
 	databaseResp, err := ctl.databaseServiceClient.GetDatabase(ctx, connect.NewRequest(&v1pb.GetDatabaseRequest{
@@ -513,7 +512,6 @@ func TestSyncerForMySQL(t *testing.T) {
 	sheetResp, err := ctl.sheetServiceClient.CreateSheet(ctx, connect.NewRequest(&v1pb.CreateSheetRequest{
 		Parent: ctl.project.Name,
 		Sheet: &v1pb.Sheet{
-			Title:   "create schema",
 			Content: []byte(createSchema),
 		},
 	}))
@@ -521,7 +519,7 @@ func TestSyncerForMySQL(t *testing.T) {
 	sheet := sheetResp.Msg
 
 	// Create an issue that updates database schema.
-	err = ctl.changeDatabase(ctx, ctl.project, database, sheet, v1pb.MigrationType_DDL)
+	err = ctl.changeDatabase(ctx, ctl.project, database, sheet, false)
 	a.NoError(err)
 
 	latestSchemaMetadataResp, err := ctl.databaseServiceClient.GetDatabaseMetadata(ctx, connect.NewRequest(&v1pb.GetDatabaseMetadataRequest{

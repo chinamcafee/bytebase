@@ -19,25 +19,10 @@ func (x *Task) Equal(y *Task) bool {
 	if x.SpecId != y.SpecId {
 		return false
 	}
-	if x.SheetId != y.SheetId {
+	if x.GetSheetSha256() != y.GetSheetSha256() {
 		return false
 	}
-	if x.EnvironmentId != y.EnvironmentId {
-		return false
-	}
-	if x.DatabaseName != y.DatabaseName {
-		return false
-	}
-	if x.TableName != y.TableName {
-		return false
-	}
-	if x.CharacterSet != y.CharacterSet {
-		return false
-	}
-	if x.Collation != y.Collation {
-		return false
-	}
-	if x.SchemaVersion != y.SchemaVersion {
+	if x.GetRelease() != y.GetRelease() {
 		return false
 	}
 	if x.EnablePriorBackup != y.EnablePriorBackup {
@@ -55,29 +40,7 @@ func (x *Task) Equal(y *Task) bool {
 			return false
 		}
 	}
-	if !x.TaskReleaseSource.Equal(y.TaskReleaseSource) {
-		return false
-	}
-	if x.MigrateType != y.MigrateType {
-		return false
-	}
-	if x.Password != y.Password {
-		return false
-	}
-	if x.Format != y.Format {
-		return false
-	}
-	return true
-}
-
-func (x *TaskReleaseSource) Equal(y *TaskReleaseSource) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.File != y.File {
+	if x.EnableGhost != y.EnableGhost {
 		return false
 	}
 	return true

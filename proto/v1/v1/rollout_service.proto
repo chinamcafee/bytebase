@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package bytebase.v1;
 
+import "buf/validate/validate.proto";
 import "google/api/annotations.proto";
 import "google/api/client.proto";
 import "google/api/field_behavior.proto";
@@ -9,16 +10,15 @@ import "google/api/resource.proto";
 import "google/protobuf/timestamp.proto";
 import "v1/annotation.proto";
 import "v1/common.proto";
-import "v1/plan_service.proto";
 
 option go_package = "github.com/bytebase/bytebase/backend/generated-go/v1";
 
 // RolloutService manages the execution of deployment plans.
 service RolloutService {
-  // Retrieves a rollout by name.
+  // Retrieves a rollout by its plan name.
   // Permissions required: bb.rollouts.get
   rpc GetRollout(GetRolloutRequest) returns (Rollout) {
-    option (google.api.http) = {get: "/v1/{name=projects/*/rollouts/*}"};
+    option (google.api.http) = {get: "/v1/{name=projects/*/plans/*/rollout}"};
     option (google.api.method_signature) = "name";
     option (bytebase.v1.permission) = "bb.rollouts.get";
     option (bytebase.v1.auth_method) = IAM;
@@ -33,35 +33,23 @@ service RolloutService {
     option (bytebase.v1.auth_method) = IAM;
   }
 
-  // Creates a new rollout from a plan.
+  // Creates a new rollout for a plan.
   // Permissions required: bb.rollouts.create
   rpc CreateRollout(CreateRolloutRequest) returns (Rollout) {
     option (google.api.http) = {
-      post: "/v1/{parent=projects/*}/rollouts"
-      body: "rollout"
+      post: "/v1/{parent=projects/*/plans/*}/rollout"
+      body: "*"
     };
-    option (google.api.method_signature) = "parent,rollout";
+    option (google.api.method_signature) = "parent";
     option (bytebase.v1.permission) = "bb.rollouts.create";
     option (bytebase.v1.auth_method) = IAM;
     option (bytebase.v1.audit) = true;
   }
 
-  // Previews the rollout that would be created from a plan.
-  // Permissions required: bb.rollouts.preview
-  rpc PreviewRollout(PreviewRolloutRequest) returns (Rollout) {
-    option (google.api.http) = {
-      post: "/v1/{project=projects/*}:previewRollout"
-      body: "*"
-    };
-    option (google.api.method_signature) = "name";
-    option (bytebase.v1.permission) = "bb.rollouts.preview";
-    option (bytebase.v1.auth_method) = IAM;
-  }
-
   // Lists task run executions for a task.
   // Permissions required: bb.taskRuns.list
   rpc ListTaskRuns(ListTaskRunsRequest) returns (ListTaskRunsResponse) {
-    option (google.api.http) = {get: "/v1/{parent=projects/*/rollouts/*/stages/*/tasks/*}/taskRuns"};
+    option (google.api.http) = {get: "/v1/{parent=projects/*/plans/*/rollout/stages/*/tasks/*}/taskRuns"};
     option (google.api.method_signature) = "parent";
     option (bytebase.v1.permission) = "bb.taskRuns.list";
     option (bytebase.v1.auth_method) = IAM;
@@ -70,7 +58,7 @@ service RolloutService {
   // Retrieves a task run by name.
   // Permissions required: bb.taskRuns.list
   rpc GetTaskRun(GetTaskRunRequest) returns (TaskRun) {
-    option (google.api.http) = {get: "/v1/{name=projects/*/rollouts/*/stages/*/tasks/*/taskRuns/*}"};
+    option (google.api.http) = {get: "/v1/{name=projects/*/plans/*/rollout/stages/*/tasks/*/taskRuns/*}"};
     option (google.api.method_signature) = "name";
     option (bytebase.v1.permission) = "bb.taskRuns.list";
     option (bytebase.v1.auth_method) = IAM;
@@ -79,7 +67,7 @@ service RolloutService {
   // Retrieves execution logs for a task run.
   // Permissions required: bb.taskRuns.list
   rpc GetTaskRunLog(GetTaskRunLogRequest) returns (TaskRunLog) {
-    option (google.api.http) = {get: "/v1/{parent=projects/*/rollouts/*/stages/*/tasks/*/taskRuns/*}/log"};
+    option (google.api.http) = {get: "/v1/{parent=projects/*/plans/*/rollout/stages/*/tasks/*/taskRuns/*}/log"};
     option (google.api.method_signature) = "parent";
     option (bytebase.v1.permission) = "bb.taskRuns.list";
     option (bytebase.v1.auth_method) = IAM;
@@ -88,7 +76,7 @@ service RolloutService {
   // Retrieves database session information for a running task.
   // Permissions required: bb.taskRuns.list
   rpc GetTaskRunSession(GetTaskRunSessionRequest) returns (TaskRunSession) {
-    option (google.api.http) = {get: "/v1/{parent=projects/*/rollouts/*/stages/*/tasks/*/taskRuns/*}/session"};
+    option (google.api.http) = {get: "/v1/{parent=projects/*/plans/*/rollout/stages/*/tasks/*/taskRuns/*}/session"};
     option (google.api.method_signature) = "parent";
     option (bytebase.v1.permission) = "bb.taskRuns.list";
     option (bytebase.v1.auth_method) = IAM;
@@ -98,40 +86,43 @@ service RolloutService {
   // Permissions required: bb.taskRuns.create (or issue creator for data export issues, or user with rollout policy role for the environment)
   rpc BatchRunTasks(BatchRunTasksRequest) returns (BatchRunTasksResponse) {
     option (google.api.http) = {
-      post: "/v1/{parent=projects/*/rollouts/*/stages/*}/tasks:batchRun"
+      post: "/v1/{parent=projects/*/plans/*/rollout/stages/*}/tasks:batchRun"
       body: "*"
     };
     option (google.api.method_signature) = "parent";
     option (bytebase.v1.auth_method) = CUSTOM;
+    option (bytebase.v1.audit) = true;
   }
 
   // Skips multiple tasks in a rollout stage.
   // Permissions required: bb.taskRuns.create (or issue creator for data export issues, or user with rollout policy role for the environment)
   rpc BatchSkipTasks(BatchSkipTasksRequest) returns (BatchSkipTasksResponse) {
     option (google.api.http) = {
-      post: "/v1/{parent=projects/*/rollouts/*/stages/*}/tasks:batchSkip"
+      post: "/v1/{parent=projects/*/plans/*/rollout/stages/*}/tasks:batchSkip"
       body: "*"
     };
     option (google.api.method_signature) = "parent";
     option (bytebase.v1.auth_method) = CUSTOM;
+    option (bytebase.v1.audit) = true;
   }
 
   // Cancels multiple running task executions.
   // Permissions required: bb.taskRuns.create (or issue creator for data export issues, or user with rollout policy role for the environment)
   rpc BatchCancelTaskRuns(BatchCancelTaskRunsRequest) returns (BatchCancelTaskRunsResponse) {
     option (google.api.http) = {
-      post: "/v1/{parent=projects/*/rollouts/*/stages/*/tasks/*}/taskRuns:batchCancel"
+      post: "/v1/{parent=projects/*/plans/*/rollout/stages/*/tasks/*}/taskRuns:batchCancel"
       body: "*"
     };
     option (google.api.method_signature) = "parent";
     option (bytebase.v1.auth_method) = CUSTOM;
+    option (bytebase.v1.audit) = true;
   }
 
   // Generates rollback SQL for a completed task run.
   // Permissions required: bb.taskRuns.list
   rpc PreviewTaskRunRollback(PreviewTaskRunRollbackRequest) returns (PreviewTaskRunRollbackResponse) {
     option (google.api.http) = {
-      post: "/v1/{name=projects/*/rollouts/*/stages/*/tasks/*/taskRuns/*}:previewRollback"
+      post: "/v1/{name=projects/*/plans/*/rollout/stages/*/tasks/*/taskRuns/*}:previewRollback"
       body: "*"
     };
     option (google.api.method_signature) = "name";
@@ -141,54 +132,58 @@ service RolloutService {
 }
 
 message BatchRunTasksRequest {
-  // The name of the parent of the tasks.
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}
-  string parent = 1;
+  // The stage name for the tasks.
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference) = {type: "bytebase.com/Stage"}
+  ];
   // The tasks to run.
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}
   repeated string tasks = 2;
 
-  // The reason for running the tasks.
-  string reason = 3;
-
   // The task run should run after run_time.
-  optional google.protobuf.Timestamp run_time = 4;
+  optional google.protobuf.Timestamp run_time = 3;
 }
 
 message BatchRunTasksResponse {}
 
 message BatchSkipTasksRequest {
-  // The name of the parent of the tasks.
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}
-  string parent = 1;
+  // The stage name for the tasks.
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference) = {type: "bytebase.com/Stage"}
+  ];
   // The tasks to skip.
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}
   repeated string tasks = 2;
 
   // The reason for skipping the tasks.
-  string reason = 3;
+  string reason = 3 [(buf.validate.field).string.max_len = 1000];
 }
 
 message BatchSkipTasksResponse {}
 
 message BatchCancelTaskRunsRequest {
-  // The name of the parent of the taskRuns.
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}
-  // Use `projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/-` to cancel task runs under the same stage.
-  string parent = 1;
+  // The task name for the taskRuns.
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}
+  // Use `projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/-` to cancel task runs under the same stage.
+  string parent = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference) = {type: "bytebase.com/Task"}
+  ];
   // The taskRuns to cancel.
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
   repeated string task_runs = 2;
-
-  // The reason for canceling the task runs.
-  string reason = 3;
 }
 
 message BatchCancelTaskRunsResponse {}
 
 message GetRolloutRequest {
   // The name of the rollout to retrieve.
-  // Format: projects/{project}/rollouts/{rollout}
+  // This is the rollout resource name, which is the plan name plus /rollout suffix.
+  // Format: projects/{project}/plans/{plan}/rollout
   string name = 1 [
     (google.api.field_behavior) = REQUIRED,
     (google.api.resource_reference) = {type: "bytebase.com/Rollout"}
@@ -221,13 +216,11 @@ message ListRolloutsRequest {
   // The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
   //
   // Supported filters:
-  // - creator: the rollout creator full name in "users/{email or id}" format, support "==" operator.
   // - update_time: rollout update time in "2006-01-02T15:04:05Z07:00" format, support ">=" or "<=" operator.
-  // - task_type: the task type, support "==" and "in" operators, check the Task.Type enum for the values.
+  // - task_type: the task type, support "in" operator, check the Task.Type enum for the values.
   //
   // For example:
-  // creator == "users/ed@bytebase.com" && update_time >= "2025-01-02T15:04:05Z07:00"
-  // task_type == "DATABASE_MIGRATE"
+  // update_time >= "2025-01-02T15:04:05Z07:00"
   // task_type in ["DATABASE_MIGRATE", "DATABASE_EXPORT"]
   string filter = 4;
 }
@@ -242,43 +235,24 @@ message ListRolloutsResponse {
 }
 
 message CreateRolloutRequest {
-  // The parent project where this rollout will be created.
-  // Format: projects/{project}
+  // The parent plan for which this rollout will be created.
+  // Format: projects/{project}/plans/{plan}
   string parent = 1 [
     (google.api.field_behavior) = REQUIRED,
-    (google.api.resource_reference) = {type: "bytebase.com/Project"}
+    (google.api.resource_reference) = {type: "bytebase.com/Plan"}
   ];
 
-  // The rollout to create.
-  Rollout rollout = 2 [(google.api.field_behavior) = REQUIRED];
-
-  // Create the rollout and the stages up to the target stage.
+  // Create the rollout only for the specified target.
   // Format: environments/{environment}
   // If unspecified, all stages are created.
   // If set to "", no stages are created.
   optional string target = 3;
-
-  // If set, validate the request and preview the rollout, but
-  // do not actually create it.
-  bool validate_only = 4;
-}
-
-message PreviewRolloutRequest {
-  // The name of the project.
-  // Format: projects/{project}
-  string project = 1 [
-    (google.api.field_behavior) = REQUIRED,
-    (google.api.resource_reference) = {type: "bytebase.com/Project"}
-  ];
-
-  // The plan used to preview rollout.
-  Plan plan = 2;
 }
 
 message ListTaskRunsRequest {
-  // The parent, which owns this collection of plans.
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}
-  // Use "projects/{project}/rollouts/{rollout}/stages/-/tasks/-" to list all taskRuns from a rollout.
+  // The parent, which owns this collection of taskRuns.
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}
+  // Use "projects/{project}/plans/{plan}/rollout/stages/-/tasks/-" to list all taskRuns from a rollout.
   string parent = 1 [
     (google.api.field_behavior) = REQUIRED,
     (google.api.resource_reference) = {type: "bytebase.com/Task"}
@@ -291,7 +265,7 @@ message ListTaskRunsResponse {
 }
 
 message GetTaskRunRequest {
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
   string name = 1 [
     (google.api.field_behavior) = REQUIRED,
     (google.api.resource_reference) = {type: "bytebase.com/TaskRun"}
@@ -299,8 +273,7 @@ message GetTaskRunRequest {
 }
 
 message GetTaskRunLogRequest {
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
-  // TODO(d): check the resource_reference.
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
   string parent = 1 [
     (google.api.field_behavior) = REQUIRED,
     (google.api.resource_reference) = {type: "bytebase.com/TaskRun"}
@@ -310,77 +283,59 @@ message GetTaskRunLogRequest {
 message Rollout {
   option (google.api.resource) = {
     type: "bytebase.com/Rollout"
-    pattern: "projects/{project}/rollouts/{rollout}"
+    pattern: "projects/{project}/plans/{plan}/rollout"
   };
 
-  reserved 2;
-
   // The resource name of the rollout.
-  // Format: projects/{project}/rollouts/{rollout}
+  // Format: projects/{project}/plans/{plan}/rollout
   string name = 1;
-
-  // The plan that this rollout is based on.
-  // Format: projects/{project}/plans/{plan}
-  string plan = 3 [(google.api.field_behavior) = REQUIRED];
 
   // The title of the rollout, inherited from the associated plan.
   // This field is output only and cannot be directly set.
-  string title = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
+  string title = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   // Stages and thus tasks of the rollout.
-  repeated Stage stages = 5;
+  repeated Stage stages = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
 
-  // Format: users/hello@world.com
-  string creator = 6 [(google.api.field_behavior) = OUTPUT_ONLY];
+  google.protobuf.Timestamp create_time = 6 [(google.api.field_behavior) = OUTPUT_ONLY];
 
-  google.protobuf.Timestamp create_time = 7 [(google.api.field_behavior) = OUTPUT_ONLY];
-
-  google.protobuf.Timestamp update_time = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
-
-  // The issue associated with the rollout. Could be empty.
-  // Format: projects/{project}/issues/{issue}
-  string issue = 9 [(google.api.field_behavior) = OUTPUT_ONLY];
+  google.protobuf.Timestamp update_time = 7 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message Stage {
   option (google.api.resource) = {
     type: "bytebase.com/Stage"
-    pattern: "projects/{project}/rollouts/{rollout}/stages/{stage}"
+    pattern: "projects/{project}/plans/{plan}/rollout/stages/{stage}"
   };
 
-  reserved 2;
-
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}
   // Use "-" for {stage} when the stage has no environment or deleted environment.
   string name = 1;
 
   // id is the environment id of the stage.
   // e.g., "prod".
   // Use "-" when the stage has no environment or deleted environment.
-  string id = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
+  string id = 2 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   // environment is the environment of the stage.
   // Format: environments/{environment} for valid environments, or "environments/-" for stages without environment or with deleted environments.
-  string environment = 4;
+  string environment = 3;
 
   // The tasks within this stage.
-  repeated Task tasks = 5;
+  repeated Task tasks = 4;
 }
 
 message Task {
   option (google.api.resource) = {
     type: "bytebase.com/Task"
-    pattern: "projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}"
+    pattern: "projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}"
   };
 
-  reserved 2;
-
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}
   string name = 1;
 
   // A UUID4 string that uniquely identifies the Spec.
-  // Could be empty if the rollout of the task does not have an associating plan.
-  string spec_id = 4;
+  string spec_id = 2;
 
   enum Status {
     // Unspecified status.
@@ -401,9 +356,9 @@ message Task {
     SKIPPED = 7;
   }
   // Status is the status of the task.
-  Status status = 5;
+  Status status = 3;
   // The reason why the task was skipped.
-  string skipped_reason = 15;
+  string skipped_reason = 4;
 
   enum Type {
     // Unspecified task type.
@@ -416,95 +371,68 @@ message Task {
     // Database migration task that applies versioned schema changes.
     // Use payload DatabaseUpdate.
     DATABASE_MIGRATE = 3;
-    // Database SDL (Schema Definition Language) task that synchronizes declarative schema.
-    // Use payload DatabaseUpdate.
-    DATABASE_SDL = 6;
     // Database export task that exports query results or table data.
     // Use payload DatabaseDataExport.
-    DATABASE_EXPORT = 5;
+    DATABASE_EXPORT = 4;
   }
-  Type type = 6;
+  Type type = 5;
 
   // Format: instances/{instance} if the task is DatabaseCreate.
   // Format: instances/{instance}/databases/{database}
-  string target = 8;
+  string target = 6;
 
   oneof payload {
-    DatabaseCreate database_create = 9;
-    DatabaseUpdate database_update = 11;
-    DatabaseDataExport database_data_export = 16;
+    DatabaseCreate database_create = 7;
+    DatabaseUpdate database_update = 8;
+    DatabaseDataExport database_data_export = 9;
   }
 
   // The update_time is the update time of latest task run.
   // If there are no task runs, it will be empty.
-  optional google.protobuf.Timestamp update_time = 13 [(google.api.field_behavior) = OUTPUT_ONLY];
+  optional google.protobuf.Timestamp update_time = 10 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   // The run_time is the scheduled run time of latest task run.
   // If there are no task runs or the task run is not scheduled, it will be empty.
-  optional google.protobuf.Timestamp run_time = 21 [(google.api.field_behavior) = OUTPUT_ONLY];
+  optional google.protobuf.Timestamp run_time = 11 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   // Payload for creating a new database.
   message DatabaseCreate {
-    // The project owning the database.
-    // Format: projects/{project}
-    string project = 1;
-    // Database name.
-    string database = 2;
-    // Table name.
-    string table = 3;
     // Format: projects/{project}/sheets/{sheet}
     string sheet = 4;
-    // The character set for the database.
-    string character_set = 5;
-    // The collation for the database.
-    string collation = 6;
-    // The environment the database belongs to.
-    string environment = 7;
   }
 
   // Payload for updating a database schema.
   message DatabaseUpdate {
-    // Format: projects/{project}/sheets/{sheet}
-    string sheet = 1;
-    // The target schema version after this update.
-    string schema_version = 2;
-    // The type of database change (MIGRATE or SDL).
-    DatabaseChangeType database_change_type = 3;
-    // migration_type is only set when database_change_type is MIGRATE.
-    MigrationType migration_type = 4;
+    // The source can be either a sheet or a release.
+    oneof source {
+      // Format: projects/{project}/sheets/{sheet}
+      string sheet = 1;
+      // Format: projects/{project}/releases/{release}
+      string release = 4;
+    }
   }
 
   // Payload for exporting database data.
   message DatabaseDataExport {
-    // The resource name of the target.
-    // Format: instances/{instance-id}/databases/{database-name}
-    string target = 1;
     // The resource name of the sheet.
     // Format: projects/{project}/sheets/{sheet}
     string sheet = 2;
-    // The format of the exported file.
-    ExportFormat format = 3;
-    // The zip password provided by users.
-    // Leave it empty if no needs to encrypt the zip file.
-    optional string password = 4;
   }
 }
 
 message TaskRun {
   option (google.api.resource) = {
     type: "bytebase.com/TaskRun"
-    pattern: "projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}"
+    pattern: "projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}"
   };
 
-  reserved 2, 12, 15;
-
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
   string name = 1;
 
   // Format: users/hello@world.com
-  string creator = 3;
-  google.protobuf.Timestamp create_time = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
-  google.protobuf.Timestamp update_time = 6 [(google.api.field_behavior) = OUTPUT_ONLY];
+  string creator = 2;
+  google.protobuf.Timestamp create_time = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
+  google.protobuf.Timestamp update_time = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   enum Status {
     // Unspecified status.
@@ -519,21 +447,18 @@ message TaskRun {
     FAILED = 4;
     // Task run execution was canceled by a user.
     CANCELED = 5;
+    // Task run is ready for immediate execution.
+    AVAILABLE = 6;
   }
   // The current execution status of the task run.
-  Status status = 8;
+  Status status = 5;
 
   // Below are the results of a task run.
   // Detailed information about the task run result.
-  string detail = 9;
-  // The resource name of the changelog.
-  // Format: instances/{instance}/databases/{database}/changelogs/{changelog}
-  string changelog = 20 [(google.api.field_behavior) = OUTPUT_ONLY];
-  // The schema version after this task run completes.
-  string schema_version = 11;
+  string detail = 6;
 
   // The time when the task run started execution.
-  google.protobuf.Timestamp start_time = 14 [(google.api.field_behavior) = OUTPUT_ONLY];
+  google.protobuf.Timestamp start_time = 9 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   enum ExportArchiveStatus {
     // Unspecified export archive status.
@@ -544,38 +469,12 @@ message TaskRun {
     EXPORTED = 2;
   }
   // The export archive status for data export tasks.
-  ExportArchiveStatus export_archive_status = 16;
+  ExportArchiveStatus export_archive_status = 10;
 
-  // Prior backup detail for rollback purposes.
-  message PriorBackupDetail {
-    // A single backup table mapping.
-    message Item {
-      // Table information.
-      message Table {
-        // The database information.
-        // Format: instances/{instance}/databases/{database}
-        string database = 1;
-        // The schema name.
-        string schema = 2;
-        // The table name.
-        string table = 3;
-      }
-
-      // The original table information.
-      Table source_table = 1;
-      // The target backup table information.
-      Table target_table = 2;
-      // The start position in the SQL statement.
-      Position start_position = 3;
-      // The end position in the SQL statement.
-      Position end_position = 4;
-    }
-
-    // The list of backed up tables.
-    repeated Item items = 1;
-  }
-  // The prior backup detail that will be used to rollback the task run.
-  PriorBackupDetail prior_backup_detail = 17;
+  // Indicates whether a prior backup was created for this task run.
+  // When true, rollback SQL can be generated via PreviewTaskRunRollback.
+  // Backup details are available in the task run logs.
+  bool has_prior_backup = 11;
 
   // Information about task run scheduling.
   message SchedulerInfo {
@@ -586,42 +485,28 @@ message TaskRun {
     message WaitingCause {
       // The reason the task run is waiting.
       oneof cause {
-        // Waiting due to connection limit reached.
-        bool connection_limit = 1;
-        // Waiting for another task to complete.
-        Task task = 2;
         // Waiting due to parallel tasks limit.
         bool parallel_tasks_limit = 3;
-      }
-      // Information about a blocking task.
-      message Task {
-        // Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}
-        string task = 1;
-        // Format: projects/{project}/issues/{issue}
-        string issue = 2;
       }
     }
     // The cause for the task run waiting.
     WaitingCause waiting_cause = 2;
   }
   // Scheduling information about the task run.
-  SchedulerInfo scheduler_info = 18 [(google.api.field_behavior) = OUTPUT_ONLY];
-
-  // Format: projects/{project}/sheets/{sheet}
-  string sheet = 19 [(google.api.field_behavior) = OUTPUT_ONLY];
+  SchedulerInfo scheduler_info = 12 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   // The task run should run after run_time.
   // This can only be set when creating the task run calling BatchRunTasks.
-  optional google.protobuf.Timestamp run_time = 21 [(google.api.field_behavior) = OUTPUT_ONLY];
+  optional google.protobuf.Timestamp run_time = 14 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message TaskRunLog {
   option (google.api.resource) = {
     type: "bytebase.com/TaskRunLog"
-    pattern: "projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}/log"
+    pattern: "projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}/log"
   };
 
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}/log
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}/log
   string name = 1;
 
   // The log entries for this task run.
@@ -639,8 +524,6 @@ message TaskRunLogEntry {
     COMMAND_EXECUTE = 2;
     // Database synchronization.
     DATABASE_SYNC = 3;
-    // Task run status update.
-    TASK_RUN_STATUS_UPDATE = 4;
     // Transaction control (BEGIN, COMMIT, ROLLBACK).
     TRANSACTION_CONTROL = 5;
     // Prior backup operation.
@@ -649,29 +532,31 @@ message TaskRunLogEntry {
     RETRY_INFO = 7;
     // Schema diff computation.
     COMPUTE_DIFF = 8;
+    // Release file execution.
+    RELEASE_FILE_EXECUTE = 9;
   }
   // The type of this log entry.
   Type type = 1;
   // The time when the log was recorded.
-  google.protobuf.Timestamp log_time = 6;
+  google.protobuf.Timestamp log_time = 2;
   // The deployment ID for this log entry.
-  string deploy_id = 12;
+  string deploy_id = 3;
   // Schema dump details (if type is SCHEMA_DUMP).
-  SchemaDump schema_dump = 2;
+  SchemaDump schema_dump = 4;
   // Command execution details (if type is COMMAND_EXECUTE).
-  CommandExecute command_execute = 3;
+  CommandExecute command_execute = 5;
   // Database sync details (if type is DATABASE_SYNC).
-  DatabaseSync database_sync = 4;
-  // Task run status update details (if type is TASK_RUN_STATUS_UPDATE).
-  TaskRunStatusUpdate task_run_status_update = 5;
+  DatabaseSync database_sync = 6;
   // Transaction control details (if type is TRANSACTION_CONTROL).
-  TransactionControl transaction_control = 7;
+  TransactionControl transaction_control = 8;
   // Prior backup details (if type is PRIOR_BACKUP).
-  PriorBackup prior_backup = 8;
+  PriorBackup prior_backup = 9;
   // Retry information details (if type is RETRY_INFO).
-  RetryInfo retry_info = 9;
+  RetryInfo retry_info = 10;
   // Compute diff details (if type is COMPUTE_DIFF).
-  ComputeDiff compute_diff = 10;
+  ComputeDiff compute_diff = 11;
+  // Release file execution details (if type is RELEASE_FILE_EXECUTE).
+  ReleaseFileExecute release_file_execute = 12;
 
   // Schema dump operation details.
   message SchemaDump {
@@ -687,14 +572,18 @@ message TaskRunLogEntry {
   message CommandExecute {
     // When the command was logged.
     google.protobuf.Timestamp log_time = 1;
-    // Either `command_indexes` or `statement` is set.
-    // The indexes of the executed commands.
-    repeated int32 command_indexes = 2;
+
+    // The byte offset range of the executed command in the sheet.
+    // Uses byte offsets (not character indices) for efficient slicing of sheet content bytes.
+    // Example: For "SELECT 你好;" in a UTF-8 sheet, range [0, 13) represents all 13 bytes.
+    Range range = 2;
+
     // The executed statement.
     string statement = 4;
 
     // The response from executing the command.
     CommandResponse response = 3;
+
     // Command execution response.
     message CommandResponse {
       // When the response was logged.
@@ -719,21 +608,6 @@ message TaskRunLogEntry {
     string error = 3;
   }
 
-  // Task run status update details.
-  message TaskRunStatusUpdate {
-    // The new status.
-    Status status = 1;
-    // Internal status for task run execution.
-    enum Status {
-      // Unspecified status.
-      STATUS_UNSPECIFIED = 0;
-      // The task run is ready to be executed by the scheduler.
-      RUNNING_WAITING = 1;
-      // The task run is being executed by the scheduler.
-      RUNNING_RUNNING = 2;
-    }
-  }
-
   // Transaction control operation details.
   message TransactionControl {
     // Transaction control type.
@@ -755,12 +629,41 @@ message TaskRunLogEntry {
 
   // Prior backup operation details.
   message PriorBackup {
+    // Prior backup detail for rollback purposes.
+    message PriorBackupDetail {
+      // A single backup table mapping.
+      message Item {
+        // Table information.
+        message Table {
+          // The database information.
+          // Format: instances/{instance}/databases/{database}
+          string database = 1;
+          // The schema name.
+          string schema = 2;
+          // The table name.
+          string table = 3;
+        }
+
+        // The original table information.
+        Table source_table = 1;
+        // The target backup table information.
+        Table target_table = 2;
+        // The start position in the SQL statement.
+        Position start_position = 3;
+        // The end position in the SQL statement.
+        Position end_position = 4;
+      }
+
+      // The list of backed up tables.
+      repeated Item items = 1;
+    }
+
     // When the backup started.
     google.protobuf.Timestamp start_time = 1;
     // When the backup ended.
     google.protobuf.Timestamp end_time = 2;
     // The backup details.
-    TaskRun.PriorBackupDetail prior_backup_detail = 3;
+    PriorBackupDetail prior_backup_detail = 3;
     // Error message if the backup failed.
     string error = 4;
   }
@@ -784,10 +687,18 @@ message TaskRunLogEntry {
     // Error message if computation failed.
     string error = 3;
   }
+
+  // Release file execution details.
+  message ReleaseFileExecute {
+    // The version of the file being executed (e.g., "0001").
+    string version = 1;
+    // The file path within the release (e.g., "2.2/V0001_create_table.sql").
+    string file_path = 2;
+  }
 }
 
 message GetTaskRunSessionRequest {
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
   string parent = 1 [
     (google.api.field_behavior) = REQUIRED,
     (google.api.resource_reference) = {type: "bytebase.com/TaskRun"}
@@ -797,10 +708,10 @@ message GetTaskRunSessionRequest {
 message TaskRunSession {
   option (google.api.resource) = {
     type: "bytebase.com/TaskRunSession"
-    pattern: "projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}/session"
+    pattern: "projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}/session"
   };
 
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}/session
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}/session
   string name = 1;
 
   // Database-specific session information.
@@ -853,7 +764,7 @@ message TaskRunSession {
 }
 
 message PreviewTaskRunRollbackRequest {
-  // Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
   string name = 1 [
     (google.api.field_behavior) = REQUIRED,
     (google.api.resource_reference) = {type: "bytebase.com/TaskRun"}

@@ -5,10 +5,8 @@ import (
 	"strconv"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/snowsql-parser"
+	parser "github.com/bytebase/parser/snowflake"
 	"github.com/pkg/errors"
-
-	parsererror "github.com/bytebase/bytebase/backend/plugin/parser/errors"
 
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
@@ -48,13 +46,16 @@ func newQuerySpanExtractor(defaultDatabase, defaultSchema string, gCtx base.GetQ
 func (q *querySpanExtractor) getQuerySpan(ctx context.Context, statement string) (*base.QuerySpan, error) {
 	q.ctx = ctx
 
-	parseResult, err := ParseSnowSQL(statement)
+	parseResults, err := ParseSnowSQL(statement)
 	if err != nil {
 		return nil, err
 	}
-	if parseResult == nil {
-		return nil, nil
+
+	if len(parseResults) != 1 {
+		return nil, errors.Errorf("expected exactly 1 statement, got %d", len(parseResults))
 	}
+
+	parseResult := parseResults[0]
 	tree := parseResult.Tree
 	if tree == nil {
 		return nil, nil
@@ -95,7 +96,7 @@ func (q *querySpanExtractor) getQuerySpan(ctx context.Context, statement string)
 	antlr.ParseTreeWalkerDefault.Walk(listener, tree)
 	err = listener.err
 	if err != nil {
-		var resourceNotFound *parsererror.ResourceNotFoundError
+		var resourceNotFound *base.ResourceNotFoundError
 		if errors.As(err, &resourceNotFound) {
 			return &base.QuerySpan{
 				SourceColumns: accessTables,
@@ -1105,7 +1106,7 @@ func (q *querySpanExtractor) findTableSchema(objectName parser.IObject_nameConte
 			if normalizedSchemaName != "" && normalizedSchemaName != schemaSchema {
 				continue
 			}
-			schema := database.GetSchema(normalizedSchemaName)
+			schema := database.GetSchemaMetadata(normalizedSchemaName)
 			if schema == nil {
 				return "", nil, errors.Errorf(`schema %s.%s is not found`, normalizedDatabaseName, normalizedSchemaName)
 			}
@@ -1118,7 +1119,7 @@ func (q *querySpanExtractor) findTableSchema(objectName parser.IObject_nameConte
 				if tableSchema == nil {
 					return "", nil, errors.Errorf(`table %s.%s.%s is not found`, normalizedDatabaseName, normalizedSchemaName, normalizedTableName)
 				}
-				columns := tableSchema.GetColumns()
+				columns := tableSchema.GetProto().GetColumns()
 				return normalizedDatabaseName, &base.PhysicalTable{
 					Name:     tableSchema.GetProto().Name,
 					Database: normalizedDatabaseName,

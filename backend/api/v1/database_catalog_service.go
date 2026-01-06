@@ -8,7 +8,6 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -18,15 +17,13 @@ import (
 // DatabaseCatalogService implements the database catalog service.
 type DatabaseCatalogService struct {
 	v1connect.UnimplementedDatabaseCatalogServiceHandler
-	store          *store.Store
-	licenseService *enterprise.LicenseService
+	store *store.Store
 }
 
 // NewDatabaseCatalogService creates a new DatabaseCatalogService.
-func NewDatabaseCatalogService(store *store.Store, licenseService *enterprise.LicenseService) *DatabaseCatalogService {
+func NewDatabaseCatalogService(store *store.Store) *DatabaseCatalogService {
 	return &DatabaseCatalogService{
-		store:          store,
-		licenseService: licenseService,
+		store: store,
 	}
 }
 
@@ -37,24 +34,34 @@ func (s *DatabaseCatalogService) GetDatabaseCatalog(ctx context.Context, req *co
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 
-	database, err := getDatabaseMessage(ctx, s.store, databaseResourceName)
+	instanceID, databaseName, err := common.GetInstanceDatabaseID(databaseResourceName)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "failed to parse %q", databaseResourceName))
 	}
-	dbSchema, err := s.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
+	database, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		InstanceID:   &instanceID,
+		DatabaseName: &databaseName,
+	})
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get database"))
+	}
+	if database == nil {
+		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("database %q not found", databaseResourceName))
+	}
+	dbMetadata, err := s.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
 		InstanceID:   database.InstanceID,
 		DatabaseName: database.DatabaseName,
 	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	if dbSchema == nil {
+	if dbMetadata == nil {
 		return connect.NewResponse(&v1pb.DatabaseCatalog{
 			Name: fmt.Sprintf("%s%s/%s%s%s", common.InstanceNamePrefix, database.InstanceID, common.DatabaseIDPrefix, database.DatabaseName, common.CatalogSuffix),
 		}), nil
 	}
 
-	return connect.NewResponse(convertDatabaseConfig(database, dbSchema.GetConfig())), nil
+	return connect.NewResponse(convertDatabaseConfig(database, dbMetadata.GetConfig())), nil
 }
 
 // UpdateDatabaseCatalog updates a database catalog.
@@ -64,19 +71,29 @@ func (s *DatabaseCatalogService) UpdateDatabaseCatalog(ctx context.Context, req 
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 
-	database, err := getDatabaseMessage(ctx, s.store, databaseResourceName)
+	instanceID, databaseName, err := common.GetInstanceDatabaseID(databaseResourceName)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "failed to parse %q", databaseResourceName))
+	}
+	database, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		InstanceID:   &instanceID,
+		DatabaseName: &databaseName,
+	})
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get database"))
+	}
+	if database == nil {
+		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("database %q not found", databaseResourceName))
 	}
 
-	dbSchema, err := s.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
+	dbMetadata, err := s.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
 		InstanceID:   database.InstanceID,
 		DatabaseName: database.DatabaseName,
 	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	if dbSchema == nil {
+	if dbMetadata == nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("database schema metadata not found"))
 	}
 

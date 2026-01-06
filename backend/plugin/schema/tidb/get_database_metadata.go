@@ -8,7 +8,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pkg/errors"
@@ -43,10 +42,9 @@ func GetDatabaseMetadata(schemaText string) (*storepb.DatabaseSchemaMetadata, er
 	}
 
 	extractor := &metadataExtractor{
-		schemas:   make(map[string]*storepb.SchemaMetadata),
-		tables:    make(map[tableKey]*storepb.TableMetadata),
-		views:     make(map[viewKey]*storepb.ViewMetadata),
-		functions: make(map[functionKey]*storepb.FunctionMetadata),
+		schemas: make(map[string]*storepb.SchemaMetadata),
+		tables:  make(map[tableKey]*storepb.TableMetadata),
+		views:   make(map[viewKey]*storepb.ViewMetadata),
 		result: &storepb.DatabaseSchemaMetadata{
 			Name: "",
 		},
@@ -85,16 +83,6 @@ func GetDatabaseMetadata(schemaText string) (*storepb.DatabaseSchemaMetadata, er
 	})
 	defaultSchema.Views = views
 
-	// Add functions to schema
-	var functions []*storepb.FunctionMetadata
-	for _, function := range extractor.functions {
-		functions = append(functions, function)
-	}
-	slices.SortFunc(functions, func(a, b *storepb.FunctionMetadata) int {
-		return strings.Compare(a.Name, b.Name)
-	})
-	defaultSchema.Functions = functions
-
 	extractor.result.Schemas = []*storepb.SchemaMetadata{defaultSchema}
 
 	return extractor.result, nil
@@ -110,16 +98,10 @@ type viewKey struct {
 	name   string
 }
 
-type functionKey struct {
-	schema string // nolint:unused
-	name   string // nolint:unused
-}
-
 type metadataExtractor struct {
-	schemas   map[string]*storepb.SchemaMetadata
-	tables    map[tableKey]*storepb.TableMetadata
-	views     map[viewKey]*storepb.ViewMetadata
-	functions map[functionKey]*storepb.FunctionMetadata
+	schemas map[string]*storepb.SchemaMetadata
+	tables  map[tableKey]*storepb.TableMetadata
+	views   map[viewKey]*storepb.ViewMetadata
 
 	result *storepb.DatabaseSchemaMetadata
 }
@@ -199,7 +181,6 @@ func (m *metadataExtractor) processCreateTable(stmt *ast.CreateTableStmt) error 
 				// Handle comment - extract from various expression types
 				if comment := m.extractCommentFromExpr(option.Expr); comment != "" {
 					column.Comment = comment
-					column.UserComment = comment
 				}
 			case ast.ColumnOptionOnUpdate:
 				if onUpdate := m.getExpressionValue(option.Expr); onUpdate != "" {
@@ -317,7 +298,6 @@ func (m *metadataExtractor) processCreateTable(stmt *ast.CreateTableStmt) error 
 			table.Collation = option.StrValue
 		case ast.TableOptionComment:
 			table.Comment = option.StrValue
-			table.UserComment = option.StrValue
 			// Check for TiDB-specific features in the comment
 			m.processTiDBTableComment(option.StrValue, table)
 		case ast.TableOptionAutoIncrement:
@@ -594,17 +574,17 @@ func (*metadataExtractor) getIndexColumnsInfo(keys []*ast.IndexPartSpecification
 	return expressions, keyLengths, descending
 }
 
-func (*metadataExtractor) getReferenceAction(action model.ReferOptionType) string {
+func (*metadataExtractor) getReferenceAction(action ast.ReferOptionType) string {
 	switch action {
-	case model.ReferOptionCascade:
+	case ast.ReferOptionCascade:
 		return "CASCADE"
-	case model.ReferOptionSetNull:
+	case ast.ReferOptionSetNull:
 		return "SET NULL"
-	case model.ReferOptionRestrict:
+	case ast.ReferOptionRestrict:
 		return "RESTRICT"
-	case model.ReferOptionNoAction:
+	case ast.ReferOptionNoAction:
 		return "NO ACTION"
-	case model.ReferOptionSetDefault:
+	case ast.ReferOptionSetDefault:
 		return "SET DEFAULT"
 	default:
 		return ""
@@ -688,7 +668,7 @@ func (*metadataExtractor) getIndexType(constraint *ast.Constraint) string {
 
 	// Check for specific index types in TiDB
 	if constraint.Option != nil {
-		if constraint.Option.Tp == model.IndexTypeHash {
+		if constraint.Option.Tp == ast.IndexTypeHash {
 			indexType = "HASH"
 		} else if constraint.Option.Comment != "" {
 			// Check for FULLTEXT or SPATIAL in comments

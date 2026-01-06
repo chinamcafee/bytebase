@@ -1,12 +1,8 @@
 <template>
   <div class="flex items-start gap-3 px-3 py-2 border rounded-lg bg-gray-50">
-    <component
-      :is="statusIcon"
-      class="w-5 h-5 flex-shrink-0"
-      :class="statusColor"
-    />
+    <component :is="statusIcon" class="w-5 h-5 shrink-0" :class="statusColor" />
 
-    <div class="flex-1 min-w-0 space-y-1">
+    <div class="flex-1 min-w-0 flex flex-col gap-y-1">
       <div class="text-sm font-medium text-main">
         {{ displayTitle }}
       </div>
@@ -42,10 +38,15 @@
 </template>
 
 <script setup lang="ts">
-import { CheckCircleIcon, AlertCircleIcon, XCircleIcon } from "lucide-vue-next";
+import { AlertCircleIcon, CheckCircleIcon, XCircleIcon } from "lucide-vue-next";
 import { NTag } from "naive-ui";
 import { computed } from "vue";
-import { getRuleLocalization, ruleTemplateMapV2 } from "@/types";
+import {
+  getRuleLocalization,
+  ruleTemplateMapV2,
+  ruleTypeToString,
+} from "@/types";
+import { SQLReviewRule_Type } from "@/types/proto-es/v1/review_config_service_pb";
 
 export interface CheckResultPosition {
   line: number;
@@ -89,9 +90,16 @@ const statusColor = computed(() => {
 });
 
 const getRuleTemplateByType = (type: string) => {
+  // Convert string to enum
+  const typeKey = type as keyof typeof SQLReviewRule_Type;
+  const typeEnum = SQLReviewRule_Type[typeKey];
+  if (typeEnum === undefined) {
+    return;
+  }
+
   for (const mapByType of ruleTemplateMapV2.values()) {
-    if (mapByType.has(type)) {
-      return mapByType.get(type);
+    if (mapByType.has(typeEnum)) {
+      return mapByType.get(typeEnum);
     }
   }
   return;
@@ -119,7 +127,10 @@ const displayTitle = computed(() => {
 
     const rule = getRuleTemplateByType(props.title);
     if (rule) {
-      const ruleLocalization = getRuleLocalization(rule.type, rule.engine);
+      const ruleLocalization = getRuleLocalization(
+        ruleTypeToString(rule.type),
+        rule.engine
+      );
       const title = messageWithCode(ruleLocalization.title, code);
       return title;
     } else if (props.title.startsWith("builtin.")) {

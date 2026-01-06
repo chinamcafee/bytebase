@@ -2,7 +2,6 @@ package taskrun
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strings"
 
@@ -10,9 +9,7 @@ import (
 
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
-	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/dbfactory"
-	"github.com/bytebase/bytebase/backend/component/state"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/db"
 	"github.com/bytebase/bytebase/backend/runner/schemasync"
@@ -20,13 +17,11 @@ import (
 )
 
 // NewDatabaseCreateExecutor creates a database create task executor.
-func NewDatabaseCreateExecutor(store *store.Store, dbFactory *dbfactory.DBFactory, schemaSyncer *schemasync.Syncer, stateCfg *state.State, profile *config.Profile) Executor {
+func NewDatabaseCreateExecutor(store *store.Store, dbFactory *dbfactory.DBFactory, schemaSyncer *schemasync.Syncer) Executor {
 	return &DatabaseCreateExecutor{
 		store:        store,
 		dbFactory:    dbFactory,
 		schemaSyncer: schemaSyncer,
-		stateCfg:     stateCfg,
-		profile:      profile,
 	}
 }
 
@@ -35,75 +30,74 @@ type DatabaseCreateExecutor struct {
 	store        *store.Store
 	dbFactory    *dbfactory.DBFactory
 	schemaSyncer *schemasync.Syncer
-	stateCfg     *state.State
-	profile      *config.Profile
 }
 
 // RunOnce will run the database create task executor once.
-func (exec *DatabaseCreateExecutor) RunOnce(ctx context.Context, driverCtx context.Context, task *store.TaskMessage, _ int) (terminated bool, result *storepb.TaskRunResult, err error) {
-	sheetID := int(task.Payload.GetSheetId())
-	statement, err := exec.store.GetSheetStatementByID(ctx, sheetID)
+func (exec *DatabaseCreateExecutor) RunOnce(ctx context.Context, driverCtx context.Context, task *store.TaskMessage, _ int) (*storepb.TaskRunResult, error) {
+	sheet, err := exec.store.GetSheetFull(ctx, task.Payload.GetSheetSha256())
 	if err != nil {
-		return true, nil, errors.Wrapf(err, "failed to get sheet statement of sheet: %d", sheetID)
-	}
-	sheet, err := exec.store.GetSheet(ctx, &store.FindSheetMessage{UID: &sheetID})
-	if err != nil {
-		return true, nil, errors.Wrapf(err, "failed to get sheet: %d", sheetID)
+		return nil, errors.Wrapf(err, "failed to get sheet: %s", task.Payload.GetSheetSha256())
 	}
 	if sheet == nil {
-		return true, nil, errors.Errorf("sheet not found: %d", sheetID)
+		return nil, errors.Errorf("sheet not found: %s", task.Payload.GetSheetSha256())
 	}
+	statement := sheet.Statement
 
 	statement = strings.TrimSpace(statement)
 	if statement == "" {
-		return true, nil, errors.Errorf("empty create database statement")
+		return nil, errors.Errorf("empty create database statement")
 	}
 
-	instance, err := exec.store.GetInstanceV2(ctx, &store.FindInstanceMessage{ResourceID: &task.InstanceID})
+	instance, err := exec.store.GetInstance(ctx, &store.FindInstanceMessage{ResourceID: &task.InstanceID})
 	if err != nil {
-		return true, nil, err
+		return nil, err
 	}
 
 	if !common.EngineSupportCreateDatabase(instance.Metadata.GetEngine()) {
-		return true, nil, errors.Errorf("creating database is not supported for engine %v", instance.Metadata.GetEngine().String())
+		return nil, errors.Errorf("creating database is not supported for engine %v", instance.Metadata.GetEngine().String())
 	}
 
-	pipeline, err := exec.store.GetPipelineV2ByID(ctx, task.PipelineID)
+	plan, err := exec.store.GetPlan(ctx, &store.FindPlanMessage{UID: &task.PlanID})
 	if err != nil {
-		return true, nil, errors.Wrapf(err, "failed to get pipeline")
+		return nil, errors.Wrapf(err, "failed to get plan %v", task.PlanID)
 	}
-	if pipeline == nil {
-		return true, nil, errors.Errorf("pipeline %v not found", task.PipelineID)
+	if plan == nil {
+		return nil, errors.Errorf("plan %v not found", task.PlanID)
 	}
-	project, err := exec.store.GetProjectV2(ctx, &store.FindProjectMessage{ResourceID: &pipeline.ProjectID})
-	if err != nil {
-		return true, nil, errors.Errorf("failed to find project %s", pipeline.ProjectID)
+
+	// For create database plans, there is always exactly one spec
+	if len(plan.Config.Specs) == 0 {
+		return nil, errors.Errorf("plan has no specs")
 	}
-	if project == nil {
-		return true, nil, errors.Errorf("project %s not found", pipeline.ProjectID)
+	createConfig := plan.Config.Specs[0].GetCreateDatabaseConfig()
+	if createConfig == nil {
+		return nil, errors.Errorf("spec does not contain create database config")
 	}
 
 	// Create database.
 	slog.Debug("Start creating database...",
 		slog.String("instance", instance.Metadata.GetTitle()),
-		slog.String("database", task.Payload.GetDatabaseName()),
+		slog.String("database", createConfig.Database),
 		slog.String("statement", statement),
 	)
 
-	envID := task.Payload.GetEnvironmentId()
 	var environmentID *string
-	if envID != "" {
+	if createConfig.Environment != "" {
+		envID, err := common.GetEnvironmentID(createConfig.Environment)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to parse environment %s", createConfig.Environment)
+		}
 		environmentID = &envID
 	}
 	database, err := exec.store.UpsertDatabase(ctx, &store.DatabaseMessage{
-		ProjectID:     pipeline.ProjectID,
+		ProjectID:     plan.ProjectID,
 		InstanceID:    instance.ResourceID,
-		DatabaseName:  task.Payload.GetDatabaseName(),
+		DatabaseName:  createConfig.Database,
 		EnvironmentID: environmentID,
 		Metadata:      &storepb.DatabaseMetadata{},
 	})
 	if err != nil {
-		return true, nil, err
+		return nil, err
 	}
 
 	var defaultDBDriver db.Driver
@@ -114,17 +108,17 @@ func (exec *DatabaseCreateExecutor) RunOnce(ctx context.Context, driverCtx conte
 		// NOTE: we have to hack the database message.
 		defaultDBDriver, err = exec.dbFactory.GetAdminDatabaseDriver(ctx, instance, database, db.ConnectionContext{})
 		if err != nil {
-			return true, nil, err
+			return nil, err
 		}
 	default:
 		defaultDBDriver, err = exec.dbFactory.GetAdminDatabaseDriver(ctx, instance, nil /* database */, db.ConnectionContext{})
 		if err != nil {
-			return true, nil, err
+			return nil, err
 		}
 	}
 	defer defaultDBDriver.Close(ctx)
 	if _, err := defaultDBDriver.Execute(driverCtx, statement, db.ExecuteOptions{CreateDatabase: true}); err != nil {
-		return true, nil, err
+		return nil, err
 	}
 
 	if err := exec.schemaSyncer.SyncDatabaseSchema(ctx, database); err != nil {
@@ -135,7 +129,5 @@ func (exec *DatabaseCreateExecutor) RunOnce(ctx context.Context, driverCtx conte
 		)
 	}
 
-	return true, &storepb.TaskRunResult{
-		Detail: fmt.Sprintf("Created database %q", task.Payload.GetDatabaseName()),
-	}, nil
+	return &storepb.TaskRunResult{}, nil
 }

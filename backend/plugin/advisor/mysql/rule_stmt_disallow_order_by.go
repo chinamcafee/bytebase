@@ -5,13 +5,13 @@ import (
 	"fmt"
 
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
-	"github.com/pkg/errors"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -19,9 +19,9 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleStatementDisallowOrderBy, &DisallowOrderByAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleStatementDisallowOrderBy, &DisallowOrderByAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleStatementDisallowOrderBy, &DisallowOrderByAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_STATEMENT_DISALLOW_ORDER_BY, &DisallowOrderByAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_STATEMENT_DISALLOW_ORDER_BY, &DisallowOrderByAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_STATEMENT_DISALLOW_ORDER_BY, &DisallowOrderByAdvisor{})
 }
 
 // DisallowOrderByAdvisor is the advisor checking for no ORDER BY clause in DELETE/UPDATE statements.
@@ -30,26 +30,28 @@ type DisallowOrderByAdvisor struct {
 
 // Check checks for no ORDER BY clause in DELETE/UPDATE statements.
 func (*DisallowOrderByAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parser result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewDisallowOrderByRule(level, string(checkCtx.Rule.Type))
+	rule := NewDisallowOrderByRule(level, checkCtx.Rule.Type.String())
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -101,17 +103,17 @@ func (*DisallowOrderByRule) OnExit(_ antlr.ParserRuleContext, _ string) error {
 
 func (r *DisallowOrderByRule) checkDeleteStatement(ctx *mysql.DeleteStatementContext) {
 	if ctx.OrderClause() != nil && ctx.OrderClause().ORDER_SYMBOL() != nil {
-		r.handleOrderByClause(advisor.DeleteUseOrderBy, ctx.GetStart().GetLine())
+		r.handleOrderByClause(code.DeleteUseOrderBy, ctx.GetStart().GetLine())
 	}
 }
 
 func (r *DisallowOrderByRule) checkUpdateStatement(ctx *mysql.UpdateStatementContext) {
 	if ctx.OrderClause() != nil && ctx.OrderClause().ORDER_SYMBOL() != nil {
-		r.handleOrderByClause(advisor.UpdateUseOrderBy, ctx.GetStart().GetLine())
+		r.handleOrderByClause(code.UpdateUseOrderBy, ctx.GetStart().GetLine())
 	}
 }
 
-func (r *DisallowOrderByRule) handleOrderByClause(code advisor.Code, lineNumber int) {
+func (r *DisallowOrderByRule) handleOrderByClause(code code.Code, lineNumber int) {
 	r.AddAdvice(&storepb.Advice{
 		Status:        r.level,
 		Code:          code.Int32(),

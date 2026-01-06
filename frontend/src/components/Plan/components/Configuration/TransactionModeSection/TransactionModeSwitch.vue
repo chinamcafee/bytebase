@@ -10,8 +10,8 @@
 import { NSwitch } from "naive-ui";
 import { computed, nextTick, ref, watch } from "vue";
 import {
-  usePlanContext,
   updateSpecSheetWithStatement,
+  usePlanContext,
 } from "@/components/Plan/logic";
 import { getDefaultTransactionMode, setSheetStatement } from "@/utils";
 import { useSelectedSpec } from "../../SpecDetailView/context";
@@ -24,7 +24,7 @@ import { useTransactionModeSettingContext } from "./context";
 
 const { allowChange, transactionMode, events } =
   useTransactionModeSettingContext();
-const selectedSpec = useSelectedSpec();
+const { selectedSpec } = useSelectedSpec();
 const { sheetStatement, sheet, sheetReady } = useSpecSheet(selectedSpec);
 const { plan, isCreating } = usePlanContext();
 

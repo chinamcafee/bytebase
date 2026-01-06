@@ -5,7 +5,7 @@
         ? $t('schema-editor.actions.create-procedure')
         : $t('schema-editor.actions.rename')
     "
-    class="shadow-inner outline outline-gray-200"
+    class="shadow-inner outline-solid outline-gray-200"
     @close="dismissModal"
   >
     <div class="w-72">
@@ -39,9 +39,9 @@ import { useNotificationStore } from "@/store";
 import type { ComposedDatabase } from "@/types";
 import type {
   DatabaseMetadata,
+  ProcedureMetadata,
   SchemaMetadata,
 } from "@/types/proto-es/v1/database_service_pb";
-import type { ProcedureMetadata } from "@/types/proto-es/v1/database_service_pb";
 import { ProcedureMetadataSchema } from "@/types/proto-es/v1/database_service_pb";
 import { useSchemaEditorContext } from "../context";
 

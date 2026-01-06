@@ -7,16 +7,19 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
 	"github.com/pkg/errors"
 
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -24,37 +27,39 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleTableTextFieldsTotalLength, &TableMaximumVarcharLengthAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_TABLE_TEXT_FIELDS_TOTAL_LENGTH, &TableMaximumVarcharLengthAdvisor{})
 }
 
 type TableMaximumVarcharLengthAdvisor struct {
 }
 
 func (*TableMaximumVarcharLengthAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalNumberTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	numberPayload := checkCtx.Rule.GetNumberPayload()
+	if numberPayload == nil {
+		return nil, errors.New("number_payload is required for this rule")
 	}
 
 	// Create the rule
-	rule := NewTableTextFieldsTotalLengthRule(level, string(checkCtx.Rule.Type), checkCtx.Catalog, payload.Number)
+	rule := NewTableTextFieldsTotalLengthRule(level, checkCtx.Rule.Type.String(), checkCtx.FinalMetadata, int(numberPayload.Number))
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -63,19 +68,19 @@ func (*TableMaximumVarcharLengthAdvisor) Check(_ context.Context, checkCtx advis
 // TableTextFieldsTotalLengthRule checks for table text fields total length.
 type TableTextFieldsTotalLengthRule struct {
 	BaseRule
-	catalog *catalog.Finder
-	maximum int
+	finalMetadata *model.DatabaseMetadata
+	maximum       int
 }
 
 // NewTableTextFieldsTotalLengthRule creates a new TableTextFieldsTotalLengthRule.
-func NewTableTextFieldsTotalLengthRule(level storepb.Advice_Status, title string, catalog *catalog.Finder, maximum int) *TableTextFieldsTotalLengthRule {
+func NewTableTextFieldsTotalLengthRule(level storepb.Advice_Status, title string, finalMetadata *model.DatabaseMetadata, maximum int) *TableTextFieldsTotalLengthRule {
 	return &TableTextFieldsTotalLengthRule{
 		BaseRule: BaseRule{
 			level: level,
 			title: title,
 		},
-		catalog: catalog,
-		maximum: maximum,
+		finalMetadata: finalMetadata,
+		maximum:       maximum,
 	}
 }
 
@@ -114,7 +119,11 @@ func (r *TableTextFieldsTotalLengthRule) checkCreateTable(ctx *mysql.CreateTable
 	if tableName == "" {
 		return
 	}
-	tableInfo := r.catalog.Final.FindTable(&catalog.TableFind{TableName: tableName})
+	schema := r.finalMetadata.GetSchemaMetadata("")
+	if schema == nil {
+		return
+	}
+	tableInfo := schema.GetTable(tableName)
 	if tableInfo == nil {
 		return
 	}
@@ -122,7 +131,7 @@ func (r *TableTextFieldsTotalLengthRule) checkCreateTable(ctx *mysql.CreateTable
 	if total > int64(r.maximum) {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.IndexCountExceedsLimit.Int32(),
+			Code:          code.IndexCountExceedsLimit.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("Table %q total text column length (%d) exceeds the limit (%d).", tableName, total, r.maximum),
 			StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),
@@ -148,7 +157,11 @@ func (r *TableTextFieldsTotalLengthRule) checkAlterTable(ctx *mysql.AlterTableCo
 	if tableName == "" {
 		return
 	}
-	tableInfo := r.catalog.Final.FindTable(&catalog.TableFind{TableName: tableName})
+	schema := r.finalMetadata.GetSchemaMetadata("")
+	if schema == nil {
+		return
+	}
+	tableInfo := schema.GetTable(tableName)
 	if tableInfo == nil {
 		return
 	}
@@ -156,7 +169,7 @@ func (r *TableTextFieldsTotalLengthRule) checkAlterTable(ctx *mysql.AlterTableCo
 	if total > int64(r.maximum) {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.TotalTextLengthExceedsLimit.Int32(),
+			Code:          code.TotalTextLengthExceedsLimit.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("Table %q total text column length (%d) exceeds the limit (%d).", tableName, total, r.maximum),
 			StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),
@@ -164,11 +177,11 @@ func (r *TableTextFieldsTotalLengthRule) checkAlterTable(ctx *mysql.AlterTableCo
 	}
 }
 
-func getTotalTextLength(tableInfo *catalog.TableState) int64 {
+func getTotalTextLength(tableInfo *model.TableMetadata) int64 {
 	var total int64
-	columns := tableInfo.ListColumns()
+	columns := tableInfo.GetProto().GetColumns()
 	for _, column := range columns {
-		total += getTextLength(column.Type())
+		total += getTextLength(column.Type)
 	}
 	return total
 }

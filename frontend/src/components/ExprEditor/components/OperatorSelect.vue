@@ -4,9 +4,9 @@
     v-model:value="operator"
     :options="options"
     :consistent-menu-width="false"
-    :disabled="!allowAdmin"
+    :disabled="readonly"
     size="small"
-    style="width: auto; max-width: 7rem; min-width: 2.5rem; flex-shrink: 0"
+    style="width: auto; max-width: 7rem; min-width: 2.5rem; shrink: 0"
   />
 </template>
 
@@ -15,9 +15,9 @@
 import { NSelect, type SelectOption } from "naive-ui";
 import { computed, watch } from "vue";
 import {
-  type Operator,
-  type ConditionOperator,
   type ConditionExpr,
+  type ConditionOperator,
+  type Operator,
 } from "@/plugins/cel";
 import { useExprEditorContext } from "../context";
 import { getOperatorListByFactor } from "./common";
@@ -27,7 +27,7 @@ const props = defineProps<{
 }>();
 
 const context = useExprEditorContext();
-const { allowAdmin, factorOperatorOverrideMap } = context;
+const { readonly, factorOperatorOverrideMap } = context;
 
 const operator = computed({
   get() {

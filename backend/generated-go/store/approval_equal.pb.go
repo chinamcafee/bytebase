@@ -13,7 +13,7 @@ func (x *IssuePayloadApproval_Approver) Equal(y *IssuePayloadApproval_Approver) 
 	if x.Status != y.Status {
 		return false
 	}
-	if x.PrincipalId != y.PrincipalId {
+	if x.Principal != y.Principal {
 		return false
 	}
 	return true
@@ -40,12 +40,6 @@ func (x *IssuePayloadApproval) Equal(y *IssuePayloadApproval) bool {
 	if x.ApprovalFindingDone != y.ApprovalFindingDone {
 		return false
 	}
-	if x.ApprovalFindingError != y.ApprovalFindingError {
-		return false
-	}
-	if x.RiskLevel != y.RiskLevel {
-		return false
-	}
 	return true
 }
 
@@ -55,9 +49,6 @@ func (x *ApprovalTemplate) Equal(y *ApprovalTemplate) bool {
 	}
 	if x == nil || y == nil {
 		return x == nil && y == nil
-	}
-	if x.Id != y.Id {
-		return false
 	}
 	if !x.Flow.Equal(y.Flow) {
 		return false

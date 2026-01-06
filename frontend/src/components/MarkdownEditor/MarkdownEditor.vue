@@ -41,58 +41,67 @@
         ref="contentTextArea"
         v-model="state.content"
         rows="4"
-        class="block w-full px-4 py-3 resize-none whitespace-pre-wrap rounded-lg border border-gray-300 outline-none ring-0 text-sm"
+        class="block w-full px-4 py-3 resize-none whitespace-pre-wrap rounded-lg border border-gray-300 outline-hidden ring-0 text-sm"
         :placeholder="placeholder || $t('issue.leave-a-comment')"
+        :maxlength="maxlength"
         @mousedown="clearIssuePanel"
-        @input="(e: any) => sizeToFit(e.target)"
-        @keyup="adjustIssuePanelWithPosition"
+        @input="(e: Event) => sizeToFit(e.target as HTMLTextAreaElement)"
+        @keyup="(e: KeyboardEvent) => adjustIssuePanelWithPosition(e)"
         @keydown.enter="keyboardHandler"
-        @keydown.esc="
-          () => {
-            $emit('cancel');
-            state.content = props.content;
-          }
-        "
+        @keydown.down="handleArrowDown"
+        @keydown.up="handleArrowUp"
       ></textarea>
       <div
         ref="issuePanel"
-        class="border rounded absolute hidden bg-white shadow-sm z-10"
+        class="border rounded-sm absolute hidden bg-white shadow-xs z-10"
       >
-        <ul class="text-sm rounded divide-y divide-solid">
-          <li
-            v-for="issue in filterIssueList"
-            :key="issue.name"
-            class="px-3 py-2 hover:bg-gray-100 cursor-pointer flex items-center gap-x-2"
-            @click="onIssueSelect(issue)"
-          >
-            <IssueStatusIcon
-              :issue-status="issue.status"
-              :task-status="issueTaskStatus(issue)"
-            />
-            <span class="opacity-60">#{{ extractIssueUID(issue.name) }}</span>
-            <div class="whitespace-nowrap">
-              {{ issue.title }}
-            </div>
-          </li>
-        </ul>
+        <NScrollbar class="max-h-40">
+          <ul class="text-sm rounded-sm divide-y divide-solid">
+            <li
+              v-for="(issue, index) in filterIssueList"
+              :key="issue.name"
+              :class="[
+                'px-3 py-2 hover:bg-gray-100 cursor-pointer flex items-center gap-x-2',
+                { 'bg-gray-100': state.activeIssueIndex === index },
+              ]"
+              @click="onIssueSelect(issue)"
+              @mouseenter="() => (state.activeIssueIndex = index)"
+            >
+              <IssueStatusIcon
+                :issue-status="issue.status"
+                :task-status="issueTaskStatus(issue)"
+              />
+              <span class="opacity-60">#{{ extractIssueUID(issue.name) }}</span>
+              <div class="whitespace-nowrap">
+                <HighlightLabelText
+                  :text="issue.title"
+                  :keyword="issueSearchText"
+                />
+              </div>
+            </li>
+          </ul>
+        </NScrollbar>
       </div>
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
+import { useDebounceFn } from "@vueuse/core";
 import {
-  CodeIcon,
-  LinkIcon,
-  HashIcon,
   BoldIcon,
+  CodeIcon,
+  HashIcon,
   HeadingIcon,
+  LinkIcon,
 } from "lucide-vue-next";
-import { NButton, NTooltip, NTabs, NTab } from "naive-ui";
-import { nextTick, ref, reactive, watch, toRef, onMounted } from "vue";
+import { NButton, NScrollbar, NTab, NTabs, NTooltip } from "naive-ui";
 import type { Component } from "vue";
+import { nextTick, onMounted, reactive, ref, toRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { type ComposedIssue } from "@/types";
+import { HighlightLabelText } from "@/components/v2";
+import { useIssueV1Store } from "@/store";
+import { type ComposedIssue, DEBOUNCE_SEARCH_DELAY } from "@/types";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import { Task_Status } from "@/types/proto-es/v1/rollout_service_pb";
 import {
@@ -108,6 +117,7 @@ interface LocalState {
   showPreview: boolean;
   content: string;
   activeTab: "write" | "preview";
+  activeIssueIndex?: number;
 }
 
 interface Toolbar {
@@ -118,19 +128,24 @@ interface Toolbar {
 
 type EditorMode = "editor" | "preview";
 
-const props = defineProps<{
-  content: string;
-  mode: EditorMode;
-  project?: Project;
-  issueList: ComposedIssue[];
-  placeholder?: string;
-  autofocus?: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    content: string;
+    mode: EditorMode;
+    project: Project;
+    placeholder?: string;
+    autofocus?: boolean;
+    maxlength?: number;
+    maxHeight?: number;
+  }>(),
+  {
+    maxHeight: 192,
+  }
+);
 
 const emit = defineEmits<{
   (event: "change", value: string): void;
   (event: "submit"): void;
-  (event: "cancel"): void;
 }>();
 
 const state = reactive<LocalState>({
@@ -138,7 +153,10 @@ const state = reactive<LocalState>({
   content: props.content,
   activeTab: props.mode === "preview" ? "preview" : "write",
 });
+
 const { t } = useI18n();
+const issueV1Store = useIssueV1Store();
+const issueSearchText = ref<string>("");
 
 watch(
   () => props.mode,
@@ -153,12 +171,31 @@ const contentPreviewArea = ref<HTMLIFrameElement>();
 const issuePanel = ref<HTMLDivElement>();
 const filterIssueList = ref<ComposedIssue[]>([]);
 
+watch(
+  () => filterIssueList.value.length,
+  (length) => {
+    if (length === 0) {
+      if (issuePanel.value) {
+        issuePanel.value.style.display = "none";
+      }
+      state.activeIssueIndex = undefined;
+    } else if (contentTextArea.value && issuePanel.value) {
+      const position = getIssuePanelPosition(contentTextArea.value);
+      issuePanel.value.style.display = "block";
+      issuePanel.value.style.left = `${position.x}px`;
+      issuePanel.value.style.top = `${position.y + 25}px`;
+      state.activeIssueIndex = 0;
+    }
+  }
+);
+
 const { renderedContent } = useRenderMarkdown(
   toRef(state, "content"),
   contentPreviewArea,
   toRef(props, "project"),
   {
     placeholder: `<span>${t("issue.comment-editor.nothing-to-preview")}</span>`,
+    maxHeight: props.maxHeight,
   }
 );
 
@@ -218,10 +255,53 @@ const keyboardHandler = (e: KeyboardEvent) => {
   if (e.metaKey) {
     emit("submit");
   } else {
+    if (
+      filterIssueList.value.length > 0 &&
+      state.activeIssueIndex !== undefined
+    ) {
+      const selectedIssue = filterIssueList.value[state.activeIssueIndex];
+      if (selectedIssue) {
+        onIssueSelect(selectedIssue);
+        e.stopPropagation();
+        e.preventDefault();
+        return;
+      }
+    }
+
     if (autoComplete(state.content)) {
       e.stopPropagation();
       e.preventDefault();
     }
+  }
+};
+
+const handleArrowDown = (e: KeyboardEvent) => {
+  if (filterIssueList.value.length === 0) {
+    return;
+  }
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  if (state.activeIssueIndex === undefined) {
+    state.activeIssueIndex = 0;
+  } else if (state.activeIssueIndex < filterIssueList.value.length - 1) {
+    state.activeIssueIndex++;
+  }
+};
+
+const handleArrowUp = (e: KeyboardEvent) => {
+  if (filterIssueList.value.length === 0) {
+    return;
+  }
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  if (state.activeIssueIndex === undefined) {
+    state.activeIssueIndex = 0;
+  } else if (state.activeIssueIndex > 0) {
+    state.activeIssueIndex--;
   }
 };
 
@@ -398,9 +478,6 @@ const insertWithCursorPosition = (template: string, position: number) => {
 };
 
 const clearIssuePanel = () => {
-  if (issuePanel.value) {
-    issuePanel.value.style.display = "none";
-  }
   filterIssueList.value = [];
 };
 
@@ -457,7 +534,15 @@ const issueTaskStatus = (issue: ComposedIssue) => {
   return activeTaskInRollout(issue.rolloutEntity)?.status;
 };
 
-const adjustIssuePanelWithPosition = () => {
+const adjustIssuePanelWithPosition = useDebounceFn((e?: KeyboardEvent) => {
+  if (
+    e &&
+    (e.key === "ArrowDown" || e.key === "ArrowUp") &&
+    filterIssueList.value.length > 0
+  ) {
+    return;
+  }
+
   if (!contentTextArea.value || !issuePanel.value) {
     return;
   }
@@ -473,21 +558,32 @@ const adjustIssuePanelWithPosition = () => {
   const text = `${state.content.slice(0, start)}${
     start === state.content.length ? " " : state.content[start]
   }`;
-  const matches = text.match(/#\d{0,}\s$/);
+  const matches = text.match(/#\S{0,}\s$/);
   if (!matches) {
     return;
   }
 
-  const id = matches[0].slice(1).trimEnd();
-  filterIssueList.value = props.issueList
-    .filter((issue) => extractIssueUID(issue.name).startsWith(id))
-    .slice(0, 5);
+  const query = matches[0].slice(1).trimEnd();
+  const isQuery = Number.isNaN(parseInt(query));
+  issueSearchText.value = isQuery ? query : "";
 
-  const position = getIssuePanelPosition(contentTextArea.value);
-  issuePanel.value.style.display = "block";
-  issuePanel.value.style.left = `${position.x}px`;
-  issuePanel.value.style.top = `${position.y + 25}px`;
-};
+  issueV1Store
+    .listIssues({
+      find: {
+        project: props.project.name,
+        query: isQuery ? query : "",
+      },
+    })
+    .then((resp) => {
+      if (!isQuery && query) {
+        filterIssueList.value = resp.issues.filter((issue) =>
+          extractIssueUID(issue.name).startsWith(query)
+        );
+      } else {
+        filterIssueList.value = resp.issues;
+      }
+    });
+}, DEBOUNCE_SEARCH_DELAY);
 
 const getIssuePanelPosition = (textArea: HTMLTextAreaElement) => {
   const start = textArea.selectionStart;
@@ -521,7 +617,7 @@ const createDivCopyForTextarea = (textArea: HTMLTextAreaElement) => {
   copy.textContent = textArea.value;
   const style = getComputedStyle(textArea);
 
-  [
+  const styleKeys = [
     "fontFamily",
     "fontSize",
     "fontWeight",
@@ -531,7 +627,8 @@ const createDivCopyForTextarea = (textArea: HTMLTextAreaElement) => {
     "borderTopWidth",
     "borderRightWidth",
     "borderBottomWidth",
-  ].forEach(function (key: any) {
+  ] as const;
+  styleKeys.forEach((key) => {
     copy.style[key] = style[key];
   });
 

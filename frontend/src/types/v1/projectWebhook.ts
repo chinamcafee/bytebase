@@ -1,20 +1,20 @@
 import { create as createProto } from "@bufbuild/protobuf";
 import { t } from "@/plugins/i18n";
+import { WebhookType } from "../proto-es/v1/common_pb";
 import {
   Activity_Type,
   WebhookSchema,
-  Webhook_Type,
 } from "../proto-es/v1/project_service_pb";
 
 export const emptyProjectWebhook = () => {
   return createProto(WebhookSchema, {
-    type: Webhook_Type.SLACK,
-    notificationTypes: [Activity_Type.ISSUE_STATUS_UPDATE],
+    type: WebhookType.SLACK,
+    notificationTypes: [Activity_Type.ISSUE_CREATED],
   });
 };
 
 type ProjectWebhookV1TypeItem = {
-  type: Webhook_Type;
+  type: WebhookType;
   name: string;
   urlPrefix: string;
   urlPlaceholder: string;
@@ -25,7 +25,7 @@ type ProjectWebhookV1TypeItem = {
 export const projectWebhookV1TypeItemList = (): ProjectWebhookV1TypeItem[] => {
   return [
     {
-      type: Webhook_Type.SLACK,
+      type: WebhookType.SLACK,
       name: t("common.slack"),
       urlPrefix: "https://hooks.slack.com/",
       urlPlaceholder: "https://hooks.slack.com/services/...",
@@ -33,7 +33,7 @@ export const projectWebhookV1TypeItemList = (): ProjectWebhookV1TypeItem[] => {
       supportDirectMessage: true,
     },
     {
-      type: Webhook_Type.DISCORD,
+      type: WebhookType.DISCORD,
       name: t("common.discord"),
       urlPrefix: "https://discord.com/api/webhooks",
       urlPlaceholder: "https://discord.com/api/webhooks/...",
@@ -42,16 +42,16 @@ export const projectWebhookV1TypeItemList = (): ProjectWebhookV1TypeItem[] => {
       supportDirectMessage: false,
     },
     {
-      type: Webhook_Type.TEAMS,
+      type: WebhookType.TEAMS,
       name: t("common.teams"),
       urlPrefix: "",
       urlPlaceholder: "https://acme123.webhook.office.com/webhookb2/...",
       docUrl:
         "https://docs.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook",
-      supportDirectMessage: false,
+      supportDirectMessage: true,
     },
     {
-      type: Webhook_Type.DINGTALK,
+      type: WebhookType.DINGTALK,
       name: t("common.dingtalk"),
       urlPrefix: "https://oapi.dingtalk.com",
       urlPlaceholder: "https://oapi.dingtalk.com/robot/...",
@@ -60,7 +60,7 @@ export const projectWebhookV1TypeItemList = (): ProjectWebhookV1TypeItem[] => {
       supportDirectMessage: true,
     },
     {
-      type: Webhook_Type.FEISHU,
+      type: WebhookType.FEISHU,
       name: t("common.feishu"),
       urlPrefix: "https://open.feishu.cn",
       urlPlaceholder: "https://open.feishu.cn/open-apis/bot/v2/hook/...",
@@ -69,7 +69,7 @@ export const projectWebhookV1TypeItemList = (): ProjectWebhookV1TypeItem[] => {
       supportDirectMessage: true,
     },
     {
-      type: Webhook_Type.LARK,
+      type: WebhookType.LARK,
       name: t("common.lark"),
       urlPrefix: "https://open.larksuite.com",
       urlPlaceholder: "https://open.larksuite.com/open-apis/bot/v2/hook/...",
@@ -78,7 +78,7 @@ export const projectWebhookV1TypeItemList = (): ProjectWebhookV1TypeItem[] => {
       supportDirectMessage: true,
     },
     {
-      type: Webhook_Type.WECOM,
+      type: WebhookType.WECOM,
       name: t("common.wecom"),
       urlPrefix: "https://qyapi.weixin.qq.com",
       urlPlaceholder: "https://qyapi.weixin.qq.com/cgi-bin/webhook/...",
@@ -101,64 +101,32 @@ export const projectWebhookV1ActivityItemList =
       {
         title: t("project.webhook.activity-item.issue-creation.title"),
         label: t("project.webhook.activity-item.issue-creation.label"),
-        activity: Activity_Type.ISSUE_CREATE,
-        supportDirectMessage: false,
-      },
-      {
-        title: t("project.webhook.activity-item.issue-status-change.title"),
-        label: t("project.webhook.activity-item.issue-status-change.label"),
-        activity: Activity_Type.ISSUE_STATUS_UPDATE,
-        supportDirectMessage: false,
-      },
-      {
-        title: t(
-          "project.webhook.activity-item.issue-stage-status-change.title"
-        ),
-        label: t(
-          "project.webhook.activity-item.issue-stage-status-change.label"
-        ),
-        activity: Activity_Type.ISSUE_PIPELINE_STAGE_STATUS_UPDATE,
-        supportDirectMessage: false,
-      },
-      {
-        title: t(
-          "project.webhook.activity-item.issue-task-status-change.title"
-        ),
-        label: t(
-          "project.webhook.activity-item.issue-task-status-change.label"
-        ),
-        activity: Activity_Type.ISSUE_PIPELINE_TASK_RUN_STATUS_UPDATE,
-        supportDirectMessage: false,
-      },
-      {
-        title: t("project.webhook.activity-item.issue-info-change.title"),
-        label: t("project.webhook.activity-item.issue-info-change.label"),
-        activity: Activity_Type.ISSUE_FIELD_UPDATE,
-        supportDirectMessage: false,
-      },
-      {
-        title: t("project.webhook.activity-item.issue-comment-creation.title"),
-        label: t("project.webhook.activity-item.issue-comment-creation.label"),
-        activity: Activity_Type.ISSUE_COMMENT_CREATE,
+        activity: Activity_Type.ISSUE_CREATED,
         supportDirectMessage: false,
       },
       {
         title: t("project.webhook.activity-item.issue-approval-notify.title"),
         label: t("project.webhook.activity-item.issue-approval-notify.label"),
-        activity: Activity_Type.ISSUE_APPROVAL_NOTIFY,
+        activity: Activity_Type.ISSUE_APPROVAL_REQUESTED,
         supportDirectMessage: true,
       },
       {
-        title: t("project.webhook.activity-item.notify-issue-approved.title"),
-        label: t("project.webhook.activity-item.notify-issue-approved.label"),
-        activity: Activity_Type.NOTIFY_ISSUE_APPROVED,
+        title: t("project.webhook.activity-item.issue-sent-back.title"),
+        label: t("project.webhook.activity-item.issue-sent-back.label"),
+        activity: Activity_Type.ISSUE_SENT_BACK,
         supportDirectMessage: true,
       },
       {
-        title: t("project.webhook.activity-item.notify-pipeline-rollout.title"),
-        label: t("project.webhook.activity-item.notify-pipeline-rollout.label"),
-        activity: Activity_Type.NOTIFY_PIPELINE_ROLLOUT,
-        supportDirectMessage: true,
+        title: t("project.webhook.activity-item.pipeline-failed.title"),
+        label: t("project.webhook.activity-item.pipeline-failed.label"),
+        activity: Activity_Type.PIPELINE_FAILED,
+        supportDirectMessage: false,
+      },
+      {
+        title: t("project.webhook.activity-item.pipeline-completed.title"),
+        label: t("project.webhook.activity-item.pipeline-completed.label"),
+        activity: Activity_Type.PIPELINE_COMPLETED,
+        supportDirectMessage: false,
       },
     ];
   };

@@ -11,17 +11,16 @@
 </template>
 
 <script setup lang="tsx">
-import { CheckIcon, XIcon } from "lucide-vue-next";
-import { NCheckbox, NDataTable, NButton } from "naive-ui";
+import { CheckIcon, PencilIcon, Trash2Icon, XIcon } from "lucide-vue-next";
 import type { DataTableColumn } from "naive-ui";
+import { NCheckbox, NDataTable, NPopconfirm, NTag } from "naive-ui";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { BBButtonConfirm } from "@/bbkit";
+import { MiniActionButton } from "@/components/v2";
 import Resource from "@/components/v2/ResourceOccupiedModal/Resource.vue";
 import { pushNotification, useSQLReviewStore } from "@/store";
 import type { SQLReviewPolicy } from "@/types";
-import { hasWorkspacePermissionV2 } from "@/utils";
-import { getHighlightHTMLByRegExp } from "@/utils";
+import { getHighlightHTMLByRegExp, hasWorkspacePermissionV2 } from "@/utils";
 
 const props = withDefaults(
   defineProps<{
@@ -53,6 +52,7 @@ const columns = computed(
       {
         title: t("common.name"),
         key: "name",
+        width: 200,
         resizable: true,
         render: (review: SQLReviewPolicy) => {
           return <div innerHTML={highlight(review.name)}></div>;
@@ -62,18 +62,20 @@ const columns = computed(
         title: t("common.resource"),
         key: "resource",
         resizable: true,
+        width: 250,
         render: (review: SQLReviewPolicy) => {
           return (
-            <div>
+            <div class="flex flex-wrap gap-2">
               {review.resources.length === 0 && <span>-</span>}
               {review.resources.map((resource) => {
                 return (
-                  <Resource
-                    key={resource}
-                    resource={resource}
-                    showPrefix={true}
-                    link={true}
-                  />
+                  <NTag key={resource} size="small" type="primary">
+                    <Resource
+                      resource={resource}
+                      showPrefix={true}
+                      link={true}
+                    />
+                  </NTag>
                 );
               })}
             </div>
@@ -110,29 +112,29 @@ const columns = computed(
       {
         title: t("common.operations"),
         key: "operations",
-        width: "15rem",
+        width: "10rem",
         hide: !props.allowEdit,
         render: (review: SQLReviewPolicy) => {
           return (
             <div class="flex items-center gap-x-2">
-              <NButton size="small" onClick={() => emit("edit", review)}>
-                {hasUpdatePolicyPermission.value
-                  ? t("common.edit")
-                  : t("common.view")}
-              </NButton>
               {hasDeletePolicyPermission.value && (
-                <BBButtonConfirm
-                  text={false}
-                  size={"small"}
-                  type={"DELETE"}
-                  hideIcon={true}
-                  buttonText={t("common.delete")}
-                  okText={t("common.delete")}
-                  confirmTitle={t("common.delete") + ` '${review.name}'?`}
-                  requireConfirm={true}
-                  onConfirm={() => emit("delete", review)}
-                />
+                <NPopconfirm
+                  positiveButtonProps={{ type: "error" }}
+                  onPositiveClick={() => emit("delete", review)}
+                >
+                  {{
+                    trigger: () => (
+                      <MiniActionButton type="error">
+                        <Trash2Icon />
+                      </MiniActionButton>
+                    ),
+                    default: () => t("common.delete") + ` '${review.name}'?`,
+                  }}
+                </NPopconfirm>
               )}
+              <MiniActionButton onClick={() => emit("edit", review)}>
+                <PencilIcon />
+              </MiniActionButton>
             </div>
           );
         },

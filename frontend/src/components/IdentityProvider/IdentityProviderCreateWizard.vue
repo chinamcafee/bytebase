@@ -2,10 +2,10 @@
   <Drawer :show="props.show" @update:show="$emit('update:show', $event)">
     <DrawerContent
       :title="$t('settings.sso.create')"
-      class="w-[64rem] max-w-[100vw]"
+      class="w-5xl max-w-[100vw]"
       :closable="true"
     >
-      <div class="w-full mx-auto space-y-6">
+      <div class="w-full mx-auto flex flex-col gap-y-6">
         <!-- Steps Navigation -->
         <NSteps :current="currentStep" size="medium">
           <NStep :title="$t('settings.sso.form.type')" />
@@ -22,8 +22,8 @@
           class="bg-white rounded-lg border border-gray-200 px-2 sm:px-6 pt-6 pb-10"
         >
           <!-- Step 1: Select Provider Type -->
-          <div v-if="currentStep === 1" class="space-y-6">
-            <div class="text-center space-y-2">
+          <div v-if="currentStep === 1" class="flex flex-col gap-y-6">
+            <div class="text-center flex flex-col gap-y-2">
               <h2 class="text-2xl font-bold text-gray-900">
                 {{ $t("settings.sso.form.type") }}
               </h2>
@@ -36,12 +36,12 @@
               <NRadioGroup
                 v-model:value="selectedType"
                 size="large"
-                class="space-y-4 w-full"
+                class="flex flex-col w-full"
               >
                 <div
                   v-for="item in identityProviderTypeList"
                   :key="item.type"
-                  class="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors"
+                  class="border border-gray-200 rounded-lg mb-4 p-4 hover:border-gray-300 transition-colors"
                   :class="{
                     'border-blue-500 bg-blue-50': selectedType === item.type,
                   }"
@@ -51,14 +51,14 @@
                     :disabled="!subscriptionStore.hasFeature(item.feature)"
                     class="w-full"
                   >
-                    <div class="flex items-start space-x-3 w-full">
+                    <div class="flex items-start gap-x-3 w-full">
                       <component
                         :is="getProviderIcon(item.type)"
-                        class="w-6 h-6 mt-1 flex-shrink-0"
+                        class="w-6 h-6 mt-1 shrink-0"
                         :stroke-width="1.5"
                       />
                       <div class="flex-1">
-                        <div class="flex items-center space-x-2">
+                        <div class="flex items-center gap-x-2">
                           <span class="text-lg font-medium text-gray-900">
                             {{ identityProviderTypeToString(item.type) }}
                           </span>
@@ -74,25 +74,13 @@
               </NRadioGroup>
 
               <!-- External URL Warning -->
-              <BBAttention
+              <MissingExternalURLAttention
                 v-if="
-                  !externalUrl &&
-                  (selectedType === IdentityProviderType.OAUTH2 ||
-                    selectedType === IdentityProviderType.OIDC)
-                "
+                  selectedType === IdentityProviderType.OAUTH2 ||
+                    selectedType === IdentityProviderType.OIDC
+                  "
                 class="mt-6"
-                type="error"
-                :title="$t('banner.external-url')"
-                :description="
-                  $t('settings.general.workspace.external-url.description')
-                "
-              >
-                <template #action>
-                  <NButton type="primary" @click="configureSetting">
-                    {{ $t("common.configure-now") }}
-                  </NButton>
-                </template>
-              </BBAttention>
+              />
             </div>
           </div>
 
@@ -101,9 +89,9 @@
             v-else-if="
               currentStep === 2 && selectedType === IdentityProviderType.OAUTH2
             "
-            class="space-y-6"
+            class="flex flex-col gap-y-6"
           >
-            <div class="text-center space-y-2">
+            <div class="text-center flex flex-col gap-y-2">
               <h2 class="text-2xl font-bold text-gray-900">
                 {{ $t("settings.sso.form.use-template") }}
               </h2>
@@ -124,7 +112,7 @@
                   }
                 "
                 size="large"
-                class="!grid grid-cols-1 sm:grid-cols-2 gap-4"
+                class="grid! grid-cols-1 sm:grid-cols-2 gap-4"
               >
                 <div
                   v-for="template in templateList"
@@ -140,14 +128,14 @@
                     :disabled="!subscriptionStore.hasFeature(template.feature)"
                     class="w-full"
                   >
-                    <div class="flex items-center space-x-3">
+                    <div class="flex items-center gap-x-3">
                       <component
                         :is="getTemplateIcon(template.title)"
-                        class="w-8 h-8 flex-shrink-0"
+                        class="w-8 h-8 shrink-0"
                         :stroke-width="1"
                       />
                       <div class="flex-1">
-                        <div class="flex items-center space-x-2">
+                        <div class="flex items-center gap-x-2">
                           <span class="text-base font-medium text-gray-900">
                             {{ template.title }}
                           </span>
@@ -170,9 +158,9 @@
               currentStep ===
               (selectedType === IdentityProviderType.OAUTH2 ? 3 : 2)
             "
-            class="space-y-6"
+            class="flex flex-col gap-y-6"
           >
-            <div class="text-center space-y-2">
+            <div class="text-center flex flex-col gap-y-2">
               <h2 class="text-2xl font-bold text-gray-900">
                 {{ $t("common.general") }}
               </h2>
@@ -181,7 +169,7 @@
               </p>
             </div>
 
-            <div class="max-w-2xl mx-auto space-y-6">
+            <div class="max-w-2xl mx-auto flex flex-col gap-y-6">
               <div>
                 <label class="block text-base font-semibold text-gray-800 mb-2">
                   {{ $t("settings.sso.form.name") }}
@@ -216,6 +204,7 @@
                 </label>
                 <BBTextField
                   v-model:value="identityProvider.domain"
+                  :disabled="selectedTemplate?.domainDisabled"
                   size="large"
                   class="w-full text-base"
                   :placeholder="$t('settings.sso.form.domain-description')"
@@ -233,9 +222,9 @@
               currentStep ===
               (selectedType === IdentityProviderType.OAUTH2 ? 4 : 3)
             "
-            class="space-y-6"
+            class="flex flex-col gap-y-6"
           >
-            <div class="text-center space-y-2">
+            <div class="text-center flex flex-col gap-y-2">
               <h2 class="text-2xl font-bold text-gray-900">
                 {{ $t("settings.sso.form.configuration") }}
               </h2>
@@ -277,9 +266,9 @@
               currentStep ===
               (selectedType === IdentityProviderType.OAUTH2 ? 5 : 4)
             "
-            class="space-y-6"
+            class="flex flex-col gap-y-6"
           >
-            <div class="text-center space-y-2">
+            <div class="text-center flex flex-col gap-y-2">
               <h2 class="text-2xl font-bold text-gray-900">
                 {{ $t("settings.sso.form.user-information-mapping") }}
               </h2>
@@ -294,7 +283,7 @@
               </p>
             </div>
 
-            <div class="max-w-2xl mx-auto space-y-6">
+            <div class="max-w-2xl mx-auto flex flex-col gap-y-6">
               <div class="grid grid-cols-[256px_1fr] gap-4 items-center">
                 <BBTextField
                   v-model:value="fieldMapping.identifier"
@@ -389,36 +378,33 @@
       </div>
 
       <template #footer>
-        <div class="flex items-center justify-between">
-          <div></div>
-          <div class="flex items-center space-x-3">
-            <NButton
-              v-if="currentStep === 1"
-              @click="$emit('update:show', false)"
-            >
-              {{ $t("common.cancel") }}
-            </NButton>
-            <NButton v-if="currentStep > 1" @click="handlePrevStep">
-              {{ $t("common.back") }}
-            </NButton>
-            <NButton
-              v-if="!isLastStep"
-              type="primary"
-              :disabled="!canProceedToNextStep"
-              @click="handleNextStep"
-            >
-              {{ $t("common.next") }}
-            </NButton>
-            <NButton
-              v-else
-              type="primary"
-              :disabled="!canCreate"
-              :loading="isCreating"
-              @click="handleCreate"
-            >
-              {{ $t("common.create") }}
-            </NButton>
-          </div>
+        <div class="flex items-center justify-end gap-x-3">
+          <NButton
+            v-if="currentStep === 1"
+            @click="$emit('update:show', false)"
+          >
+            {{ $t("common.cancel") }}
+          </NButton>
+          <NButton v-if="currentStep > 1" @click="handlePrevStep">
+            {{ $t("common.back") }}
+          </NButton>
+          <NButton
+            v-if="!isLastStep"
+            type="primary"
+            :disabled="!canProceedToNextStep"
+            @click="handleNextStep"
+          >
+            {{ $t("common.next") }}
+          </NButton>
+          <NButton
+            v-else
+            type="primary"
+            :disabled="!canCreate"
+            :loading="isCreating"
+            @click="handleCreate"
+          >
+            {{ $t("common.create") }}
+          </NButton>
         </div>
       </template>
     </DrawerContent>
@@ -429,57 +415,52 @@
 import { create as createProto } from "@bufbuild/protobuf";
 import { head } from "lodash-es";
 import {
-  KeyIcon,
-  ShieldCheckIcon,
+  ArrowRightIcon,
+  BuildingIcon,
+  ChromeIcon,
   DatabaseIcon,
   GithubIcon,
-  ChromeIcon,
   GitlabIcon,
-  BuildingIcon,
-  ArrowRightIcon,
   InfoIcon,
+  KeyIcon,
+  ShieldCheckIcon,
 } from "lucide-vue-next";
 import {
-  NSteps,
-  NStep,
-  NRadioGroup,
-  NRadio,
   NButton,
+  NRadio,
+  NRadioGroup,
+  NStep,
+  NSteps,
   NTooltip,
 } from "naive-ui";
 import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
-import { BBAttention, BBTextField } from "@/bbkit";
+import { BBTextField } from "@/bbkit";
 import { FeatureBadge } from "@/components/FeatureGuard";
 import LearnMoreLink from "@/components/LearnMoreLink.vue";
 import RequiredStar from "@/components/RequiredStar.vue";
 import { Drawer, DrawerContent } from "@/components/v2";
+import { MissingExternalURLAttention } from "@/components/v2/Form";
 import ResourceIdField from "@/components/v2/Form/ResourceIdField.vue";
-import { SETTING_ROUTE_WORKSPACE_GENERAL } from "@/router/dashboard/workspaceSetting";
-import {
-  pushNotification,
-  useActuatorV1Store,
-  useSubscriptionV1Store,
-} from "@/store";
+import { hasFeature, pushNotification, useSubscriptionV1Store } from "@/store";
 import { useIdentityProviderStore } from "@/store/modules/idp";
 import { idpNamePrefix } from "@/store/modules/v1/common";
 import type {
   FieldMapping,
   IdentityProvider,
+  LDAPIdentityProviderConfig,
   OAuth2IdentityProviderConfig,
   OIDCIdentityProviderConfig,
-  LDAPIdentityProviderConfig,
 } from "@/types/proto-es/v1/idp_service_pb";
 import {
   FieldMappingSchema,
-  IdentityProviderSchema,
   IdentityProviderConfigSchema,
+  IdentityProviderSchema,
   IdentityProviderType,
+  LDAPIdentityProviderConfigSchema,
   OAuth2AuthStyle,
   OAuth2IdentityProviderConfigSchema,
   OIDCIdentityProviderConfigSchema,
-  LDAPIdentityProviderConfigSchema,
 } from "@/types/proto-es/v1/idp_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import type { OAuth2IdentityProviderTemplate } from "@/utils";
@@ -490,6 +471,7 @@ import TestConnection from "./TestConnection.vue";
 
 interface IdentityProviderTemplate extends OAuth2IdentityProviderTemplate {
   feature: PlanFeature;
+  domainDisabled?: boolean;
 }
 
 const props = defineProps<{
@@ -502,7 +484,6 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const router = useRouter();
 const identityProviderStore = useIdentityProviderStore();
 const subscriptionStore = useSubscriptionV1Store();
 
@@ -584,10 +565,6 @@ const idpToCreate = computed((): IdentityProvider => {
   return base;
 });
 
-const externalUrl = computed(
-  () => useActuatorV1Store().serverInfo?.externalUrl ?? ""
-);
-
 const resourceId = computed(() => {
   return resourceIdField.value?.resourceId || resourceIdValue.value || "";
 });
@@ -615,6 +592,7 @@ const templateList = computed((): IdentityProviderTemplate[] => {
       title: "Google",
       name: "",
       domain: "google.com",
+      domainDisabled: !hasFeature(PlanFeature.FEATURE_ENTERPRISE_SSO),
       type: IdentityProviderType.OAUTH2,
       feature: PlanFeature.FEATURE_GOOGLE_AND_GITHUB_SSO,
       config: createProto(OAuth2IdentityProviderConfigSchema, {
@@ -641,6 +619,7 @@ const templateList = computed((): IdentityProviderTemplate[] => {
       title: "GitHub",
       name: "",
       domain: "github.com",
+      domainDisabled: !hasFeature(PlanFeature.FEATURE_ENTERPRISE_SSO),
       type: IdentityProviderType.OAUTH2,
       feature: PlanFeature.FEATURE_GOOGLE_AND_GITHUB_SSO,
       config: createProto(OAuth2IdentityProviderConfigSchema, {
@@ -905,12 +884,6 @@ const handleTemplateSelect = (template: IdentityProviderTemplate) => {
 
     scopesStringOfConfig.value = template.config.scopes.join(" ");
   }
-};
-
-const configureSetting = () => {
-  router.push({
-    name: SETTING_ROUTE_WORKSPACE_GENERAL,
-  });
 };
 
 const handlePrevStep = () => {

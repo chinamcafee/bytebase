@@ -24,17 +24,17 @@ export const useUIStateStore = defineStore("uistate", () => {
     return stateByKey(state.introStateByKey, INTRO_MODULE_KEY.value, key);
   };
 
-  const setCollapseState = (fullState: any) => {
+  const setCollapseState = (fullState: Record<string, boolean>) => {
     const newMap = new Map();
-    for (const key in fullState) {
+    for (const key of Object.keys(fullState)) {
       newMap.set(key, fullState[key]);
     }
     state.collapseStateByKey = newMap;
   };
 
-  const setIntroState = (fullState: any) => {
+  const setIntroState = (fullState: Record<string, boolean>) => {
     const newMap = new Map();
-    for (const key in fullState) {
+    for (const key of Object.keys(fullState)) {
       newMap.set(key, fullState[key]);
     }
     state.introStateByKey = newMap;

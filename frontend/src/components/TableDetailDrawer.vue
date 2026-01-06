@@ -6,7 +6,7 @@
         bodyContentClass: 'relative',
       }"
     >
-      <div class="focus:outline-none w-[calc(100vw-256px)]" tabindex="0">
+      <div class="focus:outline-hidden w-[calc(100vw-256px)]" tabindex="0">
         <MaskSpinner v-if="isFetchingTableMetadata" />
         <main v-if="table" class="flex-1 relative pb-8 overflow-y-auto">
           <!-- Highlight Panel -->
@@ -27,7 +27,7 @@
                 </div>
               </div>
               <dl
-                class="flex flex-col space-y-1 md:space-y-0 md:flex-row md:flex-wrap"
+                class="flex flex-col gap-y-1 md:gap-y-0 md:flex-row md:flex-wrap"
               >
                 <dt class="sr-only">{{ $t("common.environment") }}</dt>
                 <dd class="flex items-center text-sm md:mr-4">
@@ -81,7 +81,7 @@
                     <NButton
                       quaternary
                       size="tiny"
-                      class="!px-1"
+                      class="px-1!"
                       v-bind="$attrs"
                     >
                       <span class="textlabel"
@@ -91,7 +91,7 @@
                     </NButton>
                   </template>
                   <TableSchemaViewer
-                    class="!w-[32rem] !h-[20rem]"
+                    class="w-lg! h-80!"
                     :database="database"
                     :schema="schemaName"
                     :object="tableName"
@@ -103,7 +103,7 @@
           </div>
 
           <div class="mt-6">
-            <div class="max-w-6xl px-6 space-y-6 divide-y divide-block-border">
+            <div class="max-w-6xl px-6 flex flex-col gap-y-6">
               <!-- Description list -->
               <dl class="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-3">
                 <div
@@ -204,7 +204,7 @@
 
           <div
             v-if="instanceV1SupportsColumn(instanceEngineNew)"
-            class="mt-6 px-6 space-y-4"
+            class="mt-6 px-6 flex flex-col gap-y-4"
           >
             <div class="w-full flex flex-row justify-between items-center">
               <div class="text-lg leading-6 font-medium text-main">
@@ -232,7 +232,7 @@
 
           <div
             v-if="instanceV1SupportsIndex(instanceEngineNew)"
-            class="mt-6 px-6 space-y-4"
+            class="mt-6 px-6 flex flex-col gap-y-4"
           >
             <div class="text-lg leading-6 font-medium text-main">
               {{ $t("database.indexes") }}
@@ -242,7 +242,7 @@
 
           <div
             v-if="instanceV1SupportsTrigger(instanceEngineNew)"
-            class="mt-6 px-6 space-y-4"
+            class="mt-6 px-6 flex flex-col gap-y-4"
           >
             <div class="text-lg leading-6 font-medium text-main">
               {{ $t("db.triggers") }}
@@ -257,7 +257,7 @@
 
           <div
             v-if="instanceV1MaskingForNoSQL(instanceEngineNew)"
-            class="mt-6 px-6 space-y-4"
+            class="mt-6 px-6 flex flex-col gap-y-4"
           >
             <div>
               <div class="text-lg leading-6 font-medium text-main">
@@ -285,7 +285,7 @@
             />
             <div
               v-if="state.tableCatalog !== initTableCatalog"
-              class="w-full flex items-center justify-end space-x-2 mt-2"
+              class="w-full flex items-center justify-end gap-x-2 mt-2"
             >
               <NButton
                 type="primary"
@@ -303,61 +303,60 @@
 </template>
 
 <script lang="ts" setup>
-import { create } from "@bufbuild/protobuf";
+import { create, fromJsonString, toJsonString } from "@bufbuild/protobuf";
 import { computedAsync } from "@vueuse/core";
 import { cloneDeep } from "lodash-es";
 import { CodeIcon } from "lucide-vue-next";
-import { NButton, NPopover, NInput } from "naive-ui";
+import { NButton, NInput, NPopover } from "naive-ui";
 import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import ClassificationCell from "@/components/ColumnDataTable/ClassificationCell.vue";
 import TableSchemaViewer from "@/components/TableSchemaViewer.vue";
 import {
   DatabaseV1Name,
-  InstanceV1Name,
   Drawer,
   DrawerContent,
   EnvironmentV1Name,
+  InstanceV1Name,
   ProjectV1Name,
   SearchBox,
 } from "@/components/v2";
 import {
-  useDatabaseV1Store,
-  useDatabaseCatalog,
-  useDBSchemaV1Store,
   getTableCatalog,
   pushNotification,
+  useDatabaseCatalog,
   useDatabaseCatalogV1Store,
+  useDatabaseV1Store,
+  useDBSchemaV1Store,
 } from "@/store";
 import { DEFAULT_PROJECT_NAME, defaultProject } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
-import type { TableCatalog } from "@/types/proto-es/v1/database_catalog_service_pb";
 import {
-  TableCatalogSchema,
   SchemaCatalogSchema,
+  TableCatalogSchema,
 } from "@/types/proto-es/v1/database_catalog_service_pb";
 import { GetSchemaStringRequest_ObjectType } from "@/types/proto-es/v1/database_service_pb";
 import type { DataClassificationSetting_DataClassificationConfig } from "@/types/proto-es/v1/setting_service_pb";
 import {
   bytesToString,
-  instanceV1HasCollationAndCharacterSet,
   hasIndexSizeProperty,
   hasProjectPermissionV2,
   hasSchemaProperty,
   hasTableEngineProperty,
-  instanceV1SupportsTrigger,
+  instanceV1HasCollationAndCharacterSet,
+  instanceV1MaskingForNoSQL,
   instanceV1SupportsColumn,
   instanceV1SupportsIndex,
-  instanceV1MaskingForNoSQL,
+  instanceV1SupportsTrigger,
   isDatabaseV1Queryable,
   supportGetStringSchema,
 } from "@/utils";
 import ColumnDataTable from "./ColumnDataTable/index.vue";
 import { SQLEditorButtonV1 } from "./DatabaseDetail";
 import IndexTable from "./IndexTable.vue";
+import MaskSpinner from "./misc/MaskSpinner.vue";
 import PartitionTablesDataTable from "./PartitionTablesDataTable.vue";
 import TriggerDataTable from "./TriggerDataTable.vue";
-import MaskSpinner from "./misc/MaskSpinner.vue";
 
 interface LocalState {
   columnNameSearchKeyword: string;
@@ -392,17 +391,18 @@ const tableCatalog = computed(() =>
 
 const initTableCatalog = computed(() => {
   if (!tableCatalog.value) {
-    return JSON.stringify(
+    return toJsonString(
+      TableCatalogSchema,
       create(TableCatalogSchema, {
         name: props.tableName,
       }),
-      null,
-      4
+      { prettySpaces: 2 }
     );
   }
 
-  const catalog = cloneDeep(tableCatalog.value);
-  return JSON.stringify(catalog, null, 4);
+  return toJsonString(TableCatalogSchema, tableCatalog.value, {
+    prettySpaces: 2,
+  });
 });
 
 const state = reactive<LocalState>({
@@ -448,7 +448,7 @@ watch(
 );
 
 const onCatalogUpload = async () => {
-  const catalog = JSON.parse(state.tableCatalog) as TableCatalog;
+  const catalog = fromJsonString(TableCatalogSchema, state.tableCatalog);
   if (catalog.name !== props.tableName) {
     pushNotification({
       module: "bytebase",

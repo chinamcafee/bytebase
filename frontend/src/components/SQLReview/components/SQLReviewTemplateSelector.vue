@@ -6,7 +6,7 @@
     </p>
 
     <div
-      class="flex flex-col sm:flex-row sm:flex-wrap justify-start items-stretch gap-x-10 gap-y-4"
+      class="flex flex-col sm:flex-row sm:flex-wrap justify-start items-stretch gap-x-4 gap-y-4"
     >
       <div
         v-for="template in reviewPolicyTemplateList"
@@ -19,18 +19,18 @@
         "
         @click="$emit('select-template', template)"
       >
-        <div class="text-left space-y-2">
+        <div class="text-left flex flex-col gap-y-2">
           <span class="text-base font-medium">
             {{ template.review.name }}
           </span>
-          <div class="space-y-2">
-            <BBBadge
+          <div class="flex flex-wrap gap-2">
+            <NTag
               v-for="resource in template.review.resources"
               :key="resource"
-              :can-remove="false"
+              type="primary"
             >
               <Resource :resource="resource" :show-prefix="true" />
-            </BBBadge>
+            </NTag>
           </div>
           <p class="text-sm">
             <span class="mr-2">{{ $t("sql-review.enabled-rules") }}:</span>
@@ -44,10 +44,10 @@
       </div>
     </div>
 
-    <NDivider />
+    <NDivider v-if="reviewPolicyTemplateList.length > 0" />
 
     <div
-      class="flex flex-col sm:flex-row sm:flex-wrap justify-start items-stretch gap-x-10 gap-y-4"
+      class="flex flex-col sm:flex-row sm:flex-wrap justify-start items-stretch gap-x-4 gap-y-4"
     >
       <div
         v-for="template in builtInTemplateList"
@@ -60,7 +60,7 @@
         "
         @click="$emit('select-template', template)"
       >
-        <div class="flex justify-center items-center space-x-1">
+        <div class="flex justify-center items-center gap-x-1">
           <div class="text-left">
             <span class="text-base font-medium">
               {{
@@ -91,9 +91,8 @@
 </template>
 
 <script lang="ts" setup>
-import { NDivider } from "naive-ui";
+import { NDivider, NTag } from "naive-ui";
 import { computed } from "vue";
-import { BBBadge } from "@/bbkit";
 import Resource from "@/components/v2/ResourceOccupiedModal/Resource.vue";
 import { useSQLReviewPolicyList } from "@/store";
 import type { SQLReviewPolicyTemplateV2 } from "@/types";

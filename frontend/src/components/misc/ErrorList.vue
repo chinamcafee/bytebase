@@ -12,8 +12,7 @@
 </template>
 
 <script setup lang="tsx">
-import { computed } from "vue";
-import { isVNode } from "vue";
+import { computed, isVNode } from "vue";
 import type { JSX } from "vue/jsx-runtime";
 
 export type NestedError = {
@@ -23,7 +22,7 @@ export type NestedError = {
 
 export type ErrorItem = string | JSX.Element | NestedError;
 
-const isJSXElement = (item: any): item is JSX.Element => {
+const isJSXElement = (item: unknown): item is JSX.Element => {
   return isVNode(item);
 };
 

@@ -7,13 +7,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -22,7 +23,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleColumnDisallowChangeType, &ColumnDisallowChangingTypeAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_COLUMN_DISALLOW_CHANGE_TYPE, &ColumnDisallowChangingTypeAdvisor{})
 }
 
 // ColumnDisallowChangingTypeAdvisor is the advisor checking for disallow changing column type..
@@ -31,9 +32,10 @@ type ColumnDisallowChangingTypeAdvisor struct {
 
 // Check checks for disallow changing column type..
 func (*ColumnDisallowChangingTypeAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -41,9 +43,9 @@ func (*ColumnDisallowChangingTypeAdvisor) Check(_ context.Context, checkCtx advi
 		return nil, err
 	}
 	checker := &columnDisallowChangingTypeChecker{
-		level:   level,
-		title:   string(checkCtx.Rule.Type),
-		catalog: checkCtx.Catalog,
+		level:            level,
+		title:            checkCtx.Rule.Type.String(),
+		originalMetadata: checkCtx.OriginalMetadata,
 	}
 
 	for _, stmt := range stmtList {
@@ -56,12 +58,12 @@ func (*ColumnDisallowChangingTypeAdvisor) Check(_ context.Context, checkCtx advi
 }
 
 type columnDisallowChangingTypeChecker struct {
-	adviceList []*storepb.Advice
-	level      storepb.Advice_Status
-	title      string
-	text       string
-	line       int
-	catalog    *catalog.Finder
+	adviceList       []*storepb.Advice
+	level            storepb.Advice_Status
+	title            string
+	text             string
+	line             int
+	originalMetadata *model.DatabaseMetadata
 }
 
 // Enter implements the ast.Visitor interface.
@@ -86,7 +88,7 @@ func (checker *columnDisallowChangingTypeChecker) Enter(in ast.Node) (ast.Node, 
 	if changeType {
 		checker.adviceList = append(checker.adviceList, &storepb.Advice{
 			Status:        checker.level,
-			Code:          advisor.ChangeColumnType.Int32(),
+			Code:          code.ChangeColumnType.Int32(),
 			Title:         checker.title,
 			Content:       fmt.Sprintf("\"%s\" changes column type", checker.text),
 			StartPosition: common.ConvertANTLRLineToPosition(checker.line),
@@ -129,14 +131,10 @@ func normalizeColumnType(tp string) string {
 }
 
 func (checker *columnDisallowChangingTypeChecker) changeColumnType(tableName string, columName string, newType string) bool {
-	column := checker.catalog.Origin.FindColumn(&catalog.ColumnFind{
-		TableName:  tableName,
-		ColumnName: columName,
-	})
-
+	column := checker.originalMetadata.GetSchemaMetadata("").GetTable(tableName).GetColumn(columName)
 	if column == nil {
 		return false
 	}
 
-	return normalizeColumnType(column.Type()) != normalizeColumnType(newType)
+	return normalizeColumnType(column.GetProto().Type) != normalizeColumnType(newType)
 }

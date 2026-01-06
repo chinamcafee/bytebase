@@ -19,15 +19,15 @@
 
 <script setup lang="tsx">
 import { ChevronDownIcon } from "lucide-vue-next";
-import { NDataTable, type DataTableColumn } from "naive-ui";
+import { type DataTableColumn, NDataTable } from "naive-ui";
 import { computed, h, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { ComposedDatabase } from "@/types";
 import type {
-  TablePartitionMetadata,
   DatabaseMetadata,
   SchemaMetadata,
   TableMetadata,
+  TablePartitionMetadata,
 } from "@/types/proto-es/v1/database_service_pb";
 import { getHighlightHTMLByRegExp, useAutoHeightDataTable } from "@/utils";
 import { useCurrentTabViewStateContext } from "../../context/viewState";
@@ -168,20 +168,28 @@ watch(
 
 <style lang="postcss" scoped>
 :deep(.n-data-table-th .n-data-table-resize-button::after) {
-  @apply bg-control-bg h-2/3;
+  background-color: rgb(var(--color-control-bg));
+  height: 66.666667%;
 }
 :deep(.n-data-table-td.input-cell) {
-  @apply pl-0.5 pr-1 py-0;
+  padding-left: 0.125rem;
+  padding-right: 0.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 :deep(.n-data-table-td.input-cell .n-input__placeholder),
 :deep(.n-data-table-td.input-cell .n-base-selection-placeholder) {
-  @apply italic;
+  font-style: italic;
 }
 :deep(.n-data-table-td.checkbox-cell) {
-  @apply pr-1 py-0;
+  padding-right: 0.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 :deep(.n-data-table-td.text-cell) {
-  @apply pr-1 py-0;
+  padding-right: 0.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 </style>

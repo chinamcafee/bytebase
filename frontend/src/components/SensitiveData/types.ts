@@ -1,12 +1,11 @@
 import type { ComposedDatabase, DatabaseResource } from "@/types";
 import type {
-  TableCatalog,
   ColumnCatalog,
   ObjectSchema,
+  TableCatalog,
 } from "@/types/proto-es/v1/database_catalog_service_pb";
-import type { Group } from "@/types/proto-es/v1/group_service_pb";
-import type { MaskingExceptionPolicy_MaskingException_Action } from "@/types/proto-es/v1/org_policy_service_pb";
-import type { User } from "@/types/proto-es/v1/user_service_pb";
+
+export type MaskDataTarget = TableCatalog | ColumnCatalog | ObjectSchema;
 
 export interface MaskData {
   schema: string;
@@ -16,7 +15,7 @@ export interface MaskData {
   semanticTypeId: string;
   disableClassification?: boolean;
   classificationId: string;
-  target: TableCatalog | ColumnCatalog | ObjectSchema;
+  target: MaskDataTarget;
 }
 
 export interface SensitiveColumn {
@@ -27,9 +26,7 @@ export interface SensitiveColumn {
 export interface AccessUser {
   type: "user" | "group";
   key: string;
-  group?: Group;
-  user?: User;
-  supportActions: Set<MaskingExceptionPolicy_MaskingException_Action>;
+  member: string;
   expirationTimestamp?: number;
   rawExpression: string;
   description: string;

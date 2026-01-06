@@ -20,17 +20,17 @@
   </div>
 </template>
 
-<script lang="tsx" setup>
+<script lang="ts" setup>
 /* eslint-disable vue/no-mutating-props */
 import {
-  ArrowUpIcon,
   ArrowDownIcon,
-  TrashIcon,
+  ArrowUpIcon,
   PlusIcon,
+  TrashIcon,
 } from "lucide-vue-next";
-import { NButton, NDataTable } from "naive-ui";
 import type { DataTableColumn } from "naive-ui";
-import { computed } from "vue";
+import { NButton, NDataTable } from "naive-ui";
+import { computed, h } from "vue";
 import { useI18n } from "vue-i18n";
 import { RoleSelect } from "@/components/v2";
 import { SpinnerButton } from "@/components/v2/Form";
@@ -70,18 +70,17 @@ const columns = computed(
         resizable: true,
         render: (stepData) => {
           if (props.editable) {
-            return (
-              <RoleSelect
-                suffix=""
-                value={stepData.role}
-                style="width: 80%"
-                onUpdate:value={(val: string | string[]) => {
-                  const role = Array.isArray(val) ? val[0] : val;
-                  props.flow.roles[stepData.index] = role;
-                  emit("update");
-                }}
-              />
-            );
+            return h(RoleSelect, {
+              suffix: "",
+              placement: "top-start",
+              value: stepData.role,
+              style: "width: 80%",
+              "onUpdate:value": (val: string | string[]) => {
+                const role = Array.isArray(val) ? val[0] : val;
+                props.flow.roles[stepData.index] = role;
+                emit("update");
+              },
+            });
           }
           return displayRoleTitle(stepData.role);
         },
@@ -92,33 +91,38 @@ const columns = computed(
       cols.push({
         title: t("common.operations"),
         key: "operations",
-        render: (stepData, index) => (
-          <div class="flex gap-x-1">
-            <NButton
-              disabled={index === 0 || !allowAdmin.value}
-              size="tiny"
-              onClick={() => reorder(stepData, -1)}
-            >
-              <ArrowUpIcon class={"w-4"} />
-            </NButton>
-            <NButton
-              disabled={index === steps.value.length - 1 || !allowAdmin.value}
-              size="tiny"
-              onClick={() => reorder(stepData, 1)}
-            >
-              <ArrowDownIcon class={"w-4"} />
-            </NButton>
-            {allowAdmin.value && (
-              <SpinnerButton
-                size="tiny"
-                tooltip={t("custom-approval.approval-flow.node.delete")}
-                onConfirm={() => removeStep(stepData)}
-              >
-                <TrashIcon class={"w-3"} />
-              </SpinnerButton>
-            )}
-          </div>
-        ),
+        render: (stepData, index) =>
+          h("div", { class: "flex gap-x-1" }, [
+            h(
+              NButton,
+              {
+                disabled: index === 0 || !allowAdmin.value,
+                size: "tiny",
+                onClick: () => reorder(stepData, -1),
+              },
+              () => h(ArrowUpIcon, { class: "w-4" })
+            ),
+            h(
+              NButton,
+              {
+                disabled: index === steps.value.length - 1 || !allowAdmin.value,
+                size: "tiny",
+                onClick: () => reorder(stepData, 1),
+              },
+              () => h(ArrowDownIcon, { class: "w-4" })
+            ),
+            allowAdmin.value
+              ? h(
+                  SpinnerButton,
+                  {
+                    size: "tiny",
+                    tooltip: t("custom-approval.approval-flow.node.delete"),
+                    onConfirm: () => removeStep(stepData),
+                  },
+                  () => h(TrashIcon, { class: "w-3" })
+                )
+              : null,
+          ]),
       });
     }
 

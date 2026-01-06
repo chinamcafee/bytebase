@@ -1,5 +1,7 @@
 <template>
   <div class="w-full flex flex-col p-4 gap-4">
+    <DatabaseChangeSection v-if="isDatabaseChangePlan" />
+
     <IssueStatusSection v-if="issue.approvalTemplate" :issue="issue" />
 
     <ApprovalFlowSection :issue="issue" />
@@ -19,7 +21,7 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import IssueLabels from "@/components/IssueV1/components/Sidebar/IssueLabels.vue";
 import { useResourcePoller } from "@/components/Plan/logic/poller";
-import { issueServiceClientConnect } from "@/grpcweb";
+import { issueServiceClientConnect } from "@/connect";
 import {
   extractUserId,
   pushNotification,
@@ -27,16 +29,21 @@ import {
   useCurrentUserV1,
 } from "@/store";
 import {
-  UpdateIssueRequestSchema,
   IssueStatus,
+  UpdateIssueRequestSchema,
 } from "@/types/proto-es/v1/issue_service_pb";
 import { hasProjectPermissionV2 } from "@/utils";
 import { usePlanContextWithIssue } from "../../../logic/context";
 import ApprovalFlowSection from "./ApprovalFlowSection/ApprovalFlowSection.vue";
+import DatabaseChangeSection from "./DatabaseChangeSection.vue";
 import IssueStatusSection from "./IssueStatusSection.vue";
 
 const { t } = useI18n();
-const { issue } = usePlanContextWithIssue();
+const { plan, issue } = usePlanContextWithIssue();
+
+const isDatabaseChangePlan = computed(() =>
+  plan.value.specs.some((spec) => spec.config?.case === "changeDatabaseConfig")
+);
 const currentUser = useCurrentUserV1();
 const { project } = useCurrentProjectV1();
 const { refreshResources } = useResourcePoller();

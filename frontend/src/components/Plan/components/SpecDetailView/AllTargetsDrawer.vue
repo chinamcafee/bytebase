@@ -3,7 +3,7 @@
     <DrawerContent
       :title="`${$t('plan.targets.title')} (${targets.length})`"
       :closable="true"
-      class="w-[50rem] max-w-[100vw] relative"
+      class="w-200 max-w-[100vw] relative"
     >
       <template #default>
         <div class="w-full h-full flex flex-col gap-y-4">
@@ -37,20 +37,7 @@
                     <DatabaseDisplay :database="target" show-environment />
                   </template>
                   <template v-else-if="isValidDatabaseGroupName(target)">
-                    <DatabaseGroupIcon
-                      class="w-4 h-4 text-control-light flex-shrink-0"
-                    />
-                    <DatabaseGroupName
-                      :database-group="
-                        dbGroupStore.getDBGroupByName(target) as DatabaseGroup
-                      "
-                      :link="false"
-                      :plain="true"
-                      class="text-sm"
-                    />
-                    <NTag size="tiny" round :bordered="false">
-                      {{ $t("plan.targets.type.database-group") }}
-                    </NTag>
+                    <DatabaseGroupTargetDisplay :target="target" />
                   </template>
                   <template v-else>
                     <!-- Unknown resource -->
@@ -73,20 +60,14 @@
 </template>
 
 <script setup lang="ts">
-import { NTag } from "naive-ui";
-import { reactive, computed, watch } from "vue";
+import { computed, reactive, watch } from "vue";
 import { BBSpin } from "@/bbkit";
-import DatabaseGroupIcon from "@/components/DatabaseGroupIcon.vue";
 import { Drawer, DrawerContent, SearchBox } from "@/components/v2";
-import DatabaseGroupName from "@/components/v2/Model/DatabaseGroupName.vue";
-import {
-  useDBGroupStore,
-  batchGetOrFetchDatabases,
-  useDatabaseV1Store,
-} from "@/store";
+import { useDatabaseV1Store, useDBGroupStore } from "@/store";
 import { isValidDatabaseGroupName, isValidDatabaseName } from "@/types";
-import type { DatabaseGroup } from "@/types/proto-es/v1/database_group_service_pb";
 import DatabaseDisplay from "../common/DatabaseDisplay.vue";
+import { useSelectedSpec } from "./context";
+import DatabaseGroupTargetDisplay from "./DatabaseGroupTargetDisplay.vue";
 
 interface Props {
   show: boolean;
@@ -105,6 +86,7 @@ defineEmits<{
 
 const databaseStore = useDatabaseV1Store();
 const dbGroupStore = useDBGroupStore();
+const { getDatabaseTargets } = useSelectedSpec();
 
 const state = reactive<LocalState>({
   searchText: "",
@@ -135,23 +117,17 @@ const loadAllTargets = async () => {
 
   try {
     // Separate different types of targets for optimized fetching
-    const databaseTargets: string[] = [];
-    const dbGroupTargets: string[] = [];
-
-    for (const target of props.targets) {
-      if (isValidDatabaseGroupName(target)) {
-        // If target is a valid database group name
-        dbGroupTargets.push(target);
-      } else if (isValidDatabaseName(target)) {
-        databaseTargets.push(target);
-      }
-    }
+    const { databaseTargets, dbGroupTargets } = await getDatabaseTargets(
+      props.targets
+    );
 
     // Batch fetch all targets
-    const fetchPromises: Promise<any>[] = [];
+    const fetchPromises: Promise<unknown>[] = [];
 
     if (databaseTargets.length > 0) {
-      fetchPromises.push(batchGetOrFetchDatabases(databaseTargets));
+      fetchPromises.push(
+        databaseStore.batchGetOrFetchDatabases(databaseTargets)
+      );
     }
 
     const dbGroupPromises = dbGroupTargets.map((target) =>
@@ -167,24 +143,23 @@ const loadAllTargets = async () => {
   }
 };
 
-// Load all targets when drawer opens
 watch(
   () => props.show,
   async (show) => {
     if (show) {
       state.searchText = "";
-      await loadAllTargets();
     }
   }
 );
 
-// Reload if targets change while drawer is open
+// Load all targets when drawer opens
 watch(
-  () => props.targets,
-  async () => {
-    if (props.show) {
+  () => props.show,
+  async (show) => {
+    if (show) {
       await loadAllTargets();
     }
-  }
+  },
+  { once: true }
 );
 </script>

@@ -60,7 +60,7 @@
             Principal
             <RequiredStar />
           </label>
-          <div class="mt-2 flex items-center space-x-2">
+          <div class="mt-2 flex items-center gap-x-2">
             <NInput
               :value="
                 dataSource.saslConfig?.mechanism?.case === 'krbConfig'
@@ -118,7 +118,7 @@
             KDC
             <RequiredStar />
           </label>
-          <div class="flex items-center space-x-2">
+          <div class="flex items-center gap-x-2">
             <div class="w-fit">
               <NRadioGroup
                 :value="
@@ -295,6 +295,16 @@
                   />
                 </div>
               </NRadio>
+              <NRadio
+                :value="DataSourceExternalSecret_SecretType.AZURE_KEY_VAULT"
+              >
+                <div class="flex items-center gap-x-1">
+                  {{ $t("instance.password-type.external-secret-azure") }}
+                  <FeatureBadge
+                    :feature="PlanFeature.FEATURE_EXTERNAL_SECRET_MANAGER"
+                  />
+                </div>
+              </NRadio>
             </NRadioGroup>
             <LearnMoreLink
               url="https://docs.bytebase.com/get-started/connect/overview#secret-manager-integration"
@@ -338,13 +348,16 @@
               />
             </div>
           </div>
-          <div v-else-if="dataSource.externalSecret" class="space-y-4">
+          <div
+            v-else-if="dataSource.externalSecret"
+            class="flex flex-col gap-y-4"
+          >
             <div
               v-if="
                 state.passwordType ===
                 DataSourceExternalSecret_SecretType.VAULT_KV_V2
               "
-              class="space-y-4"
+              class="flex flex-col gap-y-4"
             >
               <div class="sm:col-span-2 sm:col-start-1">
                 <label class="textlabel block">
@@ -359,14 +372,14 @@
                   :placeholder="$t('instance.external-secret-vault.vault-url')"
                 />
               </div>
-              <div class="sm:col-span-2 sm:col-start-1 space-y-2">
+              <div class="sm:col-span-2 sm:col-start-1 flex flex-col gap-y-2">
                 <label class="textlabel block">
                   {{
                     $t("instance.external-secret-vault.vault-auth-type.self")
                   }}
                 </label>
                 <NRadioGroup
-                  class="textlabel mb-2"
+                  class="textlabel"
                   :value="dataSource.externalSecret.authType"
                   @update:value="changeExternalSecretAuthType"
                 >
@@ -403,7 +416,7 @@
                   }}
                   <RequiredStar />
                 </label>
-                <div class="flex space-x-2 text-sm">
+                <div class="flex gap-x-2 text-sm">
                   <div class="textinfolabel">
                     {{
                       $t(
@@ -443,7 +456,7 @@
                 v-else-if="
                   dataSource.externalSecret?.authOption?.case === 'appRole'
                 "
-                class="space-y-4"
+                class="flex flex-col gap-y-4"
               >
                 <div class="sm:col-span-2 sm:col-start-1">
                   <label class="textlabel block">
@@ -561,6 +574,33 @@
               </div>
               <div class="sm:col-span-2 sm:col-start-1">
                 <label class="textlabel block">
+                  {{ $t("instance.external-secret-vault.vault-tls-config") }}
+                </label>
+                <SslCertificateFormV1
+                  v-model:verify="verifyVaultTls"
+                  v-model:ca="dataSource.externalSecret.vaultSslCa"
+                  v-model:cert="dataSource.externalSecret.vaultSslCert"
+                  v-model:private-key="dataSource.externalSecret.vaultSslKey"
+                  :disabled="!allowEdit"
+                  :show-tooltip="false"
+                  :show-key-field="true"
+                  :show-cert-field="true"
+                  :verify-label="
+                    $t(
+                      'instance.external-secret-vault.verify-vault-certificate'
+                    )
+                  "
+                  :ca-label="$t('instance.external-secret-vault.vault-ca-cert')"
+                  :cert-label="
+                    $t('instance.external-secret-vault.vault-client-cert')
+                  "
+                  :key-label="
+                    $t('instance.external-secret-vault.vault-client-key')
+                  "
+                />
+              </div>
+              <div class="sm:col-span-2 sm:col-start-1">
+                <label class="textlabel block">
                   {{
                     $t(
                       "instance.external-secret-vault.vault-secret-engine-name"
@@ -568,7 +608,7 @@
                   }}
                   <RequiredStar />
                 </label>
-                <div class="flex space-x-2 text-sm textinfolabel">
+                <div class="flex gap-x-2 text-sm textinfolabel">
                   {{
                     $t(
                       "instance.external-secret-vault.vault-secret-engine-tips"
@@ -588,6 +628,30 @@
                 />
               </div>
             </div>
+            <div
+              v-if="
+                state.passwordType ===
+                DataSourceExternalSecret_SecretType.AZURE_KEY_VAULT
+              "
+              class="flex flex-col gap-y-4"
+            >
+              <div class="sm:col-span-2 sm:col-start-1">
+                <label class="textlabel block">
+                  {{ $t("instance.external-secret-azure.vault-url") }}
+                  <RequiredStar />
+                </label>
+                <div class="flex gap-x-2 text-sm textinfolabel">
+                  {{ $t("instance.external-secret-azure.vault-url-tips") }}
+                </div>
+                <BBTextField
+                  v-model:value="dataSource.externalSecret.url"
+                  :required="true"
+                  class="mt-2 w-full"
+                  :disabled="!allowEdit"
+                  :placeholder="$t('instance.external-secret-azure.vault-url')"
+                />
+              </div>
+            </div>
             <div class="sm:col-span-2 sm:col-start-1">
               <label class="textlabel block">
                 {{ secretNameLabel }}
@@ -598,9 +662,18 @@
                   state.passwordType ===
                   DataSourceExternalSecret_SecretType.GCP_SECRET_MANAGER
                 "
-                class="flex space-x-2 text-sm textinfolabel"
+                class="flex gap-x-2 text-sm textinfolabel"
               >
                 {{ $t("instance.external-secret-gcp.secret-name-tips") }}
+              </div>
+              <div
+                v-else-if="
+                  state.passwordType ===
+                  DataSourceExternalSecret_SecretType.AZURE_KEY_VAULT
+                "
+                class="flex gap-x-2 text-sm textinfolabel"
+              >
+                {{ $t("instance.external-secret-azure.secret-name-tips") }}
               </div>
               <BBTextField
                 v-model:value="dataSource.externalSecret.secretName"
@@ -613,7 +686,9 @@
             <div
               v-if="
                 state.passwordType !==
-                DataSourceExternalSecret_SecretType.GCP_SECRET_MANAGER
+                  DataSourceExternalSecret_SecretType.GCP_SECRET_MANAGER &&
+                state.passwordType !==
+                  DataSourceExternalSecret_SecretType.AZURE_KEY_VAULT
               "
               class="sm:col-span-2 sm:col-start-1"
             >
@@ -728,7 +803,7 @@
         <div class="textlabel block">
           {{ $t("data-source.ssh.private-key") }}
         </div>
-        <div class="flex space-x-2 text-sm">
+        <div class="flex gap-x-2 text-sm">
           <div class="textinfolabel">
             {{ $t("data-source.snowflake-keypair-tip") }}
           </div>
@@ -746,6 +821,21 @@
 MIIEvQ...
 -----END PRIVATE KEY-----"
           :allow-edit="allowEdit"
+        />
+      </div>
+      <div class="sm:col-span-3 sm:col-start-1">
+        <div class="textlabel block">
+          {{ $t("data-source.private-key-passphrase") }}
+        </div>
+        <div class="textinfolabel text-sm">
+          {{ $t("data-source.private-key-passphrase-tip") }}
+        </div>
+        <NInput
+          v-model:value="dataSource.authenticationPrivateKeyPassphrase"
+          type="password"
+          class="mt-2 w-full"
+          :disabled="!allowEdit"
+          :placeholder="$t('data-source.private-key-passphrase-placeholder')"
         />
       </div>
     </template>
@@ -779,7 +869,7 @@ MIIEvQ...
 
     <template v-if="showAuthenticationDatabase">
       <div class="sm:col-span-3 sm:col-start-1">
-        <div class="flex flex-row items-center space-x-2">
+        <div class="flex flex-row items-center gap-x-2">
           <label for="authenticationDatabase" class="textlabel block">
             {{ $t("instance.authentication-database") }}
           </label>
@@ -802,7 +892,7 @@ MIIEvQ...
       "
     >
       <div v-if="hasReadonlyReplicaHost" class="sm:col-span-3 sm:col-start-1">
-        <div class="flex flex-row items-center space-x-2">
+        <div class="flex flex-row items-center gap-x-2">
           <label for="host" class="textlabel block">
             {{ $t("data-source.read-replica-host") }}
           </label>
@@ -817,7 +907,7 @@ MIIEvQ...
       </div>
 
       <div v-if="hasReadonlyReplicaPort" class="sm:col-span-3 sm:col-start-1">
-        <div class="flex flex-row items-center space-x-2">
+        <div class="flex flex-row items-center gap-x-2">
           <label for="port" class="textlabel block">
             {{ $t("data-source.read-replica-port") }}
           </label>
@@ -858,7 +948,7 @@ MIIEvQ...
       <!-- Add parameter form -->
       <div
         v-if="allowEdit"
-        class="flex mt-2 mb-2 space-x-2 bg-gray-50 p-3 rounded-md"
+        class="flex mt-2 mb-2 gap-x-2 bg-gray-50 p-3 rounded-md"
       >
         <NInput
           v-model:value="newParam.key"
@@ -885,7 +975,7 @@ MIIEvQ...
       <div
         v-for="(param, index) in extraConnectionParamsList"
         :key="param.key"
-        class="flex mt-2 space-x-2"
+        class="flex mt-2 gap-x-2"
       >
         <NInput
           class="w-full"
@@ -933,43 +1023,33 @@ MIIEvQ...
       "
       class="sm:col-span-3 sm:col-start-1"
     >
-      <label for="ssl" class="textlabel block">
+      <div for="ssl" class="flex items-center justify-start gap-x-2 textlabel">
         {{ $t("data-source.ssl-connection") }}
-      </label>
-      <Switch
-        class="mt-2"
-        :text="true"
-        :value="dataSource.useSsl"
-        @update:value="handleUseSslChanged"
-      />
+        <Switch
+          :text="true"
+          :value="dataSource.useSsl"
+          @update:value="handleUseSslChanged"
+        />
+      </div>
       <template v-if="dataSource.useSsl">
-        <template v-if="dataSource.pendingCreate">
-          <SslCertificateFormV1
-            :value="dataSource"
-            :engine-type="basicInfo.engine"
-            :disabled="!allowEdit"
-            @change="handleSSLChange"
-          />
-        </template>
-        <template v-else>
-          <template v-if="dataSource.updateSsl">
-            <SslCertificateFormV1
-              :value="dataSource"
-              :engine-type="basicInfo.engine"
-              :disabled="!allowEdit"
-              @change="handleSSLChange"
-            />
-          </template>
-          <template v-else>
-            <NButton
-              class="!mt-2"
-              :disabled="!allowEdit"
-              @click.prevent="handleEditSSL"
-            >
-              {{ $t("common.edit") }} - {{ $t("common.write-only") }}
-            </NButton>
-          </template>
-        </template>
+        <SslCertificateFormV1
+          v-if="dataSource.pendingCreate || dataSource.updateSsl"
+          class="pt-1!"
+          v-model:verify="dataSource.verifyTlsCertificate"
+          v-model:ca="dataSource.sslCa"
+          v-model:cert="dataSource.sslCert"
+          v-model:private-key="dataSource.sslKey"
+          :engine-type="basicInfo.engine"
+          :disabled="!allowEdit"
+        />
+        <NButton
+          v-else
+          class="mt-2!"
+          :disabled="!allowEdit"
+          @click.prevent="handleEditSSL"
+        >
+          {{ $t("common.edit") }} - {{ $t("common.write-only") }}
+        </NButton>
       </template>
     </div>
 
@@ -1013,21 +1093,20 @@ import { useI18n } from "vue-i18n";
 import { BBTextField } from "@/bbkit";
 import { FeatureBadge } from "@/components/FeatureGuard";
 import LearnMoreLink from "@/components/LearnMoreLink.vue";
-import RequiredStar from "@/components/RequiredStar.vue";
 import DroppableTextarea from "@/components/misc/DroppableTextarea.vue";
+import RequiredStar from "@/components/RequiredStar.vue";
 import { Switch } from "@/components/v2";
 import type { DataSourceOptions } from "@/types/dataSource";
 import { Engine } from "@/types/proto-es/v1/common_pb";
-import type { DataSource } from "@/types/proto-es/v1/instance_service_pb";
 import {
-  DataSourceExternalSecret_AppRoleAuthOption_SecretType,
-  DataSourceExternalSecret_AuthType,
-  DataSourceExternalSecret_SecretType,
-  DataSourceType,
   DataSource_AuthenticationType,
   DataSource_RedisType,
-  DataSourceExternalSecretSchema,
+  DataSourceExternalSecret_AppRoleAuthOption_SecretType,
   DataSourceExternalSecret_AppRoleAuthOptionSchema,
+  DataSourceExternalSecret_AuthType,
+  DataSourceExternalSecret_SecretType,
+  DataSourceExternalSecretSchema,
+  DataSourceType,
   KerberosConfigSchema,
   SASLConfigSchema,
 } from "@/types/proto-es/v1/instance_service_pb";
@@ -1105,6 +1184,22 @@ watch(
     }
   },
   { immediate: true, deep: true }
+);
+
+// Watch SSL fields and set updateSsl flag when they change
+watch(
+  () => [
+    () => props.dataSource.verifyTlsCertificate,
+    () => props.dataSource.sslCa,
+    () => props.dataSource.sslCert,
+    () => props.dataSource.sslKey,
+  ],
+  () => {
+    if (!props.dataSource.pendingCreate) {
+      // eslint-disable-next-line vue/no-mutating-props
+      props.dataSource.updateSsl = true;
+    }
+  }
 );
 
 const hiveAuthentication = computed(() => {
@@ -1224,6 +1319,8 @@ const secretNameLabel = computed(() => {
       return t("instance.external-secret-vault.vault-secret-path");
     case DataSourceExternalSecret_SecretType.GCP_SECRET_MANAGER:
       return t("instance.external-secret-gcp.secret-name");
+    case DataSourceExternalSecret_SecretType.AZURE_KEY_VAULT:
+      return t("instance.external-secret-azure.secret-name");
     default:
       return t("instance.external-secret.secret-name");
   }
@@ -1234,6 +1331,18 @@ const secretKeyLabel = computed(() => {
     return t("instance.external-secret-vault.vault-secret-key");
   }
   return t("instance.external-secret.key-name");
+});
+
+const verifyVaultTls = computed({
+  get: () => {
+    return !props.dataSource.externalSecret?.skipVaultTlsVerification;
+  },
+  set: (value: boolean) => {
+    if (props.dataSource.externalSecret) {
+      // eslint-disable-next-line vue/no-mutating-props
+      props.dataSource.externalSecret.skipVaultTlsVerification = !value;
+    }
+  },
 });
 
 const changeSecretType = (secretType: DataSourceExternalSecret_SecretType) => {
@@ -1265,6 +1374,16 @@ const changeSecretType = (secretType: DataSourceExternalSecret_SecretType) => {
         authType: DataSourceExternalSecret_AuthType.AUTH_TYPE_UNSPECIFIED,
         secretType: secretType,
         authOption: { case: "token", value: "" },
+        secretName: ds.externalSecret?.secretName ?? "",
+        passwordKeyName: "",
+      });
+      break;
+    case DataSourceExternalSecret_SecretType.AZURE_KEY_VAULT:
+      ds.externalSecret = create(DataSourceExternalSecretSchema, {
+        authType: DataSourceExternalSecret_AuthType.AUTH_TYPE_UNSPECIFIED,
+        secretType: secretType,
+        authOption: { case: "token", value: "" },
+        url: ds.externalSecret?.url ?? "",
         secretName: ds.externalSecret?.secretName ?? "",
         passwordKeyName: "",
       });
@@ -1359,14 +1478,6 @@ const handleEditSSL = () => {
   ds.updateSsl = true;
 };
 
-const handleSSLChange = (
-  value: Partial<Pick<DataSource, "sslCa" | "sslCert" | "sslKey">>
-) => {
-  const ds = props.dataSource;
-  Object.assign(ds, value);
-  ds.updateSsl = true;
-};
-
 const handleSSHChange = (
   value: Partial<
     Pick<
@@ -1381,9 +1492,9 @@ const handleSSHChange = (
 
 watch(
   () => props.dataSource.authenticationPrivateKey,
-  () => {
+  (privateKey) => {
     const ds = props.dataSource;
-    ds.updateAuthenticationPrivateKey = true;
+    ds.useEmptyPassword = !!privateKey;
   }
 );
 

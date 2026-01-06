@@ -9,7 +9,7 @@ import (
 	"github.com/antlr4-go/antlr/v4"
 	"github.com/pkg/errors"
 
-	parser "github.com/bytebase/mysql-parser"
+	parser "github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/generated-go/store"
@@ -278,7 +278,7 @@ func classifyColumns(ctx context.Context, getDatabaseMetadataFunc base.GetDataba
 		return nil, nil, errors.New("GetDatabaseMetadataFunc is not set")
 	}
 
-	var dbSchema *model.DatabaseMetadata
+	var dbMetadata *model.DatabaseMetadata
 	allDatabaseNames, err := listDatabaseNamesFunc(ctx, instanceID)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to list databases names")
@@ -286,7 +286,7 @@ func classifyColumns(ctx context.Context, getDatabaseMetadataFunc base.GetDataba
 	if !isCaseSensitive {
 		for _, db := range allDatabaseNames {
 			if strings.EqualFold(db, table.Database) {
-				_, dbSchema, err = getDatabaseMetadataFunc(ctx, instanceID, db)
+				_, dbMetadata, err = getDatabaseMetadataFunc(ctx, instanceID, db)
 				if err != nil {
 					return nil, nil, errors.Wrapf(err, "failed to get database metadata for database %q", db)
 				}
@@ -296,7 +296,7 @@ func classifyColumns(ctx context.Context, getDatabaseMetadataFunc base.GetDataba
 	} else {
 		for _, db := range allDatabaseNames {
 			if db == table.Database {
-				_, dbSchema, err = getDatabaseMetadataFunc(ctx, instanceID, db)
+				_, dbMetadata, err = getDatabaseMetadataFunc(ctx, instanceID, db)
 				if err != nil {
 					return nil, nil, errors.Wrapf(err, "failed to get database metadata for database %q", db)
 				}
@@ -304,13 +304,13 @@ func classifyColumns(ctx context.Context, getDatabaseMetadataFunc base.GetDataba
 			}
 		}
 	}
-	if dbSchema == nil {
+	if dbMetadata == nil {
 		slog.Debug("failed to get database metadata", slog.String("instanceID", instanceID), slog.String("database", table.Database))
 		return nil, nil, errors.Errorf("failed to get database metadata for InstanceID %q, Database %q", instanceID, table.Database)
 	}
 
 	emptySchema := ""
-	schema := dbSchema.GetSchema(emptySchema)
+	schema := dbMetadata.GetSchemaMetadata(emptySchema)
 	if schema == nil {
 		return nil, nil, errors.New("failed to get schema metadata")
 	}
@@ -321,7 +321,7 @@ func classifyColumns(ctx context.Context, getDatabaseMetadataFunc base.GetDataba
 	}
 
 	var generatedColumns, normalColumns []string
-	for _, column := range tableSchema.GetColumns() {
+	for _, column := range tableSchema.GetProto().GetColumns() {
 		if column.GetGeneration() != nil {
 			generatedColumns = append(generatedColumns, column.GetName())
 		} else {
@@ -424,13 +424,13 @@ type TableReference struct {
 	Alias    string
 }
 
-func extractTables(databaseName string, parseResult *mysql.ParseResult, offset int) ([]statementInfo, error) {
+func extractTables(databaseName string, ast *base.ANTLRAST, offset int) ([]statementInfo, error) {
 	listener := &tableReferenceListener{
 		databaseName: databaseName,
 		offset:       offset,
 	}
 
-	antlr.ParseTreeWalkerDefault.Walk(listener, parseResult.Tree)
+	antlr.ParseTreeWalkerDefault.Walk(listener, ast.Tree)
 
 	return listener.tables, listener.err
 }

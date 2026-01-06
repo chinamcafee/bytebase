@@ -101,10 +101,10 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 	if err != nil {
 		return 0, errors.Wrapf(err, "failed to split multi statement")
 	}
-	nonEmptyStatements, idxMap := base.FilterEmptySQLWithIndexes(statements)
+	nonEmptyStatements := base.FilterEmptyStatements(statements)
 
-	for currentIndex, statement := range nonEmptyStatements {
-		opts.LogCommandExecute([]int32{int32(idxMap[currentIndex])}, statement.Text)
+	for _, statement := range nonEmptyStatements {
+		opts.LogCommandExecute(statement.Range, statement.Text)
 		_, err := d.client.ExecuteTransaction(ctx, &dynamodb.ExecuteTransactionInput{
 			TransactStatements: []types.ParameterizedStatement{
 				{
@@ -114,11 +114,7 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 		})
 		if err != nil {
 			opts.LogCommandResponse(0, []int64{0}, err.Error())
-			return 0, &db.ErrorWithPosition{
-				Err:   errors.Wrap(err, "failed to execute statement"),
-				Start: statement.Start,
-				End:   statement.End,
-			}
+			return 0, err
 		}
 		opts.LogCommandResponse(0, []int64{0}, "")
 	}
@@ -137,7 +133,7 @@ func (d *Driver) QueryConn(ctx context.Context, _ *sql.Conn, statement string, q
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to split multi statement")
 	}
-	singleSQLs = base.FilterEmptySQL(singleSQLs)
+	singleSQLs = base.FilterEmptyStatements(singleSQLs)
 	if len(singleSQLs) == 0 {
 		return nil, nil
 	}

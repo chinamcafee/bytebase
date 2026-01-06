@@ -1,7 +1,6 @@
 package pg
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strconv"
@@ -16,7 +15,6 @@ import (
 	pgpluginparser "github.com/bytebase/bytebase/backend/plugin/parser/pg"
 	"github.com/bytebase/bytebase/backend/plugin/schema"
 	"github.com/bytebase/bytebase/backend/plugin/schema/pg/ast"
-	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 func init() {
@@ -53,7 +51,15 @@ func generateMigration(diff *schema.MetadataDiff) (string, error) {
 
 // dropObjectsInOrder drops all objects in reverse topological order (most dependent first)
 func dropObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) {
-	// First, drop all triggers that might depend on functions we're about to drop
+	// Drop event triggers first (before everything else)
+	// Event triggers are database-level objects that depend on functions
+	for _, etDiff := range diff.EventTriggerChanges {
+		if etDiff.Action == schema.MetadataDiffActionDrop {
+			writeDropEventTrigger(buf, etDiff.EventTriggerName)
+		}
+	}
+
+	// Next, drop all triggers that might depend on functions we're about to drop
 	// This is necessary because PostgreSQL doesn't allow dropping functions that are used by triggers
 	functionsBeingDropped := make(map[string]bool)
 	for _, funcDiff := range diff.FunctionChanges {
@@ -63,18 +69,32 @@ func dropObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) {
 		}
 	}
 
-	// Drop triggers that might depend on functions being dropped
-	// This includes triggers from tables being dropped AND from tables being altered
+	// Drop all triggers first (before dropping functions or tables they depend on)
+	// This avoids dependency errors when dropping functions or tables
 	for _, tableDiff := range diff.TableChanges {
-		if tableDiff.OldTable != nil {
+		// Use TriggerChanges for AST-only mode, OldTable.Triggers for metadata mode
+		if len(tableDiff.TriggerChanges) > 0 {
+			// AST-only mode: use TriggerChanges
+			for _, triggerDiff := range tableDiff.TriggerChanges {
+				if triggerDiff.Action == schema.MetadataDiffActionDrop {
+					writeDropTrigger(buf, tableDiff.SchemaName, tableDiff.TableName, triggerDiff.TriggerName)
+				}
+			}
+		} else if tableDiff.OldTable != nil && tableDiff.Action == schema.MetadataDiffActionDrop {
+			// Metadata mode: use OldTable.Triggers
+			// Only drop triggers for tables being dropped
 			for _, trigger := range tableDiff.OldTable.Triggers {
-				// Check if trigger body references any function being dropped
-				triggerBody := strings.ToLower(trigger.Body)
-				for funcName := range functionsBeingDropped {
-					if strings.Contains(triggerBody, funcName) {
-						writeDropTrigger(buf, tableDiff.SchemaName, tableDiff.TableName, trigger.Name)
-						break
-					}
+				writeDropTrigger(buf, tableDiff.SchemaName, tableDiff.TableName, trigger.Name)
+			}
+		}
+	}
+
+	// Also drop triggers for ALTER table operations
+	for _, tableDiff := range diff.TableChanges {
+		if tableDiff.Action == schema.MetadataDiffActionAlter {
+			for _, triggerDiff := range tableDiff.TriggerChanges {
+				if triggerDiff.Action == schema.MetadataDiffActionDrop {
+					writeDropTrigger(buf, tableDiff.SchemaName, tableDiff.TableName, triggerDiff.TriggerName)
 				}
 			}
 		}
@@ -170,13 +190,23 @@ func dropObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) {
 
 	// For materialized views depending on tables/views
 	for mvID, mvDiff := range materializedViewMap {
+		var dependencies []*storepb.DependencyColumn
+
 		if mvDiff.OldMaterializedView != nil {
-			for _, dep := range mvDiff.OldMaterializedView.DependencyColumns {
-				depID := getMigrationObjectID(dep.Schema, dep.Table)
-				if allObjects[depID] {
-					// Edge from dependent to dependency
-					graph.AddEdge(mvID, depID)
-				}
+			// Use metadata if available
+			dependencies = mvDiff.OldMaterializedView.DependencyColumns
+		} else if mvDiff.OldASTNode != nil {
+			// Extract dependencies from AST node for AST-only mode
+			// Use the temporary metadata containing objects being dropped
+			dependencies = getMaterializedViewDependenciesFromAST(mvDiff.OldASTNode, mvDiff.SchemaName, tempMetadata)
+		}
+
+		for _, dep := range dependencies {
+			depID := getMigrationObjectID(dep.Schema, dep.Table)
+			if allObjects[depID] {
+				// Edge from dependent to dependency (materialized view depends on table/view)
+				// For DROP: mv -> view/table means mv should be dropped before view/table
+				graph.AddEdge(mvID, depID)
 			}
 		}
 	}
@@ -194,15 +224,25 @@ func dropObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) {
 		}
 	}
 
-	// For tables with foreign keys depending on other tables
+	// For tables with foreign keys depending on other tables (DROP operations)
 	for tableID, tableDiff := range tableMap {
+		var foreignKeys []*storepb.ForeignKeyMetadata
+
 		if tableDiff.OldTable != nil {
-			for _, fk := range tableDiff.OldTable.ForeignKeys {
-				depID := getMigrationObjectID(fk.ReferencedSchema, fk.ReferencedTable)
-				if allObjects[depID] && depID != tableID {
-					// Edge from table with FK to referenced table
-					graph.AddEdge(tableID, depID)
-				}
+			// Metadata mode: use ForeignKeys from metadata
+			foreignKeys = tableDiff.OldTable.ForeignKeys
+		} else if tableDiff.OldASTNode != nil {
+			// AST-only mode: extract foreign keys from AST node
+			foreignKeys = extractForeignKeysFromAST(tableDiff.OldASTNode, tableDiff.SchemaName)
+		}
+
+		for _, fk := range foreignKeys {
+			depID := getMigrationObjectID(fk.ReferencedSchema, fk.ReferencedTable)
+			if allObjects[depID] && depID != tableID {
+				// Edge from table with FK to referenced table
+				// For DROP: table1 (with FK) -> table2 (referenced)
+				// This ensures table1 is dropped before table2
+				graph.AddEdge(tableID, depID)
 			}
 		}
 	}
@@ -230,14 +270,8 @@ func dropObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) {
 			}
 		}
 
-		// Drop triggers
-		for _, tableDiff := range diff.TableChanges {
-			if tableDiff.Action == schema.MetadataDiffActionDrop && tableDiff.OldTable != nil {
-				for _, trigger := range tableDiff.OldTable.Triggers {
-					writeDropTrigger(buf, tableDiff.SchemaName, tableDiff.TableName, trigger.Name)
-				}
-			}
-		}
+		// Triggers have already been dropped at the beginning of generateDrops function
+		// to avoid dependency errors with functions and tables
 
 		// Drop foreign keys from tables being dropped
 		for _, tableDiff := range diff.TableChanges {
@@ -250,12 +284,16 @@ func dropObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) {
 
 		// Drop views
 		for _, viewDiff := range viewMap {
-			writeDropView(buf, viewDiff.SchemaName, viewDiff.ViewName)
+			if viewDiff.Action == schema.MetadataDiffActionDrop {
+				writeDropView(buf, viewDiff.SchemaName, viewDiff.ViewName)
+			}
 		}
 
 		// Drop materialized views
 		for _, mvDiff := range materializedViewMap {
-			writeDropMaterializedView(buf, mvDiff.SchemaName, mvDiff.MaterializedViewName)
+			if mvDiff.Action == schema.MetadataDiffActionDrop {
+				writeDropMaterializedView(buf, mvDiff.SchemaName, mvDiff.MaterializedViewName)
+			}
 		}
 
 		// Drop functions
@@ -272,6 +310,17 @@ func dropObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) {
 		// Handle remaining ALTER table operations (constraints, indexes, columns)
 		for _, tableDiff := range diff.TableChanges {
 			if tableDiff.Action == schema.MetadataDiffActionAlter {
+				// Drop triggers
+				for _, triggerDiff := range tableDiff.TriggerChanges {
+					if triggerDiff.Action == schema.MetadataDiffActionDrop {
+						// Skip triggers with empty names (defensive check)
+						if triggerDiff.TriggerName == "" {
+							continue
+						}
+						writeDropTrigger(buf, tableDiff.SchemaName, tableDiff.TableName, triggerDiff.TriggerName)
+					}
+				}
+
 				// Drop check constraints
 				for _, checkDiff := range tableDiff.CheckConstraintChanges {
 					if checkDiff.Action == schema.MetadataDiffActionDrop {
@@ -282,6 +331,20 @@ func dropObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) {
 							// AST-only mode: extract from AST node
 							if constraintAST, ok := checkDiff.OldASTNode.(pgparser.ITableconstraintContext); ok {
 								writeDropCheckConstraintFromAST(buf, tableDiff.SchemaName, tableDiff.TableName, constraintAST)
+							}
+						}
+					}
+				}
+				// Drop EXCLUDE constraints
+				for _, excludeDiff := range tableDiff.ExcludeConstraintChanges {
+					if excludeDiff.Action == schema.MetadataDiffActionDrop {
+						if excludeDiff.OldExcludeConstraint != nil {
+							// Metadata mode: use constraint metadata
+							writeDropConstraint(buf, tableDiff.SchemaName, tableDiff.TableName, excludeDiff.OldExcludeConstraint.Name)
+						} else if excludeDiff.OldASTNode != nil {
+							// AST-only mode: extract from AST node
+							if constraintAST, ok := excludeDiff.OldASTNode.(pgparser.ITableconstraintContext); ok {
+								writeDropExcludeConstraintFromAST(buf, tableDiff.SchemaName, tableDiff.TableName, constraintAST)
 							}
 						}
 					}
@@ -356,19 +419,17 @@ func dropObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) {
 		}
 
 		// Drop in topological order (most dependent first)
+		// Note: Triggers have already been dropped at the beginning of generateDrops
 		for _, objID := range orderedList {
-			// Drop triggers for tables being dropped
-			if tableDiff, ok := tableMap[objID]; ok && tableDiff.OldTable != nil {
-				for _, trigger := range tableDiff.OldTable.Triggers {
-					writeDropTrigger(buf, tableDiff.SchemaName, tableDiff.TableName, trigger.Name)
-				}
-			}
-
 			// Drop the object itself
 			if viewDiff, ok := viewMap[objID]; ok {
-				writeDropView(buf, viewDiff.SchemaName, viewDiff.ViewName)
+				if viewDiff.Action == schema.MetadataDiffActionDrop {
+					writeDropView(buf, viewDiff.SchemaName, viewDiff.ViewName)
+				}
 			} else if mvDiff, ok := materializedViewMap[objID]; ok {
-				writeDropMaterializedView(buf, mvDiff.SchemaName, mvDiff.MaterializedViewName)
+				if mvDiff.Action == schema.MetadataDiffActionDrop {
+					writeDropMaterializedView(buf, mvDiff.SchemaName, mvDiff.MaterializedViewName)
+				}
 			} else if funcDiff, ok := functionMap[objID]; ok {
 				definition := getFunctionDefinitionForDrop(funcDiff)
 				writeDropFunction(buf, funcDiff.SchemaName, funcDiff.FunctionName, funcDiff.OldASTNode, definition)
@@ -386,6 +447,17 @@ func dropObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) {
 		// Handle remaining ALTER table drops (constraints, indexes, columns)
 		for _, tableDiff := range diff.TableChanges {
 			if tableDiff.Action == schema.MetadataDiffActionAlter {
+				// Drop triggers
+				for _, triggerDiff := range tableDiff.TriggerChanges {
+					if triggerDiff.Action == schema.MetadataDiffActionDrop {
+						// Skip triggers with empty names (defensive check)
+						if triggerDiff.TriggerName == "" {
+							continue
+						}
+						writeDropTrigger(buf, tableDiff.SchemaName, tableDiff.TableName, triggerDiff.TriggerName)
+					}
+				}
+
 				// Drop check constraints
 				for _, checkDiff := range tableDiff.CheckConstraintChanges {
 					if checkDiff.Action == schema.MetadataDiffActionDrop {
@@ -396,6 +468,20 @@ func dropObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) {
 							// AST-only mode: extract from AST node
 							if constraintAST, ok := checkDiff.OldASTNode.(pgparser.ITableconstraintContext); ok {
 								writeDropCheckConstraintFromAST(buf, tableDiff.SchemaName, tableDiff.TableName, constraintAST)
+							}
+						}
+					}
+				}
+				// Drop EXCLUDE constraints
+				for _, excludeDiff := range tableDiff.ExcludeConstraintChanges {
+					if excludeDiff.Action == schema.MetadataDiffActionDrop {
+						if excludeDiff.OldExcludeConstraint != nil {
+							// Metadata mode: use constraint metadata
+							writeDropConstraint(buf, tableDiff.SchemaName, tableDiff.TableName, excludeDiff.OldExcludeConstraint.Name)
+						} else if excludeDiff.OldASTNode != nil {
+							// AST-only mode: extract from AST node
+							if constraintAST, ok := excludeDiff.OldASTNode.(pgparser.ITableconstraintContext); ok {
+								writeDropExcludeConstraintFromAST(buf, tableDiff.SchemaName, tableDiff.TableName, constraintAST)
 							}
 						}
 					}
@@ -448,12 +534,43 @@ func dropObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) {
 				}
 			}
 		}
+
+		// Handle remaining ALTER materialized view drops (indexes)
+		for _, mvDiff := range diff.MaterializedViewChanges {
+			if mvDiff.Action == schema.MetadataDiffActionAlter {
+				// Drop indexes
+				for _, indexDiff := range mvDiff.IndexChanges {
+					if indexDiff.Action == schema.MetadataDiffActionDrop {
+						if indexDiff.OldIndex != nil {
+							// Metadata mode: use index metadata
+							if indexDiff.OldIndex.IsConstraint {
+								writeDropConstraint(buf, mvDiff.SchemaName, mvDiff.MaterializedViewName, indexDiff.OldIndex.Name)
+							} else {
+								writeDropIndex(buf, mvDiff.SchemaName, indexDiff.OldIndex.Name)
+							}
+						} else if indexDiff.OldASTNode != nil {
+							// AST-only mode: extract from AST node
+							if indexAST, ok := indexDiff.OldASTNode.(*pgparser.IndexstmtContext); ok {
+								writeDropIndexFromAST(buf, mvDiff.SchemaName, indexAST)
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 
 	// Drop enum types
 	for _, enumDiff := range diff.EnumTypeChanges {
 		if enumDiff.Action == schema.MetadataDiffActionDrop {
 			writeDropType(buf, enumDiff.SchemaName, enumDiff.EnumTypeName)
+		}
+	}
+
+	// Drop extensions (after enum types and tables)
+	for _, extDiff := range diff.ExtensionChanges {
+		if extDiff.Action == schema.MetadataDiffActionDrop {
+			writeDropExtension(buf, extDiff.ExtensionName)
 		}
 	}
 
@@ -581,11 +698,38 @@ func createObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) error
 		_, _ = buf.WriteString("\n")
 	}
 
+	// Create extensions (before enum types and tables as they might provide types used in definitions)
+	for _, extDiff := range diff.ExtensionChanges {
+		if extDiff.Action == schema.MetadataDiffActionCreate {
+			// Support both metadata and AST-only modes
+			if extDiff.NewExtension != nil {
+				// Metadata mode: use extension metadata
+				if err := writeCreateExtension(buf, extDiff.NewExtension); err != nil {
+					return err
+				}
+			} else if extDiff.NewASTNode != nil {
+				// AST-only mode: extract SQL from AST node
+				if err := writeMigrationExtensionFromAST(buf, extDiff.NewASTNode); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
 	// Create enum types (before tables as they might be used in column definitions)
 	for _, enumDiff := range diff.EnumTypeChanges {
 		if enumDiff.Action == schema.MetadataDiffActionCreate {
-			if err := writeCreateEnumType(buf, enumDiff.SchemaName, enumDiff.NewEnumType); err != nil {
-				return err
+			// Support both metadata and AST-only modes
+			if enumDiff.NewEnumType != nil {
+				// Metadata mode: use enum type metadata
+				if err := writeCreateEnumType(buf, enumDiff.SchemaName, enumDiff.NewEnumType); err != nil {
+					return err
+				}
+			} else if enumDiff.NewASTNode != nil {
+				// AST-only mode: extract SQL from AST node
+				if err := writeMigrationEnumTypeFromAST(buf, enumDiff.NewASTNode); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -667,11 +811,41 @@ func createObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) error
 		}
 	}
 
+	// Add triggers to graph (only for CREATE table operations)
+	// Triggers on ALTER tables are handled separately via generateAlterTableTriggers
+	triggerMap := make(map[string]*schema.TriggerDiff)
+	for _, tableDiff := range diff.TableChanges {
+		// Only add triggers for CREATE table operations
+		// ALTER table triggers are handled in generateAlterTableTriggers to avoid duplicates
+		if tableDiff.Action == schema.MetadataDiffActionCreate {
+			for _, triggerDiff := range tableDiff.TriggerChanges {
+				if triggerDiff.Action == schema.MetadataDiffActionCreate {
+					triggerID := getTriggerObjectID(triggerDiff)
+					graph.AddNode(triggerID)
+					triggerMap[triggerID] = triggerDiff
+					allObjects[triggerID] = true
+				}
+			}
+		}
+	}
+
 	// Add dependency edges
 	// For tables with foreign keys depending on other tables (only for CREATE operations)
+	// Note: ALTER FK additions are handled after all tables are created, so they don't need topological sorting
 	for tableID, tableDiff := range tableMap {
-		if tableDiff.Action == schema.MetadataDiffActionCreate && tableDiff.NewTable != nil {
-			for _, fk := range tableDiff.NewTable.ForeignKeys {
+		if tableDiff.Action == schema.MetadataDiffActionCreate {
+			// For CREATE: extract all FKs from the table
+			var foreignKeys []*storepb.ForeignKeyMetadata
+
+			if tableDiff.NewTable != nil {
+				// Metadata mode: use ForeignKeys from metadata
+				foreignKeys = tableDiff.NewTable.ForeignKeys
+			} else if tableDiff.NewASTNode != nil {
+				// AST-only mode: extract foreign keys from AST node
+				foreignKeys = extractForeignKeysFromAST(tableDiff.NewASTNode, tableDiff.SchemaName)
+			}
+
+			for _, fk := range foreignKeys {
 				depID := getMigrationObjectID(fk.ReferencedSchema, fk.ReferencedTable)
 				if depID != tableID {
 					// Edge from dependency to dependent (referenced table to table with FK)
@@ -696,17 +870,30 @@ func createObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) error
 
 		for _, dep := range dependencies {
 			depID := getMigrationObjectID(dep.Schema, dep.Table)
-			// Edge from dependency to dependent (table/view to view)
-			graph.AddEdge(depID, viewID)
+			if allObjects[depID] {
+				// Edge from dependency to dependent (table/view to view)
+				graph.AddEdge(depID, viewID)
+			}
 		}
 	}
 
 	// For materialized views depending on tables/views
 	for mvID, mvDiff := range materializedViewMap {
+		var dependencies []*storepb.DependencyColumn
+
 		if mvDiff.NewMaterializedView != nil {
-			for _, dep := range mvDiff.NewMaterializedView.DependencyColumns {
-				depID := getMigrationObjectID(dep.Schema, dep.Table)
-				// Edge from dependency to dependent
+			// Use metadata if available
+			dependencies = mvDiff.NewMaterializedView.DependencyColumns
+		} else if mvDiff.NewASTNode != nil {
+			// Extract dependencies from AST node for AST-only mode
+			// Use the temporary metadata containing objects being created
+			dependencies = getMaterializedViewDependenciesFromAST(mvDiff.NewASTNode, mvDiff.SchemaName, tempMetadata)
+		}
+
+		for _, dep := range dependencies {
+			depID := getMigrationObjectID(dep.Schema, dep.Table)
+			if allObjects[depID] {
+				// Edge from dependency to dependent (table/view to materialized view)
 				graph.AddEdge(depID, mvID)
 			}
 		}
@@ -719,6 +906,33 @@ func createObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) error
 				depID := getMigrationObjectID(dep.Schema, dep.Table)
 				// Edge from table to function
 				graph.AddEdge(depID, funcID)
+			}
+		}
+	}
+
+	// For triggers depending on tables and functions
+	for triggerID, triggerDiff := range triggerMap {
+		// Trigger depends on table
+		tableID := getMigrationObjectID(triggerDiff.SchemaName, triggerDiff.TableName)
+		if allObjects[tableID] {
+			graph.AddEdge(tableID, triggerID)
+		}
+
+		// Trigger depends on trigger function
+		if triggerDiff.NewASTNode != nil {
+			functionName := extractTriggerFunctionName(triggerDiff.NewASTNode)
+			if functionName != "" {
+				parts := strings.Split(functionName, ".")
+				var functionSchemaName, functionNameOnly string
+				if len(parts) == 2 {
+					functionSchemaName, functionNameOnly = parts[0], parts[1]
+				} else {
+					functionSchemaName, functionNameOnly = triggerDiff.SchemaName, functionName
+				}
+				functionID := getMigrationObjectID(functionSchemaName, functionNameOnly)
+				if allObjects[functionID] {
+					graph.AddEdge(functionID, triggerID)
+				}
 			}
 		}
 	}
@@ -758,6 +972,30 @@ func createObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) error
 					}
 				} else {
 					return errors.Errorf("table CREATE action requires either NewTable metadata or NewASTNode for table %s.%s", tableDiff.SchemaName, tableDiff.TableName)
+				}
+
+				// Add indexes for newly created tables immediately after table creation
+				// This is necessary because later tables might have FK that reference indexed columns
+				for _, indexDiff := range tableDiff.IndexChanges {
+					if indexDiff.Action == schema.MetadataDiffActionCreate {
+						if indexDiff.NewIndex != nil {
+							// Metadata mode: use index metadata
+							if indexDiff.NewIndex.IsConstraint {
+								// Skip constraint-based indexes (primary key, unique, exclude)
+								// They are already included in CREATE TABLE statement
+								continue
+							}
+							writeMigrationIndex(buf, tableDiff.SchemaName, tableDiff.TableName, indexDiff.NewIndex)
+						} else if indexDiff.NewASTNode != nil {
+							// AST-only mode: extract from AST node
+							if indexAST, ok := indexDiff.NewASTNode.(*pgparser.IndexstmtContext); ok {
+								if err := writeCreateIndexFromAST(buf, indexAST); err != nil {
+									// If AST extraction fails, log error but continue (non-fatal)
+									_, _ = fmt.Fprintf(buf, "-- Error creating index: %v\n", err)
+								}
+							}
+						}
+					}
 				}
 			}
 		}
@@ -802,8 +1040,17 @@ func createObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) error
 		for _, mvDiff := range materializedViewMap {
 			switch mvDiff.Action {
 			case schema.MetadataDiffActionCreate, schema.MetadataDiffActionAlter:
-				if err := writeMigrationMaterializedView(buf, mvDiff.SchemaName, mvDiff.NewMaterializedView); err != nil {
-					return err
+				// Support AST-only mode: if metadata is nil but AST node exists, use AST
+				if mvDiff.NewMaterializedView != nil {
+					if err := writeMigrationMaterializedView(buf, mvDiff.SchemaName, mvDiff.NewMaterializedView); err != nil {
+						return err
+					}
+				} else if mvDiff.NewASTNode != nil {
+					if err := writeMigrationMaterializedViewFromAST(buf, mvDiff.NewASTNode); err != nil {
+						return err
+					}
+				} else {
+					return errors.Errorf("materialized view diff for %s.%s has neither metadata nor AST node", mvDiff.SchemaName, mvDiff.MaterializedViewName)
 				}
 			default:
 				// No action needed
@@ -879,6 +1126,30 @@ func createObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) error
 					} else {
 						return errors.Errorf("table CREATE action requires either NewTable metadata or NewASTNode for table %s.%s", tableDiff.SchemaName, tableDiff.TableName)
 					}
+
+					// Add indexes for newly created tables immediately after table creation
+					// This is necessary because later tables might have FK that reference indexed columns
+					for _, indexDiff := range tableDiff.IndexChanges {
+						if indexDiff.Action == schema.MetadataDiffActionCreate {
+							if indexDiff.NewIndex != nil {
+								// Metadata mode: use index metadata
+								if indexDiff.NewIndex.IsConstraint {
+									// Skip constraint-based indexes (primary key, unique, exclude)
+									// They are already included in CREATE TABLE statement
+									continue
+								}
+								writeMigrationIndex(buf, tableDiff.SchemaName, tableDiff.TableName, indexDiff.NewIndex)
+							} else if indexDiff.NewASTNode != nil {
+								// AST-only mode: extract from AST node
+								if indexAST, ok := indexDiff.NewASTNode.(*pgparser.IndexstmtContext); ok {
+									if err := writeCreateIndexFromAST(buf, indexAST); err != nil {
+										// If AST extraction fails, log error but continue (non-fatal)
+										_, _ = fmt.Fprintf(buf, "-- Error creating index: %v\n", err)
+									}
+								}
+							}
+						}
+					}
 				case schema.MetadataDiffActionAlter:
 					// Handle ALTER table operations with generateAlterTableWithOptions
 					// Skip foreign keys in the first pass to avoid dependency issues
@@ -918,15 +1189,40 @@ func createObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) error
 			} else if mvDiff, ok := materializedViewMap[objID]; ok {
 				switch mvDiff.Action {
 				case schema.MetadataDiffActionCreate:
-					if err := writeMigrationMaterializedView(buf, mvDiff.SchemaName, mvDiff.NewMaterializedView); err != nil {
-						return err
+					// Support AST-only mode: if metadata is nil but AST node exists, use AST
+					if mvDiff.NewMaterializedView != nil {
+						if err := writeMigrationMaterializedView(buf, mvDiff.SchemaName, mvDiff.NewMaterializedView); err != nil {
+							return err
+						}
+					} else if mvDiff.NewASTNode != nil {
+						if err := writeMigrationMaterializedViewFromAST(buf, mvDiff.NewASTNode); err != nil {
+							return err
+						}
+					} else {
+						return errors.Errorf("materialized view diff for %s.%s has neither metadata nor AST node", mvDiff.SchemaName, mvDiff.MaterializedViewName)
 					}
 				case schema.MetadataDiffActionAlter:
-					// For PostgreSQL materialized views, we need to drop and recreate
-					// since ALTER MATERIALIZED VIEW doesn't support changing the definition
-					writeDropMaterializedView(buf, mvDiff.SchemaName, mvDiff.MaterializedViewName)
-					if err := writeMigrationMaterializedView(buf, mvDiff.SchemaName, mvDiff.NewMaterializedView); err != nil {
-						return err
+					// Check if this is an index-only change (no MV definition change)
+					hasIndexOnlyChanges := len(mvDiff.IndexChanges) > 0 && mvDiff.NewMaterializedView == nil && mvDiff.NewASTNode == nil
+
+					// For index-only changes, don't alter the MV itself
+					// Index changes are processed separately later (see lines ~1107-1127)
+					if !hasIndexOnlyChanges {
+						// For PostgreSQL materialized views, we need to drop and recreate
+						// since ALTER MATERIALIZED VIEW doesn't support changing the definition
+						writeDropMaterializedView(buf, mvDiff.SchemaName, mvDiff.MaterializedViewName)
+						// Support AST-only mode
+						if mvDiff.NewMaterializedView != nil {
+							if err := writeMigrationMaterializedView(buf, mvDiff.SchemaName, mvDiff.NewMaterializedView); err != nil {
+								return err
+							}
+						} else if mvDiff.NewASTNode != nil {
+							if err := writeMigrationMaterializedViewFromAST(buf, mvDiff.NewASTNode); err != nil {
+								return err
+							}
+						} else {
+							return errors.Errorf("materialized view ALTER for %s.%s has neither metadata nor AST node", mvDiff.SchemaName, mvDiff.MaterializedViewName)
+						}
 					}
 				default:
 					// No action needed for other operations
@@ -942,6 +1238,13 @@ func createObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) error
 				// Add function comment for newly created or altered functions
 				if (funcDiff.Action == schema.MetadataDiffActionCreate || funcDiff.Action == schema.MetadataDiffActionAlter) && funcDiff.NewFunction != nil && funcDiff.NewFunction.Comment != "" {
 					writeCommentOnFunction(buf, funcDiff.SchemaName, funcDiff.NewFunction.Signature, funcDiff.NewFunction.Comment, funcDiff.NewASTNode, funcDiff.NewFunction.Definition)
+				}
+			} else if triggerDiff, ok := triggerMap[objID]; ok {
+				// Handle triggers (both CREATE and ALTER use CREATE OR REPLACE)
+				if triggerDiff.Action == schema.MetadataDiffActionCreate || triggerDiff.Action == schema.MetadataDiffActionAlter {
+					if err := writeCreateTrigger(buf, triggerDiff); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -992,11 +1295,23 @@ func createObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) error
 			}
 		}
 
-		// Create triggers after foreign keys (only for CREATE table operations)
+		// Create triggers for CREATE table operations that aren't in TriggerChanges
+		// This handles metadata mode where triggers are in NewTable.Triggers but not in TriggerChanges
 		for _, tableDiff := range tableMap {
 			if tableDiff.Action == schema.MetadataDiffActionCreate && tableDiff.NewTable != nil {
+				// Only create triggers that weren't already created from TriggerChanges
+				triggersInChanges := make(map[string]bool)
+				for _, triggerDiff := range tableDiff.TriggerChanges {
+					if triggerDiff.Action == schema.MetadataDiffActionCreate {
+						triggersInChanges[triggerDiff.TriggerName] = true
+					}
+				}
+
 				for _, trigger := range tableDiff.NewTable.Triggers {
-					writeMigrationTrigger(buf, trigger)
+					// Skip if already created from TriggerChanges
+					if !triggersInChanges[trigger.Name] {
+						writeMigrationTrigger(buf, trigger)
+					}
 				}
 			}
 		}
@@ -1006,6 +1321,28 @@ func createObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) error
 			if mvDiff.Action == schema.MetadataDiffActionCreate && mvDiff.NewMaterializedView != nil {
 				for _, index := range mvDiff.NewMaterializedView.Indexes {
 					writeMigrationMaterializedViewIndex(buf, mvDiff.SchemaName, mvDiff.NewMaterializedView.Name, index)
+				}
+			}
+		}
+
+		// Add indexes for materialized view ALTER operations
+		for _, mvDiff := range diff.MaterializedViewChanges {
+			if mvDiff.Action == schema.MetadataDiffActionAlter {
+				for _, indexDiff := range mvDiff.IndexChanges {
+					if indexDiff.Action == schema.MetadataDiffActionCreate {
+						if indexDiff.NewIndex != nil {
+							// Metadata mode: use index metadata
+							writeMigrationMaterializedViewIndex(buf, mvDiff.SchemaName, mvDiff.MaterializedViewName, indexDiff.NewIndex)
+						} else if indexDiff.NewASTNode != nil {
+							// AST-only mode: extract from AST node
+							if indexAST, ok := indexDiff.NewASTNode.(*pgparser.IndexstmtContext); ok {
+								if err := writeCreateIndexFromAST(buf, indexAST); err != nil {
+									// If AST extraction fails, log error but continue (non-fatal)
+									_, _ = fmt.Fprintf(buf, "-- Error creating index: %v\n", err)
+								}
+							}
+						}
+					}
 				}
 			}
 		}
@@ -1046,6 +1383,15 @@ func createObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) error
 		return err
 	}
 
+	// Handle materialized view index comment changes
+	for _, mvDiff := range diff.MaterializedViewChanges {
+		if mvDiff.Action == schema.MetadataDiffActionAlter {
+			if err := generateMaterializedViewIndexCommentChanges(buf, mvDiff); err != nil {
+				return err
+			}
+		}
+	}
+
 	// Handle function comment changes
 	if err := generateFunctionCommentChanges(buf, diff); err != nil {
 		return err
@@ -1059,6 +1405,24 @@ func createObjectsInOrder(diff *schema.MetadataDiff, buf *strings.Builder) error
 	// Handle sequence ownership changes (must be after all tables are created)
 	if err := generateSequenceOwnershipChanges(buf, diff); err != nil {
 		return err
+	}
+
+	// Create event triggers (last, as they depend on functions which may have been created)
+	for _, etDiff := range diff.EventTriggerChanges {
+		if etDiff.Action == schema.MetadataDiffActionCreate {
+			// Support both metadata and AST-only modes
+			if etDiff.NewEventTrigger != nil {
+				// Metadata mode: use event trigger metadata
+				if err := writeCreateEventTrigger(buf, etDiff.NewEventTrigger); err != nil {
+					return err
+				}
+			} else if etDiff.NewASTNode != nil {
+				// AST-only mode: extract SQL from AST node
+				if err := writeMigrationEventTriggerFromAST(buf, etDiff.NewASTNode); err != nil {
+					return err
+				}
+			}
+		}
 	}
 
 	// Handle enum type comment changes
@@ -1195,6 +1559,24 @@ func generateAlterTableWithOptions(tableDiff *schema.TableDiff, includeColumnAdd
 		}
 	}
 
+	// Add EXCLUDE constraints
+	for _, excludeDiff := range tableDiff.ExcludeConstraintChanges {
+		if excludeDiff.Action == schema.MetadataDiffActionCreate {
+			if excludeDiff.NewExcludeConstraint != nil {
+				// Metadata mode: use constraint metadata
+				writeAddExcludeConstraint(&buf, tableDiff.SchemaName, tableDiff.TableName, excludeDiff.NewExcludeConstraint)
+			} else if excludeDiff.NewASTNode != nil {
+				// AST-only mode: extract from AST node
+				if constraintAST, ok := excludeDiff.NewASTNode.(pgparser.ITableconstraintContext); ok {
+					if err := writeAddExcludeConstraintFromAST(&buf, tableDiff.SchemaName, tableDiff.TableName, constraintAST); err != nil {
+						// If AST extraction fails, log error but continue (non-fatal)
+						_, _ = buf.WriteString(fmt.Sprintf("-- Error adding EXCLUDE constraint: %v\n", err))
+					}
+				}
+			}
+		}
+	}
+
 	// Add unique constraints
 	for _, uniqueDiff := range tableDiff.UniqueConstraintChanges {
 		if uniqueDiff.Action == schema.MetadataDiffActionCreate {
@@ -1265,8 +1647,14 @@ func generateAlterTableTriggers(tableDiff *schema.TableDiff) string {
 	var buf strings.Builder
 
 	for _, triggerDiff := range tableDiff.TriggerChanges {
-		if triggerDiff.Action == schema.MetadataDiffActionCreate {
-			writeMigrationTrigger(&buf, triggerDiff.NewTrigger)
+		if triggerDiff.Action == schema.MetadataDiffActionCreate || triggerDiff.Action == schema.MetadataDiffActionAlter {
+			// Use writeCreateTrigger which supports both AST and metadata modes
+			// Both CREATE and ALTER use CREATE OR REPLACE
+			if err := writeCreateTrigger(&buf, triggerDiff); err != nil {
+				// Log error but continue - this is a best-effort operation
+				// The error will be caught in the caller if needed
+				continue
+			}
 		}
 	}
 
@@ -1536,6 +1924,49 @@ func writeMigrationSequenceFromAST(out *strings.Builder, astNode any) error {
 	return nil
 }
 
+// writeMigrationEnumTypeFromAST writes CREATE TYPE AS ENUM statement from AST node
+func writeMigrationEnumTypeFromAST(out *strings.Builder, astNode any) error {
+	if astNode == nil {
+		return errors.New("AST node is nil")
+	}
+
+	// Extract the original SQL text from the AST node
+	var enumSQL string
+
+	// Try to cast to PostgreSQL DefinestmtContext (CREATE TYPE AS ENUM)
+	if ctx, ok := astNode.(*pgparser.DefinestmtContext); ok {
+		// First try to get text using token stream
+		if tokenStream := ctx.GetParser().GetTokenStream(); tokenStream != nil {
+			start := ctx.GetStart()
+			stop := ctx.GetStop()
+			if start != nil && stop != nil {
+				enumSQL = tokenStream.GetTextFromTokens(start, stop)
+			}
+		}
+
+		// Fallback to GetText() if token stream approach failed
+		if enumSQL == "" {
+			enumSQL = ctx.GetText()
+		}
+	} else {
+		return errors.Errorf("unsupported AST node type for enum type: %T", astNode)
+	}
+
+	if enumSQL == "" {
+		return errors.New("failed to extract enum type SQL from AST node")
+	}
+
+	// Write the enum type SQL
+	_, _ = out.WriteString(enumSQL)
+	// Ensure statement ends with semicolon
+	if !strings.HasSuffix(strings.TrimSpace(enumSQL), ";") {
+		_, _ = out.WriteString(";")
+	}
+	_, _ = out.WriteString("\n\n")
+
+	return nil
+}
+
 // writeMigrationTableFromAST writes CREATE TABLE statement from AST node
 func writeMigrationTableFromAST(out *strings.Builder, astNode any) error {
 	if astNode == nil {
@@ -1702,6 +2133,143 @@ func writeCreateEnumType(out *strings.Builder, schema string, enum *storepb.Enum
 	_, _ = out.WriteString(");")
 	_, _ = out.WriteString("\n")
 	return nil
+}
+
+func writeDropExtension(out *strings.Builder, extensionName string) {
+	_, _ = out.WriteString(`DROP EXTENSION IF EXISTS "`)
+	_, _ = out.WriteString(extensionName)
+	_, _ = out.WriteString(`";`)
+	_, _ = out.WriteString("\n")
+}
+
+func writeCreateExtension(out *strings.Builder, extension *storepb.ExtensionMetadata) error {
+	_, _ = out.WriteString(`CREATE EXTENSION IF NOT EXISTS "`)
+	_, _ = out.WriteString(extension.Name)
+	_, _ = out.WriteString(`"`)
+
+	// Add WITH SCHEMA clause if schema is specified
+	if extension.Schema != "" {
+		_, _ = out.WriteString(` WITH SCHEMA "`)
+		_, _ = out.WriteString(extension.Schema)
+		_, _ = out.WriteString(`"`)
+	}
+
+	// Add VERSION clause if version is specified
+	if extension.Version != "" {
+		_, _ = out.WriteString(` VERSION '`)
+		_, _ = out.WriteString(extension.Version)
+		_, _ = out.WriteString(`'`)
+	}
+
+	_, _ = out.WriteString(`;`)
+	_, _ = out.WriteString("\n")
+
+	// Write description (comment) if present
+	if extension.Description != "" {
+		writeCommentOnExtension(out, extension.Name, extension.Description)
+	}
+
+	return nil
+}
+
+func writeMigrationExtensionFromAST(out *strings.Builder, astNode any) error {
+	if astNode == nil {
+		return errors.New("AST node is nil")
+	}
+
+	// Try to cast to PostgreSQL CreateextensionstmtContext
+	if ctx, ok := astNode.(*pgparser.CreateextensionstmtContext); ok {
+		// Get text using token stream
+		if stream := ctx.GetParser().GetTokenStream(); stream != nil {
+			text := stream.GetTextFromInterval(antlr.Interval{
+				Start: ctx.GetStart().GetTokenIndex(),
+				Stop:  ctx.GetStop().GetTokenIndex(),
+			})
+			_, _ = out.WriteString(text)
+			_, _ = out.WriteString(";")
+			_, _ = out.WriteString("\n")
+			return nil
+		}
+		return errors.New("token stream not available for extension AST node")
+	}
+
+	return errors.Errorf("unexpected AST node type for extension: %T", astNode)
+}
+
+func writeDropEventTrigger(out *strings.Builder, eventTriggerName string) {
+	_, _ = out.WriteString(`DROP EVENT TRIGGER IF EXISTS "`)
+	_, _ = out.WriteString(eventTriggerName)
+	_, _ = out.WriteString(`";`)
+	_, _ = out.WriteString("\n")
+}
+
+func writeCreateEventTrigger(out *strings.Builder, eventTrigger *storepb.EventTriggerMetadata) error {
+	// Use the stored definition if available
+	if eventTrigger.Definition != "" {
+		_, _ = out.WriteString(eventTrigger.Definition)
+		_, _ = out.WriteString(";")
+		_, _ = out.WriteString("\n")
+		return nil
+	}
+
+	// Otherwise, build the CREATE EVENT TRIGGER statement
+	_, _ = out.WriteString(`CREATE EVENT TRIGGER "`)
+	_, _ = out.WriteString(eventTrigger.Name)
+	_, _ = out.WriteString(`" ON `)
+	_, _ = out.WriteString(eventTrigger.Event)
+
+	// Add WHEN TAG IN clause if tags are specified
+	if len(eventTrigger.Tags) > 0 {
+		_, _ = out.WriteString("\n  WHEN TAG IN (")
+		for i, tag := range eventTrigger.Tags {
+			if i > 0 {
+				_, _ = out.WriteString(", ")
+			}
+			_, _ = out.WriteString("'")
+			_, _ = out.WriteString(tag)
+			_, _ = out.WriteString("'")
+		}
+		_, _ = out.WriteString(")")
+	}
+
+	// Add EXECUTE FUNCTION clause
+	_, _ = out.WriteString("\n  EXECUTE FUNCTION ")
+	if eventTrigger.FunctionSchema != "" {
+		_, _ = out.WriteString(`"`)
+		_, _ = out.WriteString(eventTrigger.FunctionSchema)
+		_, _ = out.WriteString(`".`)
+	}
+	_, _ = out.WriteString(`"`)
+	_, _ = out.WriteString(eventTrigger.FunctionName)
+	_, _ = out.WriteString(`"()`)
+	_, _ = out.WriteString(";")
+	_, _ = out.WriteString("\n")
+
+	return nil
+}
+
+func writeMigrationEventTriggerFromAST(out *strings.Builder, astNode any) error {
+	if astNode == nil {
+		return errors.New("AST node is nil")
+	}
+
+	// Try to cast to PostgreSQL CreateeventtrigstmtContext
+	if ctx, ok := astNode.(*pgparser.CreateeventtrigstmtContext); ok {
+		// Get text using token stream
+		if stream := ctx.GetParser().GetTokenStream(); stream != nil {
+			text := stream.GetTextFromInterval(antlr.Interval{
+				Start: ctx.GetStart().GetTokenIndex(),
+				Stop:  ctx.GetStop().GetTokenIndex(),
+			})
+			_, _ = out.WriteString(text)
+			_, _ = out.WriteString(";")
+			_, _ = out.WriteString("\n")
+			return nil
+		}
+		return errors.New("token stream not available for event trigger AST node")
+	}
+
+	return errors.Errorf("unexpected AST node type for event trigger: %T", astNode)
 }
 
 func writeCreateSchema(out *strings.Builder, schema string) error {
@@ -2409,6 +2977,49 @@ func writeMigrationFunctionFromASTWithReplace(out *strings.Builder, astNode any)
 	return nil
 }
 
+// writeMigrationMaterializedViewFromAST writes a CREATE MATERIALIZED VIEW statement from AST node
+func writeMigrationMaterializedViewFromAST(out *strings.Builder, astNode any) error {
+	if astNode == nil {
+		return errors.New("AST node is nil")
+	}
+
+	// Extract the original SQL text from the AST node
+	var mvSQL string
+
+	// Try to cast to PostgreSQL CreatematviewstmtContext first
+	if ctx, ok := astNode.(*pgparser.CreatematviewstmtContext); ok {
+		// First try to get text using token stream
+		if tokenStream := ctx.GetParser().GetTokenStream(); tokenStream != nil {
+			start := ctx.GetStart()
+			stop := ctx.GetStop()
+			if start != nil && stop != nil {
+				mvSQL = tokenStream.GetTextFromTokens(start, stop)
+			}
+		}
+
+		// Fallback to GetText() if token stream approach failed
+		if mvSQL == "" {
+			mvSQL = ctx.GetText()
+		}
+	} else {
+		// Generic fallback - try to get text using token approach first
+		if tree, ok := astNode.(antlr.ParseTree); ok {
+			mvSQL = getTextFromAST(tree)
+		}
+	}
+
+	if mvSQL != "" {
+		_, _ = out.WriteString(mvSQL)
+		if !strings.HasSuffix(strings.TrimSpace(mvSQL), ";") {
+			_, _ = out.WriteString(`;`)
+		}
+		_, _ = out.WriteString("\n\n")
+		return nil
+	}
+
+	return errors.New("failed to extract SQL from materialized view AST node")
+}
+
 // writeMaterializedView writes a CREATE MATERIALIZED VIEW statement
 func writeMigrationMaterializedView(out *strings.Builder, schema string, view *storepb.MaterializedViewMetadata) error {
 	_, _ = out.WriteString(`CREATE MATERIALIZED VIEW "`)
@@ -2487,14 +3098,55 @@ func writeMigrationTrigger(out *strings.Builder, trigger *storepb.TriggerMetadat
 }
 
 // writeMigrationMaterializedViewIndex writes an index creation statement for a materialized view
-func writeMigrationMaterializedViewIndex(out *strings.Builder, _ string, _ string, index *storepb.IndexMetadata) {
-	if index == nil || index.Definition == "" {
+func writeMigrationMaterializedViewIndex(out *strings.Builder, schema, mvName string, index *storepb.IndexMetadata) {
+	if index == nil {
 		return
 	}
-	_, _ = out.WriteString(index.Definition)
-	if !strings.HasSuffix(strings.TrimSpace(index.Definition), ";") {
-		_, _ = out.WriteString(";")
+
+	// If index has a full definition, use it directly
+	if index.Definition != "" {
+		_, _ = out.WriteString(index.Definition)
+		if !strings.HasSuffix(strings.TrimSpace(index.Definition), ";") {
+			_, _ = out.WriteString(";")
+		}
+		_, _ = out.WriteString("\n")
+		return
 	}
+
+	// Otherwise, construct the CREATE INDEX statement
+	_, _ = out.WriteString(`CREATE `)
+	if index.Unique {
+		_, _ = out.WriteString(`UNIQUE `)
+	}
+	_, _ = out.WriteString(`INDEX "`)
+	_, _ = out.WriteString(index.Name)
+	_, _ = out.WriteString(`" ON "`)
+	_, _ = out.WriteString(schema)
+	_, _ = out.WriteString(`"."`)
+	_, _ = out.WriteString(mvName)
+	_, _ = out.WriteString(`" `)
+
+	if index.Type != "" && index.Type != "BTREE" && index.Type != "btree" {
+		_, _ = out.WriteString(`USING `)
+		_, _ = out.WriteString(strings.ToUpper(index.Type))
+		_, _ = out.WriteString(` `)
+	}
+
+	_, _ = out.WriteString(`(`)
+	for i, expr := range index.Expressions {
+		if i > 0 {
+			_, _ = out.WriteString(`, `)
+		}
+		_, _ = out.WriteString(expr)
+
+		// Handle descending order if specified
+		if i < len(index.Descending) && index.Descending[i] {
+			_, _ = out.WriteString(` DESC`)
+		}
+	}
+	_, _ = out.WriteString(`)`)
+
+	_, _ = out.WriteString(`;`)
 	_, _ = out.WriteString("\n")
 }
 
@@ -2933,6 +3585,26 @@ func generateIndexCommentChanges(buf *strings.Builder, tableDiff *schema.TableDi
 	return nil
 }
 
+// generateMaterializedViewIndexCommentChanges generates COMMENT ON INDEX statements for index comment changes within materialized view diffs
+func generateMaterializedViewIndexCommentChanges(buf *strings.Builder, mvDiff *schema.MaterializedViewDiff) error {
+	for _, indexDiff := range mvDiff.IndexChanges {
+		if indexDiff.Action == schema.MetadataDiffActionAlter {
+			if indexDiff.OldIndex == nil || indexDiff.NewIndex == nil {
+				continue
+			}
+
+			oldComment := indexDiff.OldIndex.Comment
+			newComment := indexDiff.NewIndex.Comment
+
+			// If comments are different, generate COMMENT ON INDEX statement
+			if oldComment != newComment {
+				writeCommentOnIndex(buf, mvDiff.SchemaName, indexDiff.NewIndex.Name, newComment)
+			}
+		}
+	}
+	return nil
+}
+
 // Helper functions to write comment statements for different object types
 
 // writeCommentOnSchema writes a COMMENT ON SCHEMA statement
@@ -3101,6 +3773,70 @@ func writeCommentOnType(out *strings.Builder, schema, typeName, comment string) 
 	_, _ = out.WriteString("\n")
 }
 
+func writeCommentOnExtension(out *strings.Builder, extensionName, comment string) {
+	_, _ = out.WriteString(`COMMENT ON EXTENSION "`)
+	_, _ = out.WriteString(extensionName)
+	_, _ = out.WriteString(`" IS `)
+	if comment == "" {
+		_, _ = out.WriteString(`NULL`)
+	} else {
+		_, _ = out.WriteString(`'`)
+		// Escape single quotes in the comment
+		escapedComment := strings.ReplaceAll(comment, "'", "''")
+		_, _ = out.WriteString(escapedComment)
+		_, _ = out.WriteString(`'`)
+	}
+	_, _ = out.WriteString(`;`)
+	_, _ = out.WriteString("\n")
+}
+
+func writeCommentOnEventTrigger(out *strings.Builder, eventTriggerName, comment string) {
+	_, _ = out.WriteString(`COMMENT ON EVENT TRIGGER "`)
+	_, _ = out.WriteString(eventTriggerName)
+	_, _ = out.WriteString(`" IS `)
+	if comment == "" {
+		_, _ = out.WriteString(`NULL`)
+	} else {
+		_, _ = out.WriteString(`'`)
+		// Escape single quotes in the comment
+		escapedComment := strings.ReplaceAll(comment, "'", "''")
+		_, _ = out.WriteString(escapedComment)
+		_, _ = out.WriteString(`'`)
+	}
+	_, _ = out.WriteString(`;`)
+	_, _ = out.WriteString("\n")
+}
+
+func writeCommentOnTrigger(out *strings.Builder, schemaName, tableName, triggerName, comment string) {
+	// Parse table name to get schema and table separately
+	parts := strings.Split(tableName, ".")
+	var tableSchemaName, tableNameOnly string
+	if len(parts) == 2 {
+		tableSchemaName, tableNameOnly = parts[0], parts[1]
+	} else {
+		tableSchemaName, tableNameOnly = schemaName, tableName
+	}
+
+	_, _ = out.WriteString(`COMMENT ON TRIGGER "`)
+	_, _ = out.WriteString(triggerName)
+	_, _ = out.WriteString(`" ON "`)
+	_, _ = out.WriteString(tableSchemaName)
+	_, _ = out.WriteString(`"."`)
+	_, _ = out.WriteString(tableNameOnly)
+	_, _ = out.WriteString(`" IS `)
+	if comment == "" {
+		_, _ = out.WriteString(`NULL`)
+	} else {
+		_, _ = out.WriteString(`'`)
+		// Escape single quotes in the comment
+		escapedComment := strings.ReplaceAll(comment, "'", "''")
+		_, _ = out.WriteString(escapedComment)
+		_, _ = out.WriteString(`'`)
+	}
+	_, _ = out.WriteString(`;`)
+	_, _ = out.WriteString("\n")
+}
+
 // generateCommentChangesFromSDL generates COMMENT ON statements from SDL-based comment diffs
 // This handles comment changes detected from SDL diff mode (AST-based)
 func generateCommentChangesFromSDL(buf *strings.Builder, diff *schema.MetadataDiff) error {
@@ -3167,6 +3903,9 @@ func generateCommentChangesFromSDL(buf *strings.Builder, diff *schema.MetadataDi
 		case schema.CommentObjectTypeView:
 			writeCommentOnView(buf, commentDiff.SchemaName, commentDiff.ObjectName, newComment)
 
+		case schema.CommentObjectTypeMaterializedView:
+			writeCommentOnMaterializedView(buf, commentDiff.SchemaName, commentDiff.ObjectName, newComment)
+
 		case schema.CommentObjectTypeFunction:
 			// For functions, ObjectName contains the function signature
 			// Try to find the function definition and AST node to determine if it's a FUNCTION or PROCEDURE
@@ -3218,6 +3957,22 @@ func generateCommentChangesFromSDL(buf *strings.Builder, diff *schema.MetadataDi
 				indexName = commentDiff.ObjectName
 			}
 			writeCommentOnIndex(buf, commentDiff.SchemaName, indexName, newComment)
+
+		case schema.CommentObjectTypeType:
+			// COMMENT ON TYPE (for enum types)
+			writeCommentOnType(buf, commentDiff.SchemaName, commentDiff.ObjectName, newComment)
+
+		case schema.CommentObjectTypeExtension:
+			// COMMENT ON EXTENSION
+			writeCommentOnExtension(buf, commentDiff.ObjectName, newComment)
+
+		case schema.CommentObjectTypeEventTrigger:
+			// COMMENT ON EVENT TRIGGER
+			writeCommentOnEventTrigger(buf, commentDiff.ObjectName, newComment)
+
+		case schema.CommentObjectTypeTrigger:
+			// COMMENT ON TRIGGER trigger_name ON table_name
+			writeCommentOnTrigger(buf, commentDiff.SchemaName, commentDiff.TableName, commentDiff.ObjectName, newComment)
 
 		default:
 			// Unknown object type, skip
@@ -3318,13 +4073,13 @@ func (v *CreateOrReplaceVisitor) visitCreateFunctionStmt(ctx *pgparser.Createfun
 		return nil
 	}
 
-	// Look for the FUNCTION keyword after CREATE
-	functionToken := v.findFunctionToken(ctx)
+	// Look for the FUNCTION/PROCEDURE keyword after CREATE
+	functionToken := v.findFunctionOrProcedureToken(ctx)
 	if functionToken == nil {
 		return nil
 	}
 
-	// Insert "OR REPLACE" between CREATE and FUNCTION
+	// Insert "OR REPLACE" between CREATE and FUNCTION/PROCEDURE
 	// We insert it right before the FUNCTION token
 	v.rewriter.InsertBefore("", functionToken.GetTokenIndex(), "OR REPLACE ")
 
@@ -3355,15 +4110,17 @@ func extractColumnDefinitionFromAST(columnASTNode pgparser.IColumnDefContext) st
 	return getTextFromAST(columnASTNode)
 }
 
-// findFunctionToken finds the FUNCTION token in the CREATE FUNCTION statement
-func (v *CreateOrReplaceVisitor) findFunctionToken(ctx *pgparser.CreatefunctionstmtContext) antlr.Token {
+// findFunctionOrProcedureToken finds the FUNCTION or PROCEDURE token in the CREATE FUNCTION/PROCEDURE statement
+func (v *CreateOrReplaceVisitor) findFunctionOrProcedureToken(ctx *pgparser.CreatefunctionstmtContext) antlr.Token {
 	// Get all tokens in the context range
 	start := ctx.GetStart().GetTokenIndex()
 	stop := ctx.GetStop().GetTokenIndex()
 
 	for i := start; i <= stop; i++ {
 		token := v.tokens.Get(i)
-		if token.GetTokenType() == pgparser.PostgreSQLParserFUNCTION {
+		// Check for both FUNCTION and PROCEDURE tokens since they share the same grammar rule
+		if token.GetTokenType() == pgparser.PostgreSQLParserFUNCTION ||
+			token.GetTokenType() == pgparser.PostgreSQLParserPROCEDURE {
 			return token
 		}
 	}
@@ -3371,11 +4128,11 @@ func (v *CreateOrReplaceVisitor) findFunctionToken(ctx *pgparser.Createfunctions
 	return nil
 }
 
-// hasOrReplace checks if the CREATE FUNCTION statement already contains "OR REPLACE"
+// hasOrReplace checks if the CREATE FUNCTION/PROCEDURE statement already contains "OR REPLACE"
 func (v *CreateOrReplaceVisitor) hasOrReplace(ctx *pgparser.CreatefunctionstmtContext) bool {
-	// Get all tokens in the context range between CREATE and FUNCTION
+	// Get all tokens in the context range between CREATE and FUNCTION/PROCEDURE
 	start := ctx.GetStart().GetTokenIndex()
-	functionToken := v.findFunctionToken(ctx)
+	functionToken := v.findFunctionOrProcedureToken(ctx)
 	if functionToken == nil {
 		return false
 	}
@@ -3405,18 +4162,17 @@ func (v *CreateOrReplaceVisitor) hasOrReplace(ctx *pgparser.CreatefunctionstmtCo
 	return false
 }
 
-// getViewDependenciesFromAST extracts view dependencies from AST node
-// This reuses the same logic as getViewDependencies from get_database_metadata.go
-func getViewDependenciesFromAST(astNode any, schemaName string, fullSchemaMetadata *storepb.DatabaseSchemaMetadata) []*storepb.DependencyColumn {
+// getViewDependenciesFromAST extracts view dependencies from AST node using lightweight access table extraction.
+// This avoids the complexity and potential panics of GetQuerySpan by only extracting table/view references.
+// The caller is responsible for filtering dependencies against the set of objects being migrated.
+func getViewDependenciesFromAST(astNode any, schemaName string, _ *storepb.DatabaseSchemaMetadata) []*storepb.DependencyColumn {
 	if astNode == nil {
 		return []*storepb.DependencyColumn{}
 	}
 
-	// Extract the SELECT statement from the VIEW AST node
 	var selectStatement string
 
 	if ctx, ok := astNode.(*pgparser.ViewstmtContext); ok {
-		// Extract the SELECT statement from the ViewstmtContext
 		if ctx.Selectstmt() != nil {
 			// Try to get text using token stream first
 			if tokenStream := ctx.GetParser().GetTokenStream(); tokenStream != nil {
@@ -3427,7 +4183,7 @@ func getViewDependenciesFromAST(astNode any, schemaName string, fullSchemaMetada
 				}
 			}
 
-			// Fallback to token-based approach if token stream approach failed
+			// Fallback to token-based approach if failed
 			if selectStatement == "" {
 				selectStatement = getTextFromAST(ctx.Selectstmt())
 			}
@@ -3438,60 +4194,110 @@ func getViewDependenciesFromAST(astNode any, schemaName string, fullSchemaMetada
 		return []*storepb.DependencyColumn{}
 	}
 
-	// Use the same dependency extraction logic as getViewDependencies
 	queryStatement := strings.TrimSpace(selectStatement)
 
-	// Use GetQuerySpan with the full schema metadata so it can resolve table/view references
-	// Wrap in defer/recover to handle potential panics from incomplete metadata
-	var span *base.QuerySpan
-	var err error
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				// If GetQuerySpan panics (e.g., due to incomplete metadata), treat it as an error
-				err = errors.Errorf("GetQuerySpan panicked: %v", r)
-			}
-		}()
-		span, err = pgpluginparser.GetQuerySpan(
-			context.Background(),
-			base.GetQuerySpanContext{
-				GetDatabaseMetadataFunc: func(_ context.Context, _, databaseName string) (string, *model.DatabaseMetadata, error) {
-					// Return the full schema metadata so GetQuerySpan can resolve references
-					dbMetadata := model.NewDatabaseMetadata(fullSchemaMetadata, false, false)
-					return databaseName, dbMetadata, nil
-				},
-				ListDatabaseNamesFunc: func(_ context.Context, _ string) ([]string, error) {
-					// Return empty list - we don't need actual database names for dependency extraction
-					return []string{}, nil
-				},
-			},
-			queryStatement,
-			"", // database
-			schemaName,
-			false, // case sensitive
-		)
-	}()
-
-	// If error parsing query span, return empty dependencies
+	accessTables, err := pgpluginparser.ExtractAccessTables(queryStatement, pgpluginparser.ExtractAccessTablesOption{
+		DefaultDatabase:        "",
+		DefaultSchema:          schemaName,
+		SkipMetadataValidation: true,
+	})
 	if err != nil {
-		return []*storepb.DependencyColumn{} // nolint:nilerr
+		return []*storepb.DependencyColumn{}
 	}
 
-	// Collect unique dependencies
+	// The caller will filter against allObjects
 	dependencyMap := make(map[string]*storepb.DependencyColumn)
-	for sourceColumn := range span.SourceColumns {
-		// Create dependency key in format: schema.table
-		key := fmt.Sprintf("%s.%s", sourceColumn.Schema, sourceColumn.Table)
+	for _, resource := range accessTables {
+		if resource.Schema == "pg_catalog" || resource.Schema == "information_schema" {
+			continue
+		}
+
+		resourceSchema := resource.Schema
+		if resourceSchema == "" {
+			resourceSchema = schemaName
+		}
+
+		key := fmt.Sprintf("%s.%s", resourceSchema, resource.Table)
 		if _, exists := dependencyMap[key]; !exists {
 			dependencyMap[key] = &storepb.DependencyColumn{
-				Schema: sourceColumn.Schema,
-				Table:  sourceColumn.Table,
-				Column: "*", // Use wildcard since we're tracking table-level dependencies
+				Schema: resourceSchema,
+				Table:  resource.Table,
+				Column: "*", // Table-level dependencies
 			}
 		}
 	}
 
-	// Convert map to slice
+	var dependencies []*storepb.DependencyColumn
+	for _, dep := range dependencyMap {
+		dependencies = append(dependencies, dep)
+	}
+
+	return dependencies
+}
+
+// getMaterializedViewDependenciesFromAST extracts table/view dependencies from a materialized view's AST node
+func getMaterializedViewDependenciesFromAST(astNode any, schemaName string, _ *storepb.DatabaseSchemaMetadata) []*storepb.DependencyColumn {
+	if astNode == nil {
+		return []*storepb.DependencyColumn{}
+	}
+
+	var selectStatement string
+
+	if ctx, ok := astNode.(*pgparser.CreatematviewstmtContext); ok {
+		if ctx.Selectstmt() != nil {
+			// Try to get text using token stream first
+			if tokenStream := ctx.GetParser().GetTokenStream(); tokenStream != nil {
+				start := ctx.Selectstmt().GetStart()
+				stop := ctx.Selectstmt().GetStop()
+				if start != nil && stop != nil {
+					selectStatement = tokenStream.GetTextFromTokens(start, stop)
+				}
+			}
+
+			// Fallback to token-based approach if failed
+			if selectStatement == "" {
+				selectStatement = getTextFromAST(ctx.Selectstmt())
+			}
+		}
+	}
+
+	if selectStatement == "" {
+		return []*storepb.DependencyColumn{}
+	}
+
+	queryStatement := strings.TrimSpace(selectStatement)
+
+	accessTables, err := pgpluginparser.ExtractAccessTables(queryStatement, pgpluginparser.ExtractAccessTablesOption{
+		DefaultDatabase:        "",
+		DefaultSchema:          schemaName,
+		SkipMetadataValidation: true,
+	})
+	if err != nil {
+		return []*storepb.DependencyColumn{}
+	}
+
+	// The caller will filter against allObjects
+	dependencyMap := make(map[string]*storepb.DependencyColumn)
+	for _, resource := range accessTables {
+		if resource.Schema == "pg_catalog" || resource.Schema == "information_schema" {
+			continue
+		}
+
+		resourceSchema := resource.Schema
+		if resourceSchema == "" {
+			resourceSchema = schemaName
+		}
+
+		key := fmt.Sprintf("%s.%s", resourceSchema, resource.Table)
+		if _, exists := dependencyMap[key]; !exists {
+			dependencyMap[key] = &storepb.DependencyColumn{
+				Schema: resourceSchema,
+				Table:  resource.Table,
+				Column: "*", // Table-level dependencies
+			}
+		}
+	}
+
 	var dependencies []*storepb.DependencyColumn
 	for _, dep := range dependencyMap {
 		dependencies = append(dependencies, dep)
@@ -3702,6 +4508,67 @@ func writeAddCheckConstraintFromAST(out *strings.Builder, schema, table string, 
 	return errors.New("could not extract CHECK constraint from AST node")
 }
 
+// writeAddExcludeConstraint adds an EXCLUDE constraint using constraint metadata
+func writeAddExcludeConstraint(out *strings.Builder, schema, table string, exclude *storepb.ExcludeConstraintMetadata) {
+	_, _ = out.WriteString(`ALTER TABLE "`)
+	_, _ = out.WriteString(schema)
+	_, _ = out.WriteString(`"."`)
+	_, _ = out.WriteString(table)
+	_, _ = out.WriteString(`" ADD CONSTRAINT "`)
+	_, _ = out.WriteString(exclude.Name)
+	_, _ = out.WriteString(`" `)
+	_, _ = out.WriteString(exclude.Expression) // Already includes "EXCLUDE USING ..."
+	_, _ = out.WriteString(`;`)
+	_, _ = out.WriteString("\n")
+}
+
+// writeAddExcludeConstraintFromAST adds an EXCLUDE constraint using AST node
+func writeAddExcludeConstraintFromAST(out *strings.Builder, schema, table string, constraintAST pgparser.ITableconstraintContext) error {
+	if constraintAST == nil {
+		return errors.New("constraint AST node is nil")
+	}
+
+	constraintName := extractConstraintNameFromAST(constraintAST)
+
+	// Extract EXCLUDE constraint definition
+	if constraintAST.Constraintelem() != nil {
+		elem := constraintAST.Constraintelem()
+		if elem.EXCLUDE() != nil {
+			// Get the full EXCLUDE expression (EXCLUDE USING ...)
+			excludeExpr := getTextFromAST(elem)
+
+			// Generate constraint name if not provided
+			if constraintName == "" || constraintName == "exclude_constraint" {
+				constraintName = fmt.Sprintf("%s_exclude", table)
+			}
+
+			_, _ = out.WriteString(`ALTER TABLE "`)
+			_, _ = out.WriteString(schema)
+			_, _ = out.WriteString(`"."`)
+			_, _ = out.WriteString(table)
+			_, _ = out.WriteString(`" ADD CONSTRAINT "`)
+			_, _ = out.WriteString(constraintName)
+			_, _ = out.WriteString(`" `)
+			_, _ = out.WriteString(excludeExpr) // Full expression including "EXCLUDE USING ..."
+			_, _ = out.WriteString(`;`)
+			_, _ = out.WriteString("\n")
+			return nil
+		}
+	}
+
+	return errors.New("could not extract EXCLUDE constraint from AST node")
+}
+
+// writeDropExcludeConstraintFromAST drops an EXCLUDE constraint using AST node
+func writeDropExcludeConstraintFromAST(out *strings.Builder, schema, table string, constraintAST pgparser.ITableconstraintContext) {
+	constraintName := extractConstraintNameFromAST(constraintAST)
+	if constraintName == "" {
+		// If we can't extract a name, use the constraint text as fallback
+		constraintName = getTextFromAST(constraintAST)
+	}
+	writeDropConstraint(out, schema, table, constraintName)
+}
+
 // writeAddForeignKeyFromAST adds a foreign key constraint using AST node
 func writeAddForeignKeyFromAST(out *strings.Builder, schema, table string, constraintAST pgparser.ITableconstraintContext) error {
 	if constraintAST == nil {
@@ -3882,4 +4749,332 @@ func writeCreateIndexFromAST(out *strings.Builder, indexAST *pgparser.IndexstmtC
 	_, _ = out.WriteString("\n")
 
 	return nil
+}
+
+// extractForeignKeysFromAST extracts foreign key constraints from a CREATE TABLE AST node
+// and returns foreign key metadata for dependency graph construction
+func extractForeignKeysFromAST(createStmt *pgparser.CreatestmtContext, defaultSchema string) []*storepb.ForeignKeyMetadata {
+	if createStmt == nil || createStmt.Opttableelementlist() == nil {
+		return nil
+	}
+
+	tableElementList := createStmt.Opttableelementlist().Tableelementlist()
+	if tableElementList == nil {
+		return nil
+	}
+
+	var foreignKeys []*storepb.ForeignKeyMetadata
+
+	for _, element := range tableElementList.AllTableelement() {
+		if element.Tableconstraint() == nil {
+			continue
+		}
+
+		constraint := element.Tableconstraint()
+		if constraint.Constraintelem() == nil {
+			continue
+		}
+
+		elem := constraint.Constraintelem()
+		if elem.FOREIGN() == nil || elem.KEY() == nil {
+			continue
+		}
+
+		// This is a foreign key constraint
+		// Extract referenced table from qualified_name using AST and normalize functions
+		// Grammar: FOREIGN KEY (...) REFERENCES qualified_name opt_column_list? ...
+		qualifiedName := elem.Qualified_name()
+		if qualifiedName == nil {
+			continue
+		}
+
+		// Use NormalizePostgreSQLQualifiedName to get schema and table name
+		// Returns []string: [table] or [schema, table]
+		nameParts := pgpluginparser.NormalizePostgreSQLQualifiedName(qualifiedName)
+		if len(nameParts) == 0 {
+			continue
+		}
+
+		var referencedSchema, referencedTable string
+		if len(nameParts) == 1 {
+			// No schema specified, use default
+			referencedSchema = defaultSchema
+			referencedTable = nameParts[0]
+		} else if len(nameParts) == 2 {
+			// Schema and table specified
+			referencedSchema = nameParts[0]
+			referencedTable = nameParts[1]
+		} else {
+			// Unexpected format, skip
+			continue
+		}
+
+		if referencedTable != "" {
+			fk := &storepb.ForeignKeyMetadata{
+				ReferencedSchema: referencedSchema,
+				ReferencedTable:  referencedTable,
+			}
+			foreignKeys = append(foreignKeys, fk)
+		}
+	}
+
+	return foreignKeys
+}
+
+// getTriggerObjectID generates a unique identifier for trigger objects
+// Triggers are table-scoped in PostgreSQL, so identifier is schema.table.trigger_name
+func getTriggerObjectID(triggerDiff *schema.TriggerDiff) string {
+	return fmt.Sprintf("trigger:%s.%s.%s", triggerDiff.SchemaName, triggerDiff.TableName, triggerDiff.TriggerName)
+}
+
+// writeCreateTrigger writes a CREATE TRIGGER or CREATE OR REPLACE TRIGGER statement
+func writeCreateTrigger(buf *strings.Builder, triggerDiff *schema.TriggerDiff) error {
+	switch triggerDiff.Action {
+	case schema.MetadataDiffActionCreate, schema.MetadataDiffActionAlter:
+		// For both CREATE and ALTER, use CREATE OR REPLACE TRIGGER
+		if triggerDiff.NewASTNode != nil {
+			// AST mode: extract SQL from AST node
+			triggerStmt, ok := triggerDiff.NewASTNode.(*pgparser.CreatetrigstmtContext)
+			if !ok {
+				return errors.New("invalid AST node type for trigger")
+			}
+
+			// Extract SQL from token stream
+			var sqlText string
+			if tokenStream := triggerStmt.GetParser().GetTokenStream(); tokenStream != nil {
+				start := triggerStmt.GetStart()
+				stop := triggerStmt.GetStop()
+				if start != nil && stop != nil {
+					sqlText = tokenStream.GetTextFromTokens(start, stop)
+				}
+			}
+
+			if sqlText == "" {
+				sqlText = triggerStmt.GetText()
+			}
+
+			// Convert to CREATE OR REPLACE for idempotency
+			sqlText = convertTriggerToCreateOrReplace(sqlText)
+
+			sqlText = strings.TrimSpace(sqlText)
+			if !strings.HasSuffix(sqlText, ";") {
+				sqlText += ";"
+			}
+
+			buf.WriteString(sqlText)
+			buf.WriteString("\n\n")
+
+			return nil
+		} else if triggerDiff.NewTrigger != nil {
+			// Metadata mode: convert trigger body to CREATE OR REPLACE
+			triggerSQL := convertTriggerToCreateOrReplace(triggerDiff.NewTrigger.Body)
+			buf.WriteString(triggerSQL)
+			if !strings.HasSuffix(strings.TrimSpace(triggerSQL), ";") {
+				buf.WriteString(";")
+			}
+			buf.WriteString("\n\n")
+			return nil
+		}
+
+		return errors.Errorf("trigger %s requires either NewASTNode or NewTrigger", triggerDiff.Action)
+
+	default:
+		// Ignore other actions like DROP (handled elsewhere)
+	}
+
+	return nil
+}
+
+// extractTriggerFunctionName extracts the function name from EXECUTE FUNCTION clause
+func extractTriggerFunctionName(astNode any) string {
+	triggerStmt, ok := astNode.(*pgparser.CreatetrigstmtContext)
+	if !ok || triggerStmt == nil {
+		return ""
+	}
+
+	// Get text from token stream for more reliable parsing
+	var text string
+	if tokenStream := triggerStmt.GetParser().GetTokenStream(); tokenStream != nil {
+		start := triggerStmt.GetStart()
+		stop := triggerStmt.GetStop()
+		if start != nil && stop != nil {
+			text = tokenStream.GetTextFromTokens(start, stop)
+		}
+	}
+
+	if text == "" {
+		text = triggerStmt.GetText()
+	}
+
+	// Look for "EXECUTE FUNCTION function_name" or "EXECUTE PROCEDURE function_name"
+	upperText := strings.ToUpper(text)
+	idx := strings.Index(upperText, "EXECUTE FUNCTION")
+	if idx == -1 {
+		idx = strings.Index(upperText, "EXECUTE PROCEDURE")
+		if idx == -1 {
+			return ""
+		}
+		idx += len("EXECUTE PROCEDURE")
+	} else {
+		idx += len("EXECUTE FUNCTION")
+	}
+
+	remaining := strings.TrimSpace(text[idx:])
+	// Extract function name (first word, possibly schema-qualified)
+	endIdx := strings.IndexAny(remaining, "();")
+	if endIdx > 0 {
+		funcName := strings.TrimSpace(remaining[:endIdx])
+		// Remove quotes if present
+		funcName = strings.Trim(funcName, "\"")
+		return funcName
+	}
+
+	return ""
+}
+
+// convertTriggerToCreateOrReplace converts CREATE TRIGGER to CREATE OR REPLACE TRIGGER using ANTLR
+func convertTriggerToCreateOrReplace(definition string) string {
+	// Parse the SQL statement using ANTLR
+	inputStream := antlr.NewInputStream(definition)
+	lexer := pgparser.NewPostgreSQLLexer(inputStream)
+	stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
+	parser := pgparser.NewPostgreSQLParser(stream)
+
+	// Parse the root
+	tree := parser.Root()
+	if tree == nil {
+		// If parsing fails, return original definition
+		return definition
+	}
+
+	// Create a visitor to find and modify CREATE TRIGGER statements
+	visitor := &CreateOrReplaceTriggerVisitor{
+		tokens:     stream,
+		rewriter:   antlr.NewTokenStreamRewriter(stream),
+		definition: definition,
+	}
+
+	// Visit the tree
+	visitor.Visit(tree)
+
+	// Get the modified text
+	interval := antlr.NewInterval(0, len(definition)-1)
+	result := visitor.rewriter.GetText("", interval)
+	if result == "" {
+		// If rewriting fails, return original definition
+		return definition
+	}
+
+	return result
+}
+
+// CreateOrReplaceTriggerVisitor visits the parse tree and modifies CREATE TRIGGER to CREATE OR REPLACE TRIGGER
+type CreateOrReplaceTriggerVisitor struct {
+	*pgparser.BasePostgreSQLParserVisitor
+	tokens     *antlr.CommonTokenStream
+	rewriter   *antlr.TokenStreamRewriter
+	definition string
+}
+
+// Visit implements the visitor pattern
+func (v *CreateOrReplaceTriggerVisitor) Visit(tree antlr.ParseTree) any {
+	switch t := tree.(type) {
+	case *pgparser.CreatetrigstmtContext:
+		return v.visitCreateTriggerStmt(t)
+	default:
+		// Continue visiting children
+		return v.visitChildren(tree)
+	}
+}
+
+// visitChildren visits all children of a node
+func (v *CreateOrReplaceTriggerVisitor) visitChildren(node antlr.ParseTree) any {
+	for i := 0; i < node.GetChildCount(); i++ {
+		child := node.GetChild(i)
+		if parseTree, ok := child.(antlr.ParseTree); ok {
+			v.Visit(parseTree)
+		}
+	}
+	return nil
+}
+
+// visitCreateTriggerStmt handles CREATE TRIGGER statements
+func (v *CreateOrReplaceTriggerVisitor) visitCreateTriggerStmt(ctx *pgparser.CreatetrigstmtContext) any {
+	if ctx == nil {
+		return nil
+	}
+
+	// Check if "OR REPLACE" already exists
+	if v.hasOrReplace(ctx) {
+		// Already has "OR REPLACE", no need to modify
+		return nil
+	}
+
+	// Find the CREATE token
+	createToken := ctx.GetStart()
+	if createToken == nil {
+		return nil
+	}
+
+	// Look for the TRIGGER keyword after CREATE
+	triggerToken := v.findTriggerToken(ctx)
+	if triggerToken == nil {
+		return nil
+	}
+
+	// Insert "OR REPLACE" between CREATE and TRIGGER
+	// We insert it right before the TRIGGER token
+	v.rewriter.InsertBefore("", triggerToken.GetTokenIndex(), "OR REPLACE ")
+
+	return nil
+}
+
+// findTriggerToken finds the TRIGGER token in the CREATE TRIGGER statement
+func (v *CreateOrReplaceTriggerVisitor) findTriggerToken(ctx *pgparser.CreatetrigstmtContext) antlr.Token {
+	// Get all tokens in the context range
+	start := ctx.GetStart().GetTokenIndex()
+	stop := ctx.GetStop().GetTokenIndex()
+
+	for i := start; i <= stop; i++ {
+		token := v.tokens.Get(i)
+		if token.GetTokenType() == pgparser.PostgreSQLParserTRIGGER {
+			return token
+		}
+	}
+
+	return nil
+}
+
+// hasOrReplace checks if the CREATE TRIGGER statement already contains "OR REPLACE"
+func (v *CreateOrReplaceTriggerVisitor) hasOrReplace(ctx *pgparser.CreatetrigstmtContext) bool {
+	// Get all tokens in the context range between CREATE and TRIGGER
+	start := ctx.GetStart().GetTokenIndex()
+	triggerToken := v.findTriggerToken(ctx)
+	if triggerToken == nil {
+		return false
+	}
+	stop := triggerToken.GetTokenIndex()
+
+	// Look for "OR" followed by "REPLACE" tokens, skipping whitespace
+	for i := start; i < stop; i++ {
+		token := v.tokens.Get(i)
+		if token.GetTokenType() == pgparser.PostgreSQLParserOR {
+			// Found OR, now look for REPLACE after it (skipping whitespace)
+			for j := i + 1; j < stop; j++ {
+				nextToken := v.tokens.Get(j)
+				// Skip whitespace tokens (channel 1 is hidden channel)
+				if nextToken.GetChannel() == 1 {
+					continue
+				}
+				// Check if the next non-whitespace token is REPLACE
+				if nextToken.GetTokenType() == pgparser.PostgreSQLParserREPLACE {
+					return true
+				}
+				// If it's not REPLACE, this OR is not our OR REPLACE pattern
+				break
+			}
+		}
+	}
+
+	return false
 }

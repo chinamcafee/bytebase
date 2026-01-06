@@ -37,8 +37,8 @@ type GhostSyncExecutor struct {
 	dbFactory *dbfactory.DBFactory
 }
 
-// Run runs the gh-ost sync check executor.
-func (e *GhostSyncExecutor) Run(ctx context.Context, config *storepb.PlanCheckRunConfig) (results []*storepb.PlanCheckRunResult_Result, err error) {
+// RunForTarget runs the gh-ost sync check for a single target.
+func (e *GhostSyncExecutor) RunForTarget(ctx context.Context, target *CheckTarget) (results []*storepb.PlanCheckRunResult_Result, err error) {
 	// gh-ost dry run could panic.
 	// It may be bytebase who panicked, but that's rare. So
 	// capture the error and send it into the result list.
@@ -62,20 +62,25 @@ func (e *GhostSyncExecutor) Run(ctx context.Context, config *storepb.PlanCheckRu
 		}
 	}()
 
-	instance, err := e.store.GetInstanceV2(ctx, &store.FindInstanceMessage{ResourceID: &config.InstanceId})
+	instanceID, databaseName, err := common.GetInstanceDatabaseID(target.Target)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get instance %s", config.InstanceId)
-	}
-	if instance == nil {
-		return nil, errors.Errorf("instance %s not found", config.InstanceId)
+		return nil, errors.Wrapf(err, "failed to parse target %s", target.Target)
 	}
 
-	database, err := e.store.GetDatabaseV2(ctx, &store.FindDatabaseMessage{InstanceID: &instance.ResourceID, DatabaseName: &config.DatabaseName})
+	instance, err := e.store.GetInstance(ctx, &store.FindInstanceMessage{ResourceID: &instanceID})
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get database %q", config.DatabaseName)
+		return nil, errors.Wrapf(err, "failed to get instance %s", instanceID)
+	}
+	if instance == nil {
+		return nil, errors.Errorf("instance %s not found", instanceID)
+	}
+
+	database, err := e.store.GetDatabase(ctx, &store.FindDatabaseMessage{InstanceID: &instance.ResourceID, DatabaseName: &databaseName})
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get database %q", databaseName)
 	}
 	if database == nil {
-		return nil, errors.Errorf("database not found %q", config.DatabaseName)
+		return nil, errors.Errorf("database not found %q", databaseName)
 	}
 
 	adminDataSource := utils.DataSourceFromInstanceWithType(instance, storepb.DataSourceType_ADMIN)
@@ -83,18 +88,14 @@ func (e *GhostSyncExecutor) Run(ctx context.Context, config *storepb.PlanCheckRu
 		return nil, common.Errorf(common.Internal, "admin data source not found for instance %s", instance.ResourceID)
 	}
 
-	sheetUID := int(config.SheetUid)
-	sheet, err := e.store.GetSheet(ctx, &store.FindSheetMessage{UID: &sheetUID})
+	sheet, err := e.store.GetSheetFull(ctx, target.SheetSha256)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get sheet %d", sheetUID)
+		return nil, errors.Wrapf(err, "failed to get sheet %s", target.SheetSha256)
 	}
 	if sheet == nil {
-		return nil, errors.Errorf("sheet %d not found", sheetUID)
+		return nil, errors.Errorf("sheet %s not found", target.SheetSha256)
 	}
-	statement, err := e.store.GetSheetStatementByID(ctx, sheetUID)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get sheet statement %d", sheetUID)
-	}
+	statement := sheet.Statement
 
 	// Database secrets feature has been removed
 	// To avoid leaking the rendered statement, the error message should use the original statement and not the rendered statement.
@@ -135,7 +136,7 @@ func (e *GhostSyncExecutor) Run(ctx context.Context, config *storepb.PlanCheckRu
 		}, nil
 	}
 
-	migrationContext, err := ghost.NewMigrationContext(ctx, rand.Intn(10000000), database, adminDataSource, tableName, fmt.Sprintf("_dryrun_%d", time.Now().Unix()), statement, true, config.GhostFlags, 20000000)
+	migrationContext, err := ghost.NewMigrationContext(ctx, rand.Intn(10000000), database, adminDataSource, tableName, fmt.Sprintf("_dryrun_%d", time.Now().Unix()), statement, true, target.GhostFlags, 20000000)
 	if err != nil {
 		return nil, common.Wrapf(err, common.Internal, "failed to create migration context")
 	}

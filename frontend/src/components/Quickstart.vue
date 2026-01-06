@@ -1,7 +1,7 @@
 <template>
   <div
     v-if="showQuickstart"
-    class="py-2 px-4 w-full flex-shrink-0 border-t border-block-border hidden lg:block bg-yellow-50"
+    class="py-2 px-4 w-full shrink-0 border-t border-block-border hidden lg:block bg-yellow-50"
   >
     <p
       class="text-sm font-medium text-gray-900 flex items-center justify-between"
@@ -82,7 +82,7 @@
 
 <script setup lang="ts">
 import { computedAsync } from "@vueuse/core";
-import { XIcon, CheckCircleIcon } from "lucide-vue-next";
+import { CheckCircleIcon, XIcon } from "lucide-vue-next";
 import type { Ref } from "vue";
 import { computed, unref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -90,28 +90,28 @@ import type { RouteLocationRaw } from "vue-router";
 import { PROJECT_V1_ROUTE_ISSUE_DETAIL } from "@/router/dashboard/projectV1";
 import {
   DATABASE_ROUTE_DASHBOARD,
+  ENVIRONMENT_V1_ROUTE_DASHBOARD,
   INSTANCE_ROUTE_DASHBOARD,
   PROJECT_V1_ROUTE_DASHBOARD,
-  ENVIRONMENT_V1_ROUTE_DASHBOARD,
   WORKSPACE_ROUTE_USERS,
 } from "@/router/dashboard/workspaceRoutes";
 import { SQL_EDITOR_WORKSHEET_MODULE } from "@/router/sqlEditor";
 import {
-  useAppFeature,
   pushNotification,
-  useUIStateStore,
-  useProjectV1Store,
   useActuatorV1Store,
   useIssueV1Store,
+  useProjectIamPolicyStore,
+  useProjectV1Store,
+  useUIStateStore,
   useWorkSheetStore,
 } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import type { Permission } from "@/types";
-import { UNKNOWN_PROJECT_NAME, isValidProjectName } from "@/types";
+import { isValidProjectName, UNKNOWN_PROJECT_NAME } from "@/types";
 import {
-  hasWorkspacePermissionV2,
-  hasProjectPermissionV2,
   extractProjectResourceName,
+  hasProjectPermissionV2,
+  hasWorkspacePermissionV2,
 } from "@/utils";
 
 // The name of the sample project.
@@ -134,9 +134,12 @@ const uiStateStore = useUIStateStore();
 const actuatorStore = useActuatorV1Store();
 const issueStore = useIssueV1Store();
 const worksheetStore = useWorkSheetStore();
-const hideQuickStart = useAppFeature("bb.feature.hide-quick-start");
+const projectIamPolicyStore = useProjectIamPolicyStore();
 
 const sampleProject = computedAsync(async () => {
+  if (!actuatorStore.quickStartEnabled) {
+    return;
+  }
   const project = await projectStore.getOrFetchProjectByName(
     `${projectNamePrefix}${SAMPLE_PROJECT_NAME}`,
     true /* silent */
@@ -144,6 +147,7 @@ const sampleProject = computedAsync(async () => {
   if (!isValidProjectName(project.name)) {
     return;
   }
+  await projectIamPolicyStore.getOrFetchProjectIamPolicy(project.name);
   return project;
 });
 
@@ -263,27 +267,11 @@ const introList = computed(() => {
   );
 });
 
-const isFirstUser = computed(() => {
-  return (
-    actuatorStore.getActiveUserCount({
-      includeBot: false,
-      includeServiceAccount: false,
-    }) === 1
-  );
-});
-
 const showQuickstart = computed(() => {
-  if (hideQuickStart.value) {
+  if (!actuatorStore.quickStartEnabled) {
     return false;
   }
-  if (uiStateStore.getIntroStateByKey("hidden")) {
-    return false;
-  }
-  // Only show quickstart for the first user.
-  if (!isFirstUser.value) {
-    return false;
-  }
-  return true;
+  return !uiStateStore.getIntroStateByKey("hidden");
 });
 
 const currentStep = computed(() => {

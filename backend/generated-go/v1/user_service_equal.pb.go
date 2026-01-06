@@ -171,6 +171,22 @@ func (x *UndeleteUserRequest) Equal(y *UndeleteUserRequest) bool {
 	return true
 }
 
+func (x *UpdateEmailRequest) Equal(y *UpdateEmailRequest) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if x.Name != y.Name {
+		return false
+	}
+	if x.Email != y.Email {
+		return false
+	}
+	return true
+}
+
 func (x *User_Profile) Equal(y *User_Profile) bool {
 	if x == y {
 		return true
@@ -221,16 +237,19 @@ func (x *User) Equal(y *User) bool {
 	if x.MfaEnabled != y.MfaEnabled {
 		return false
 	}
-	if x.MfaSecret != y.MfaSecret {
+	if x.TempOtpSecret != y.TempOtpSecret {
 		return false
 	}
-	if len(x.RecoveryCodes) != len(y.RecoveryCodes) {
+	if len(x.TempRecoveryCodes) != len(y.TempRecoveryCodes) {
 		return false
 	}
-	for i := 0; i < len(x.RecoveryCodes); i++ {
-		if x.RecoveryCodes[i] != y.RecoveryCodes[i] {
+	for i := 0; i < len(x.TempRecoveryCodes); i++ {
+		if x.TempRecoveryCodes[i] != y.TempRecoveryCodes[i] {
 			return false
 		}
+	}
+	if p, q := x.TempOtpSecretCreatedTime, y.TempOtpSecretCreatedTime; (p == nil && q != nil) || (p != nil && (q == nil || p.Seconds != q.Seconds || p.Nanos != q.Nanos)) {
+		return false
 	}
 	if x.Phone != y.Phone {
 		return false
@@ -245,6 +264,36 @@ func (x *User) Equal(y *User) bool {
 		if x.Groups[i] != y.Groups[i] {
 			return false
 		}
+	}
+	if !x.WorkloadIdentityConfig.Equal(y.WorkloadIdentityConfig) {
+		return false
+	}
+	return true
+}
+
+func (x *WorkloadIdentityConfig) Equal(y *WorkloadIdentityConfig) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if x.ProviderType != y.ProviderType {
+		return false
+	}
+	if x.IssuerUrl != y.IssuerUrl {
+		return false
+	}
+	if len(x.AllowedAudiences) != len(y.AllowedAudiences) {
+		return false
+	}
+	for i := 0; i < len(x.AllowedAudiences); i++ {
+		if x.AllowedAudiences[i] != y.AllowedAudiences[i] {
+			return false
+		}
+	}
+	if x.SubjectPattern != y.SubjectPattern {
+		return false
 	}
 	return true
 }

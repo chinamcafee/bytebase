@@ -19,7 +19,7 @@
 <script lang="ts" setup>
 import { NTree, type TreeOption } from "naive-ui";
 import { computed, h } from "vue";
-import { isDescendantOf, hasSchemaProperty } from "@/utils";
+import { hasSchemaProperty, isDescendantOf } from "@/utils";
 import { useSchemaDiagramContext } from "../common";
 import { DEFAULT_PADDINGS } from "../common/const";
 import { Label, Prefix, Suffix } from "./TreeNode";
@@ -73,19 +73,19 @@ const treeData = computed(() => {
 
 // dynamic render the highlight keywords
 const renderLabel = ({ option }: { option: TreeOption }) => {
-  const node = option as any as TreeNode;
+  const node = option as TreeNode;
   return h(Label, { node, keyword: props.keyword });
 };
 
 // Render icons before nodes.
 const renderPrefix = ({ option }: { option: TreeOption }) => {
-  const node = option as any as TreeNode;
+  const node = option as TreeNode;
   return h(Prefix, { node });
 };
 
 // Render icons after nodes.
 const renderSuffix = ({ option }: { option: TreeOption }) => {
-  const node = option as any as TreeNode;
+  const node = option as TreeNode;
   return h(Suffix, { node });
 };
 
@@ -114,16 +114,20 @@ const nodeProps = ({ option }: { option: TreeOption }) => {
 
 <style lang="postcss">
 .bb-schema-diagram-nav-tree.flat .n-tree-node-switcher {
-  @apply !hidden;
+  display: none !important;
 }
 .bb-schema-diagram-nav-tree .n-tree-node-content {
-  @apply !pl-0;
+  padding-left: 0 !important;
 }
 .bb-schema-diagram-nav-tree .n-tree-node-content__prefix {
-  @apply shrink-0 !mr-1;
+  flex-shrink: 0;
+  margin-right: 0.25rem !important;
 }
 .bb-schema-diagram-nav-tree .n-tree-node-content__text {
-  @apply truncate mr-1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 0.25rem;
 }
 .bb-schema-diagram-nav-tree .n-tree-node--pending {
   background-color: transparent !important;

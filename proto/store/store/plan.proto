@@ -10,7 +10,6 @@ option go_package = "generated-go/store";
 message PlanConfig {
   repeated Spec specs = 1;
 
-  Deployment deployment = 4;
   message Spec {
     // A UUID4 string that uniquely identifies the Spec.
     string id = 5;
@@ -21,6 +20,9 @@ message PlanConfig {
       ExportDataConfig export_data_config = 7;
     }
   }
+
+  // Whether the plan has started the rollout.
+  bool has_rollout = 2;
 
   message CreateDatabaseConfig {
     // The resource name of the instance on which the database is created.
@@ -49,31 +51,19 @@ message PlanConfig {
     // Multi-database format: [instances/{instance-id}/databases/{database-name}].
     // Single database group format: [projects/{project}/databaseGroups/{databaseGroup}].
     repeated string targets = 10;
-    // The resource name of the sheet.
-    // Format: projects/{project}/sheets/{sheet}
-    string sheet = 2;
+    // The SHA256 hash of the sheet content (hex-encoded).
+    string sheet_sha256 = 2;
     // The resource name of the release.
     // Format: projects/{project}/releases/{release}
     string release = 9;
-
-    // Type is the database change type.
-    enum Type {
-      TYPE_UNSPECIFIED = 0;
-      // Used for imperative schema migration including CREATE DATABASE.
-      MIGRATE = 2;
-      // Used for state-based declarative schema migration including CREATE DATABASE.
-      SDL = 3;
-    }
-    Type type = 3;
-
-    // The migration type for imperative schema migration.
-    // It is only set when type is MIGRATE.
-    MigrationType migrate_type = 11;
 
     map<string, string> ghost_flags = 7;
 
     // If set, a backup of the modified data will be created automatically before any changes are applied.
     bool enable_prior_backup = 8;
+
+    // Whether to use gh-ost for online schema migration.
+    bool enable_ghost = 12;
   }
 
   message ExportDataConfig {
@@ -81,27 +71,12 @@ message PlanConfig {
     // Multi-database format: [instances/{instance-id}/databases/{database-name}].
     // Single database group format: [projects/{project}/databaseGroups/{databaseGroup}].
     repeated string targets = 5;
-    // The resource name of the sheet.
-    // Format: projects/{project}/sheets/{sheet}
-    string sheet = 2;
+    // The SHA256 hash of the sheet content (hex-encoded).
+    string sheet_sha256 = 2;
     // The format of the exported file.
     ExportFormat format = 3;
     // The zip password provided by users.
     // Leave it empty if there is no need to encrypt the zip file.
     optional string password = 4;
-  }
-
-  message Deployment {
-    // The environments deploy order.
-    repeated string environments = 1;
-    // The database group mapping.
-    repeated DatabaseGroupMapping database_group_mappings = 2;
-
-    message DatabaseGroupMapping {
-      // Format: projects/{project}/databaseGroups/{databaseGroup}.
-      string database_group = 1;
-      // Format: instances/{instance-id}/databases/{database-name}.
-      repeated string databases = 2;
-    }
   }
 }

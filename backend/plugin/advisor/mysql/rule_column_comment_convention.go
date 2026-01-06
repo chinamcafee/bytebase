@@ -5,12 +5,13 @@ import (
 	"fmt"
 
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
-	"github.com/pkg/errors"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -19,9 +20,9 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleColumnCommentConvention, &ColumnCommentConventionAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleColumnCommentConvention, &ColumnCommentConventionAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleColumnCommentConvention, &ColumnCommentConventionAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_COLUMN_COMMENT, &ColumnCommentConventionAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_COLUMN_COMMENT, &ColumnCommentConventionAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_COLUMN_COMMENT, &ColumnCommentConventionAdvisor{})
 }
 
 // ColumnCommentConventionAdvisor is the advisor checking for column comment convention.
@@ -30,30 +31,29 @@ type ColumnCommentConventionAdvisor struct {
 
 // Check checks for column comment convention.
 func (*ColumnCommentConventionAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalCommentConventionRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
+	commentPayload := checkCtx.Rule.GetCommentConventionPayload()
 
 	// Create the rule
-	rule := NewColumnCommentConventionRule(level, string(checkCtx.Rule.Type), payload, checkCtx.ClassificationConfig)
+	rule := NewColumnCommentConventionRule(level, checkCtx.Rule.Type.String(), commentPayload)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -62,19 +62,17 @@ func (*ColumnCommentConventionAdvisor) Check(_ context.Context, checkCtx advisor
 // ColumnCommentConventionRule checks for column comment convention.
 type ColumnCommentConventionRule struct {
 	BaseRule
-	payload              *advisor.CommentConventionRulePayload
-	classificationConfig *storepb.DataClassificationSetting_DataClassificationConfig
+	payload *storepb.SQLReviewRule_CommentConventionRulePayload
 }
 
 // NewColumnCommentConventionRule creates a new ColumnCommentConventionRule.
-func NewColumnCommentConventionRule(level storepb.Advice_Status, title string, payload *advisor.CommentConventionRulePayload, classificationConfig *storepb.DataClassificationSetting_DataClassificationConfig) *ColumnCommentConventionRule {
+func NewColumnCommentConventionRule(level storepb.Advice_Status, title string, payload *storepb.SQLReviewRule_CommentConventionRulePayload) *ColumnCommentConventionRule {
 	return &ColumnCommentConventionRule{
 		BaseRule: BaseRule{
 			level: level,
 			title: title,
 		},
-		payload:              payload,
-		classificationConfig: classificationConfig,
+		payload: payload,
 	}
 }
 
@@ -182,6 +180,8 @@ func (r *ColumnCommentConventionRule) checkAlterTable(ctx *mysql.AlterTableConte
 
 func (r *ColumnCommentConventionRule) checkFieldDefinition(tableName, columnName string, ctx mysql.IFieldDefinitionContext) {
 	comment := ""
+
+	// Check columnAttribute for regular columns.
 	for _, attribute := range ctx.AllColumnAttribute() {
 		if attribute == nil || attribute.GetValue() == nil {
 			continue
@@ -193,35 +193,40 @@ func (r *ColumnCommentConventionRule) checkFieldDefinition(tableName, columnName
 			continue
 		}
 		comment = mysqlparser.NormalizeMySQLTextLiteral(attribute.TextLiteral())
-		if r.payload.MaxLength >= 0 && len(comment) > r.payload.MaxLength {
-			r.AddAdvice(&storepb.Advice{
-				Status:        r.level,
-				Code:          advisor.CommentTooLong.Int32(),
-				Title:         r.title,
-				Content:       fmt.Sprintf("The length of column `%s`.`%s` comment should be within %d characters", tableName, columnName, r.payload.MaxLength),
-				StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),
-			})
-		}
-
-		if r.payload.RequiredClassification {
-			if classification, _ := common.GetClassificationAndUserComment(comment, r.classificationConfig); classification == "" {
-				r.AddAdvice(&storepb.Advice{
-					Status:        r.level,
-					Code:          advisor.CommentMissingClassification.Int32(),
-					Title:         r.title,
-					Content:       fmt.Sprintf("Column `%s`.`%s` comment requires classification", tableName, columnName),
-					StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),
-				})
-			}
-		}
-
 		break
 	}
 
-	if len(comment) == 0 && r.payload.Required {
+	// Check gcolAttribute for generated/virtual columns.
+	// Generated columns use gcolAttribute which has a different structure.
+	if comment == "" {
+		for _, gcolAttr := range ctx.AllGcolAttribute() {
+			if gcolAttr == nil || gcolAttr.COMMENT_SYMBOL() == nil {
+				continue
+			}
+			if gcolAttr.TextString() == nil || gcolAttr.TextString().TextStringLiteral() == nil {
+				continue
+			}
+			comment = mysqlparser.NormalizeMySQLTextStringLiteral(gcolAttr.TextString().TextStringLiteral())
+			break
+		}
+	}
+
+	// Validate comment length.
+	if comment != "" && r.payload.MaxLength >= 0 && int32(len(comment)) > r.payload.MaxLength {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.CommentEmpty.Int32(),
+			Code:          code.CommentTooLong.Int32(),
+			Title:         r.title,
+			Content:       fmt.Sprintf("The length of column `%s`.`%s` comment should be within %d characters", tableName, columnName, r.payload.MaxLength),
+			StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),
+		})
+	}
+
+	// Check if comment is required but missing.
+	if comment == "" && r.payload.Required {
+		r.AddAdvice(&storepb.Advice{
+			Status:        r.level,
+			Code:          code.CommentEmpty.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("Column `%s`.`%s` requires comments", tableName, columnName),
 			StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),

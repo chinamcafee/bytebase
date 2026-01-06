@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/bytebase/parser/mysql"
 	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -21,8 +24,8 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleIndexPrimaryKeyTypeAllowlist, &IndexPrimaryKeyTypeAllowlistAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleIndexPrimaryKeyTypeAllowlist, &IndexPrimaryKeyTypeAllowlistAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_INDEX_PRIMARY_KEY_TYPE_ALLOWLIST, &IndexPrimaryKeyTypeAllowlistAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_INDEX_PRIMARY_KEY_TYPE_ALLOWLIST, &IndexPrimaryKeyTypeAllowlistAdvisor{})
 }
 
 // IndexPrimaryKeyTypeAllowlistAdvisor is the advisor checking for primary key type allowlist.
@@ -31,34 +34,33 @@ type IndexPrimaryKeyTypeAllowlistAdvisor struct {
 
 // Check checks for primary key type allowlist.
 func (*IndexPrimaryKeyTypeAllowlistAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalStringArrayTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
+	stringArrayPayload := checkCtx.Rule.GetStringArrayPayload()
 	allowlist := make(map[string]bool)
-	for _, tp := range payload.List {
+	for _, tp := range stringArrayPayload.List {
 		allowlist[strings.ToLower(tp)] = true
 	}
 
 	// Create the rule
-	rule := NewIndexPrimaryKeyTypeAllowlistRule(level, string(checkCtx.Rule.Type), allowlist, checkCtx.Catalog)
+	rule := NewIndexPrimaryKeyTypeAllowlistRule(level, checkCtx.Rule.Type.String(), allowlist, checkCtx.OriginalMetadata)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -68,19 +70,19 @@ func (*IndexPrimaryKeyTypeAllowlistAdvisor) Check(_ context.Context, checkCtx ad
 type IndexPrimaryKeyTypeAllowlistRule struct {
 	BaseRule
 	allowlist        map[string]bool
-	catalog          *catalog.Finder
+	originalMetadata *model.DatabaseMetadata
 	tablesNewColumns tableColumnTypes
 }
 
 // NewIndexPrimaryKeyTypeAllowlistRule creates a new IndexPrimaryKeyTypeAllowlistRule.
-func NewIndexPrimaryKeyTypeAllowlistRule(level storepb.Advice_Status, title string, allowlist map[string]bool, catalog *catalog.Finder) *IndexPrimaryKeyTypeAllowlistRule {
+func NewIndexPrimaryKeyTypeAllowlistRule(level storepb.Advice_Status, title string, allowlist map[string]bool, originalMetadata *model.DatabaseMetadata) *IndexPrimaryKeyTypeAllowlistRule {
 	return &IndexPrimaryKeyTypeAllowlistRule{
 		BaseRule: BaseRule{
 			level: level,
 			title: title,
 		},
 		allowlist:        allowlist,
-		catalog:          catalog,
+		originalMetadata: originalMetadata,
 		tablesNewColumns: make(tableColumnTypes),
 	}
 }
@@ -207,7 +209,7 @@ func (r *IndexPrimaryKeyTypeAllowlistRule) checkFieldDefinition(tableName, colum
 			if _, exists := r.allowlist[columnType]; !exists {
 				r.AddAdvice(&storepb.Advice{
 					Status:        r.level,
-					Code:          advisor.IndexPKType.Int32(),
+					Code:          code.IndexPKType.Int32(),
 					Title:         r.title,
 					Content:       fmt.Sprintf("The column `%s` in table `%s` is one of the primary key, but its type \"%s\" is not in allowlist", columnName, tableName, columnType),
 					StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),
@@ -236,7 +238,7 @@ func (r *IndexPrimaryKeyTypeAllowlistRule) checkConstraintDef(tableName string, 
 		if _, exists := r.allowlist[columnType]; !exists {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.IndexPKType.Int32(),
+				Code:          code.IndexPKType.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("The column `%s` in table `%s` is one of the primary key, but its type \"%s\" is not in allowlist", columnName, tableName, columnType),
 				StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),
@@ -250,12 +252,9 @@ func (r *IndexPrimaryKeyTypeAllowlistRule) getPKColumnType(tableName string, col
 	if columnType, ok := r.tablesNewColumns.get(tableName, columnName); ok {
 		return columnType, nil
 	}
-	column := r.catalog.Origin.FindColumn(&catalog.ColumnFind{
-		TableName:  tableName,
-		ColumnName: columnName,
-	})
+	column := r.originalMetadata.GetSchemaMetadata("").GetTable(tableName).GetColumn(columnName)
 	if column != nil {
-		return column.Type(), nil
+		return column.GetProto().Type, nil
 	}
 	return "", errors.Errorf("cannot find the type of `%s`.`%s`", tableName, columnName)
 }

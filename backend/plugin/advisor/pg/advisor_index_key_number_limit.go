@@ -6,18 +6,24 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
+	"github.com/antlr4-go/antlr/v4"
+
+	parser "github.com/bytebase/parser/postgresql"
+
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/parser/pg/legacy/ast"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
+	"github.com/bytebase/bytebase/backend/plugin/parser/pg"
 )
 
 var (
 	_ advisor.Advisor = (*IndexKeyNumberLimitAdvisor)(nil)
-	_ ast.Visitor     = (*indexKeyNumberLimitChecker)(nil)
 )
 
 func init() {
-	advisor.Register(storepb.Engine_POSTGRES, advisor.SchemaRuleIndexKeyNumberLimit, &IndexKeyNumberLimitAdvisor{})
+	advisor.Register(storepb.Engine_POSTGRES, storepb.SQLReviewRule_INDEX_KEY_NUMBER_LIMIT, &IndexKeyNumberLimitAdvisor{})
 }
 
 // IndexKeyNumberLimitAdvisor is the advisor checking for index key number limit.
@@ -26,97 +32,236 @@ type IndexKeyNumberLimitAdvisor struct {
 
 // Check checks for index key number limit.
 func (*IndexKeyNumberLimitAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmts, ok := checkCtx.AST.([]ast.Node)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Node")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	payload, err := advisor.UnmarshalNumberTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
-	checker := &indexKeyNumberLimitChecker{
-		level: level,
-		title: string(checkCtx.Rule.Type),
-		max:   payload.Number,
+	numberPayload := checkCtx.Rule.GetNumberPayload()
+	if numberPayload == nil {
+		return nil, errors.New("number_payload is required for this rule")
 	}
 
-	for _, stmt := range stmts {
-		ast.Walk(checker, stmt)
+	rule := &indexKeyNumberLimitRule{
+		BaseRule: BaseRule{
+			level: level,
+			title: checkCtx.Rule.Type.String(),
+		},
+		max: int(numberPayload.Number),
 	}
 
-	return checker.adviceList, nil
+	checker := NewGenericChecker([]Rule{rule})
+
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
+
+	return checker.GetAdviceList(), nil
 }
 
-type indexKeyNumberLimitChecker struct {
-	adviceList []*storepb.Advice
-	level      storepb.Advice_Status
-	title      string
-	max        int
+type indexKeyNumberLimitRule struct {
+	BaseRule
+
+	max int
 }
 
-func (checker *indexKeyNumberLimitChecker) getMetaDataList(in ast.Node) []*indexMetaData {
-	var res []*indexMetaData
+func (*indexKeyNumberLimitRule) Name() string {
+	return "index_key_number_limit"
+}
 
-	switch node := in.(type) {
-	case *ast.CreateIndexStmt:
-		if checker.max > 0 && len(node.Index.KeyList) > checker.max {
-			res = append(res, &indexMetaData{
-				indexName: node.Index.Name,
-				tableName: node.Index.Table.Name,
-				line:      node.LastLine(),
+func (r *indexKeyNumberLimitRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
+	switch nodeType {
+	case "Indexstmt":
+		r.handleIndexstmt(ctx)
+	case "Createstmt":
+		r.handleCreatestmt(ctx)
+	case "Altertablestmt":
+		r.handleAltertablestmt(ctx)
+	default:
+		// Do nothing for other node types
+	}
+	return nil
+}
+
+func (*indexKeyNumberLimitRule) OnExit(_ antlr.ParserRuleContext, _ string) error {
+	return nil
+}
+
+// handleIndexstmt checks CREATE INDEX statements
+func (r *indexKeyNumberLimitRule) handleIndexstmt(ctx antlr.ParserRuleContext) {
+	indexstmtCtx, ok := ctx.(*parser.IndexstmtContext)
+	if !ok {
+		return
+	}
+
+	if !isTopLevel(indexstmtCtx.GetParent()) {
+		return
+	}
+
+	// Count the number of index parameters
+	if indexstmtCtx.Index_params() != nil {
+		keyCount := r.countIndexKeys(indexstmtCtx.Index_params())
+		if r.max > 0 && keyCount > r.max {
+			indexName := ""
+			if indexstmtCtx.Name() != nil {
+				indexName = pg.NormalizePostgreSQLName(indexstmtCtx.Name())
+			}
+
+			tableName := ""
+			if indexstmtCtx.Relation_expr() != nil && indexstmtCtx.Relation_expr().Qualified_name() != nil {
+				tableName = extractTableName(indexstmtCtx.Relation_expr().Qualified_name())
+			}
+
+			r.AddAdvice(&storepb.Advice{
+				Status:  r.level,
+				Code:    code.IndexKeyNumberExceedsLimit.Int32(),
+				Title:   r.title,
+				Content: fmt.Sprintf("The number of keys of index %q in table %q should be not greater than %d", indexName, tableName, r.max),
+				StartPosition: &storepb.Position{
+					Line:   int32(indexstmtCtx.GetStart().GetLine()),
+					Column: 0,
+				},
 			})
 		}
-	case *ast.CreateTableStmt:
-		for _, constraint := range node.ConstraintList {
-			if checker.max > 0 && indexKeyNumber(constraint) > checker.max {
-				res = append(res, &indexMetaData{
-					indexName: constraint.Name,
-					tableName: node.Name.Name,
-					line:      constraint.LastLine(),
-				})
+	}
+}
+
+// handleCreatestmt checks CREATE TABLE with inline constraints
+func (r *indexKeyNumberLimitRule) handleCreatestmt(ctx antlr.ParserRuleContext) {
+	createstmtCtx, ok := ctx.(*parser.CreatestmtContext)
+	if !ok {
+		return
+	}
+
+	if !isTopLevel(createstmtCtx.GetParent()) {
+		return
+	}
+
+	qualifiedNames := createstmtCtx.AllQualified_name()
+	if len(qualifiedNames) == 0 {
+		return
+	}
+
+	tableName := extractTableName(qualifiedNames[0])
+	if tableName == "" {
+		return
+	}
+
+	// Check table-level constraints
+	if createstmtCtx.Opttableelementlist() != nil && createstmtCtx.Opttableelementlist().Tableelementlist() != nil {
+		allElements := createstmtCtx.Opttableelementlist().Tableelementlist().AllTableelement()
+		for _, elem := range allElements {
+			if elem.Tablelikeclause() != nil {
+				continue
+			}
+			if elem.Tableconstraint() != nil {
+				r.checkTableConstraint(elem.Tableconstraint(), tableName, createstmtCtx.GetStart().GetLine())
 			}
 		}
-	case *ast.AddConstraintStmt:
-		if checker.max > 0 && indexKeyNumber(node.Constraint) > checker.max {
-			res = append(res, &indexMetaData{
-				indexName: node.Constraint.Name,
-				tableName: node.Table.Name,
-				line:      node.LastLine(),
-			})
+	}
+}
+
+// handleAltertablestmt checks ALTER TABLE ADD CONSTRAINT
+func (r *indexKeyNumberLimitRule) handleAltertablestmt(ctx antlr.ParserRuleContext) {
+	altertablestmtCtx, ok := ctx.(*parser.AltertablestmtContext)
+	if !ok {
+		return
+	}
+
+	if !isTopLevel(altertablestmtCtx.GetParent()) {
+		return
+	}
+
+	if altertablestmtCtx.Relation_expr() == nil || altertablestmtCtx.Relation_expr().Qualified_name() == nil {
+		return
+	}
+
+	tableName := extractTableName(altertablestmtCtx.Relation_expr().Qualified_name())
+	if tableName == "" {
+		return
+	}
+
+	// Check ALTER TABLE ADD CONSTRAINT
+	if altertablestmtCtx.Alter_table_cmds() != nil {
+		allCmds := altertablestmtCtx.Alter_table_cmds().AllAlter_table_cmd()
+		for _, cmd := range allCmds {
+			// ADD CONSTRAINT
+			if cmd.ADD_P() != nil && cmd.Tableconstraint() != nil {
+				r.checkTableConstraint(cmd.Tableconstraint(), tableName, altertablestmtCtx.GetStart().GetLine())
+			}
+		}
+	}
+}
+
+func (r *indexKeyNumberLimitRule) checkTableConstraint(constraint parser.ITableconstraintContext, tableName string, line int) {
+	if constraint == nil {
+		return
+	}
+
+	var keyCount int
+	var constraintName string
+
+	// Get constraint name if present
+	if constraint.Name() != nil {
+		constraintName = pg.NormalizePostgreSQLName(constraint.Name())
+	}
+
+	// Check different constraint types
+	if constraint.Constraintelem() != nil {
+		elem := constraint.Constraintelem()
+
+		// PRIMARY KEY or UNIQUE
+		if (elem.PRIMARY() != nil && elem.KEY() != nil) || (elem.UNIQUE() != nil) {
+			if elem.Columnlist() != nil {
+				keyCount = r.countColumnList(elem.Columnlist())
+			}
+		}
+
+		// FOREIGN KEY
+		if elem.FOREIGN() != nil && elem.KEY() != nil {
+			if elem.Columnlist() != nil {
+				keyCount = r.countColumnList(elem.Columnlist())
+			}
 		}
 	}
 
-	return res
-}
-
-func (checker *indexKeyNumberLimitChecker) Visit(node ast.Node) ast.Visitor {
-	indexDataList := checker.getMetaDataList(node)
-
-	for _, index := range indexDataList {
-		checker.adviceList = append(checker.adviceList, &storepb.Advice{
-			Status:        checker.level,
-			Code:          advisor.IndexKeyNumberExceedsLimit.Int32(),
-			Title:         checker.title,
-			Content:       fmt.Sprintf("The number of keys of index %q in table %q should be not greater than %d", index.indexName, index.tableName, checker.max),
-			StartPosition: newPositionAtLineStart(index.line),
+	if r.max > 0 && keyCount > r.max {
+		r.AddAdvice(&storepb.Advice{
+			Status:  r.level,
+			Code:    code.IndexKeyNumberExceedsLimit.Int32(),
+			Title:   r.title,
+			Content: fmt.Sprintf("The number of keys of index %q in table %q should be not greater than %d", constraintName, tableName, r.max),
+			StartPosition: &storepb.Position{
+				Line:   int32(line),
+				Column: 0,
+			},
 		})
 	}
-	return checker
 }
 
-func indexKeyNumber(constraint *ast.ConstraintDef) int {
-	switch constraint.Type {
-	case ast.ConstraintTypePrimary,
-		ast.ConstraintTypeUnique,
-		ast.ConstraintTypeForeign:
-		return len(constraint.KeyList)
-	default:
+func (*indexKeyNumberLimitRule) countIndexKeys(params parser.IIndex_paramsContext) int {
+	if params == nil {
 		return 0
 	}
+
+	allParams := params.AllIndex_elem()
+	return len(allParams)
+}
+
+func (*indexKeyNumberLimitRule) countColumnList(columnList parser.IColumnlistContext) int {
+	if columnList == nil {
+		return 0
+	}
+
+	allColumns := columnList.AllColumnElem()
+	return len(allColumns)
 }

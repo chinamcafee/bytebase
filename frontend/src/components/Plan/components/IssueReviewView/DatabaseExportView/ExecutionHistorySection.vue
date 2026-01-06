@@ -1,7 +1,7 @@
 <template>
-  <div class="space-y-4">
+  <div class="flex flex-col gap-y-4">
     <!-- Execution History Section -->
-    <div class="space-y-3">
+    <div class="flex flex-col gap-y-3">
       <div class="flex items-center justify-between">
         <h3 class="text-base font-medium">
           {{ $t("task-run.history") }}
@@ -23,14 +23,12 @@
 
 <script lang="ts" setup>
 import { computed } from "vue";
-import TaskRunTable from "@/components/Plan/components/RolloutView/TaskRunTable.vue";
+import TaskRunTable from "@/components/RolloutV1/components/TaskRunTable.vue";
 import type { TaskRun } from "@/types/proto-es/v1/rollout_service_pb";
 import { extractTaskUID } from "@/utils";
 import { usePlanContext } from "../../../logic";
-import { usePlanContextWithRollout } from "../../../logic";
 
-const { plan, rollout } = usePlanContext();
-const { taskRuns } = usePlanContextWithRollout();
+const { plan, rollout, taskRuns } = usePlanContext();
 
 // Get the export data spec
 const exportDataSpec = computed(() => {
@@ -54,9 +52,9 @@ const exportTasks = computed(() => {
   return tasks;
 });
 
-// Get all task runs for export tasks
+// Get all task runs for export tasks (empty if no rollout)
 const allTaskRuns = computed((): TaskRun[] => {
-  if (exportTasks.value.length === 0) return [];
+  if (!rollout.value || exportTasks.value.length === 0) return [];
 
   const exportTaskUIDs = new Set(
     exportTasks.value.map((task) => extractTaskUID(task.name))

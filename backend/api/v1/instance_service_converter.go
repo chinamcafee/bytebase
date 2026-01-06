@@ -17,21 +17,20 @@ func convertInstanceMessage(instance *store.InstanceMessage) *v1pb.Instance {
 	dataSources := convertDataSources(instance.Metadata.GetDataSources())
 
 	return &v1pb.Instance{
-		Name:               buildInstanceName(instance.ResourceID),
-		Title:              instance.Metadata.GetTitle(),
-		Engine:             engine,
-		EngineVersion:      instance.Metadata.GetVersion(),
-		ExternalLink:       instance.Metadata.GetExternalLink(),
-		DataSources:        dataSources,
-		State:              convertDeletedToState(instance.Deleted),
-		Environment:        buildEnvironmentName(instance.EnvironmentID),
-		Activation:         instance.Metadata.GetActivation(),
-		SyncInterval:       instance.Metadata.GetSyncInterval(),
-		MaximumConnections: instance.Metadata.GetMaximumConnections(),
-		SyncDatabases:      instance.Metadata.GetSyncDatabases(),
-		Roles:              convertInstanceRoles(instance, instance.Metadata.GetRoles()),
-		LastSyncTime:       instance.Metadata.GetLastSyncTime(),
-		Labels:             instance.Metadata.GetLabels(),
+		Name:          buildInstanceName(instance.ResourceID),
+		Title:         instance.Metadata.GetTitle(),
+		Engine:        engine,
+		EngineVersion: instance.Metadata.GetVersion(),
+		ExternalLink:  instance.Metadata.GetExternalLink(),
+		DataSources:   dataSources,
+		State:         convertDeletedToState(instance.Deleted),
+		Environment:   buildEnvironmentName(instance.EnvironmentID),
+		Activation:    instance.Metadata.GetActivation(),
+		SyncInterval:  instance.Metadata.GetSyncInterval(),
+		SyncDatabases: instance.Metadata.GetSyncDatabases(),
+		Roles:         convertInstanceRoles(instance, instance.Metadata.GetRoles()),
+		LastSyncTime:  instance.Metadata.GetLastSyncTime(),
+		Labels:        instance.Metadata.GetLabels(),
 	}
 }
 
@@ -82,15 +81,14 @@ func convertInstanceToInstanceMessage(instanceID string, instance *v1pb.Instance
 		ResourceID:    instanceID,
 		EnvironmentID: environmentID,
 		Metadata: &storepb.Instance{
-			Title:              instance.GetTitle(),
-			Engine:             convertEngine(instance.Engine),
-			ExternalLink:       instance.GetExternalLink(),
-			Activation:         instance.GetActivation(),
-			DataSources:        datasources,
-			SyncInterval:       instance.GetSyncInterval(),
-			MaximumConnections: instance.GetMaximumConnections(),
-			SyncDatabases:      instance.GetSyncDatabases(),
-			Labels:             instance.GetLabels(),
+			Title:         instance.GetTitle(),
+			Engine:        convertEngine(instance.Engine),
+			ExternalLink:  instance.GetExternalLink(),
+			Activation:    instance.GetActivation(),
+			DataSources:   datasources,
+			SyncInterval:  instance.GetSyncInterval(),
+			SyncDatabases: instance.GetSyncDatabases(),
+			Labels:        instance.GetLabels(),
 		},
 	}, nil
 }
@@ -127,12 +125,17 @@ func convertDataSourceExternalSecret(externalSecret *storepb.DataSourceExternalS
 	}
 
 	resp := &v1pb.DataSourceExternalSecret{
-		SecretType:      v1pb.DataSourceExternalSecret_SecretType(externalSecret.SecretType),
-		Url:             externalSecret.Url,
-		AuthType:        v1pb.DataSourceExternalSecret_AuthType(externalSecret.AuthType),
-		EngineName:      externalSecret.EngineName,
-		SecretName:      externalSecret.SecretName,
-		PasswordKeyName: externalSecret.PasswordKeyName,
+		SecretType:               v1pb.DataSourceExternalSecret_SecretType(externalSecret.SecretType),
+		Url:                      externalSecret.Url,
+		AuthType:                 v1pb.DataSourceExternalSecret_AuthType(externalSecret.AuthType),
+		EngineName:               externalSecret.EngineName,
+		SecretName:               externalSecret.SecretName,
+		PasswordKeyName:          externalSecret.PasswordKeyName,
+		SkipVaultTlsVerification: externalSecret.SkipVaultTlsVerification,
+		// Clear sensitive Vault SSL data (INPUT_ONLY fields, should not be returned)
+		VaultSslCa:   "",
+		VaultSslCert: "",
+		VaultSslKey:  "",
 	}
 
 	// clear sensitive data.
@@ -228,7 +231,10 @@ func convertDataSources(dataSources []*storepb.DataSource) []*v1pb.DataSource {
 		case v1pb.DataSource_AWS_RDS_IAM:
 			if awsCredential := ds.GetAwsCredential(); awsCredential != nil {
 				dataSource.IamExtension = &v1pb.DataSource_AwsCredential{
-					AwsCredential: &v1pb.DataSource_AWSCredential{},
+					AwsCredential: &v1pb.DataSource_AWSCredential{
+						RoleArn:    awsCredential.RoleArn,
+						ExternalId: awsCredential.ExternalId,
+					},
 				}
 			}
 		case v1pb.DataSource_GOOGLE_CLOUD_SQL_IAM:
@@ -252,12 +258,16 @@ func convertV1DataSourceExternalSecret(externalSecret *v1pb.DataSourceExternalSe
 	}
 
 	secret := &storepb.DataSourceExternalSecret{
-		SecretType:      storepb.DataSourceExternalSecret_SecretType(externalSecret.SecretType),
-		Url:             externalSecret.Url,
-		AuthType:        storepb.DataSourceExternalSecret_AuthType(externalSecret.AuthType),
-		EngineName:      externalSecret.EngineName,
-		SecretName:      externalSecret.SecretName,
-		PasswordKeyName: externalSecret.PasswordKeyName,
+		SecretType:               storepb.DataSourceExternalSecret_SecretType(externalSecret.SecretType),
+		Url:                      externalSecret.Url,
+		AuthType:                 storepb.DataSourceExternalSecret_AuthType(externalSecret.AuthType),
+		EngineName:               externalSecret.EngineName,
+		SecretName:               externalSecret.SecretName,
+		PasswordKeyName:          externalSecret.PasswordKeyName,
+		SkipVaultTlsVerification: externalSecret.SkipVaultTlsVerification,
+		VaultSslCa:               externalSecret.VaultSslCa,
+		VaultSslCert:             externalSecret.VaultSslCert,
+		VaultSslKey:              externalSecret.VaultSslKey,
 	}
 
 	// Convert auth options
@@ -273,6 +283,8 @@ func convertV1DataSourceExternalSecret(externalSecret *v1pb.DataSourceExternalSe
 				AppRole: &storepb.DataSourceExternalSecret_AppRoleAuthOption{
 					Type:      storepb.DataSourceExternalSecret_AppRoleAuthOption_SecretType(appRole.Type),
 					MountPath: appRole.MountPath,
+					RoleId:    appRole.RoleId,
+					SecretId:  appRole.SecretId,
 				},
 			}
 		}
@@ -296,6 +308,13 @@ func convertV1DataSourceExternalSecret(externalSecret *v1pb.DataSourceExternalSe
 	case storepb.DataSourceExternalSecret_GCP_SECRET_MANAGER:
 		if secret.SecretName == "" {
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("missing GCP secret name"))
+		}
+	case storepb.DataSourceExternalSecret_AZURE_KEY_VAULT:
+		if secret.Url == "" {
+			return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("missing Azure Key Vault URL"))
+		}
+		if secret.SecretName == "" {
+			return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("missing Azure Key Vault secret name"))
 		}
 	default:
 	}
@@ -441,41 +460,42 @@ func convertV1DataSource(dataSource *v1pb.DataSource) (*storepb.DataSource, erro
 	saslConfig := convertV1DataSourceSaslConfig(dataSource.SaslConfig)
 
 	storeDataSource := &storepb.DataSource{
-		Id:                        dataSource.Id,
-		Type:                      dsType,
-		Username:                  dataSource.Username,
-		Password:                  dataSource.Password,
-		SslCa:                     dataSource.SslCa,
-		SslCert:                   dataSource.SslCert,
-		SslKey:                    dataSource.SslKey,
-		Host:                      dataSource.Host,
-		Port:                      dataSource.Port,
-		Database:                  dataSource.Database,
-		Srv:                       dataSource.Srv,
-		AuthenticationDatabase:    dataSource.AuthenticationDatabase,
-		Sid:                       dataSource.Sid,
-		ServiceName:               dataSource.ServiceName,
-		SshHost:                   dataSource.SshHost,
-		SshPort:                   dataSource.SshPort,
-		SshUser:                   dataSource.SshUser,
-		SshPassword:               dataSource.SshPassword,
-		SshPrivateKey:             dataSource.SshPrivateKey,
-		AuthenticationPrivateKey:  dataSource.AuthenticationPrivateKey,
-		ExternalSecret:            externalSecret,
-		SaslConfig:                saslConfig,
-		AuthenticationType:        convertV1AuthenticationType(dataSource.AuthenticationType),
-		AdditionalAddresses:       convertAdditionalAddresses(dataSource.AdditionalAddresses),
-		ReplicaSet:                dataSource.ReplicaSet,
-		DirectConnection:          dataSource.DirectConnection,
-		Region:                    dataSource.Region,
-		WarehouseId:               dataSource.WarehouseId,
-		UseSsl:                    dataSource.UseSsl,
-		VerifyTlsCertificate:      dataSource.VerifyTlsCertificate,
-		RedisType:                 convertV1RedisType(dataSource.RedisType),
-		MasterName:                dataSource.MasterName,
-		MasterUsername:            dataSource.MasterUsername,
-		MasterPassword:            dataSource.MasterPassword,
-		ExtraConnectionParameters: dataSource.ExtraConnectionParameters,
+		Id:                                 dataSource.Id,
+		Type:                               dsType,
+		Username:                           dataSource.Username,
+		Password:                           dataSource.Password,
+		SslCa:                              dataSource.SslCa,
+		SslCert:                            dataSource.SslCert,
+		SslKey:                             dataSource.SslKey,
+		Host:                               dataSource.Host,
+		Port:                               dataSource.Port,
+		Database:                           dataSource.Database,
+		Srv:                                dataSource.Srv,
+		AuthenticationDatabase:             dataSource.AuthenticationDatabase,
+		Sid:                                dataSource.Sid,
+		ServiceName:                        dataSource.ServiceName,
+		SshHost:                            dataSource.SshHost,
+		SshPort:                            dataSource.SshPort,
+		SshUser:                            dataSource.SshUser,
+		SshPassword:                        dataSource.SshPassword,
+		SshPrivateKey:                      dataSource.SshPrivateKey,
+		AuthenticationPrivateKey:           dataSource.AuthenticationPrivateKey,
+		AuthenticationPrivateKeyPassphrase: dataSource.AuthenticationPrivateKeyPassphrase,
+		ExternalSecret:                     externalSecret,
+		SaslConfig:                         saslConfig,
+		AuthenticationType:                 convertV1AuthenticationType(dataSource.AuthenticationType),
+		AdditionalAddresses:                convertAdditionalAddresses(dataSource.AdditionalAddresses),
+		ReplicaSet:                         dataSource.ReplicaSet,
+		DirectConnection:                   dataSource.DirectConnection,
+		Region:                             dataSource.Region,
+		WarehouseId:                        dataSource.WarehouseId,
+		UseSsl:                             dataSource.UseSsl,
+		VerifyTlsCertificate:               dataSource.VerifyTlsCertificate,
+		RedisType:                          convertV1RedisType(dataSource.RedisType),
+		MasterName:                         dataSource.MasterName,
+		MasterUsername:                     dataSource.MasterUsername,
+		MasterPassword:                     dataSource.MasterPassword,
+		ExtraConnectionParameters:          dataSource.ExtraConnectionParameters,
 	}
 
 	switch dataSource.AuthenticationType {
@@ -496,6 +516,8 @@ func convertV1DataSource(dataSource *v1pb.DataSource) (*storepb.DataSource, erro
 					AccessKeyId:     awsCredential.AccessKeyId,
 					SecretAccessKey: awsCredential.SecretAccessKey,
 					SessionToken:    awsCredential.SessionToken,
+					RoleArn:         awsCredential.RoleArn,
+					ExternalId:      awsCredential.ExternalId,
 				},
 			}
 		}

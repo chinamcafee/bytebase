@@ -1,9 +1,7 @@
 package v1
 
 import (
-	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -13,11 +11,9 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/bytebase/bytebase/backend/common"
-	"github.com/bytebase/bytebase/backend/common/log"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/store"
-	"github.com/bytebase/bytebase/backend/utils"
 )
 
 func convertToProtoAny(i any) (*anypb.Any, error) {
@@ -61,24 +57,16 @@ func convertToStoreActivityTypes(types []v1pb.Activity_Type) ([]storepb.Activity
 		switch tp {
 		case v1pb.Activity_TYPE_UNSPECIFIED:
 			return nil, common.Errorf(common.Invalid, "activity type must not be unspecified")
-		case v1pb.Activity_ISSUE_CREATE:
-			result = append(result, storepb.Activity_ISSUE_CREATE)
-		case v1pb.Activity_ISSUE_COMMENT_CREATE:
-			result = append(result, storepb.Activity_ISSUE_COMMENT_CREATE)
-		case v1pb.Activity_ISSUE_FIELD_UPDATE:
-			result = append(result, storepb.Activity_ISSUE_FIELD_UPDATE)
-		case v1pb.Activity_ISSUE_STATUS_UPDATE:
-			result = append(result, storepb.Activity_ISSUE_STATUS_UPDATE)
-		case v1pb.Activity_ISSUE_APPROVAL_NOTIFY:
-			result = append(result, storepb.Activity_ISSUE_APPROVAL_NOTIFY)
-		case v1pb.Activity_ISSUE_PIPELINE_STAGE_STATUS_UPDATE:
-			result = append(result, storepb.Activity_ISSUE_PIPELINE_STAGE_STATUS_UPDATE)
-		case v1pb.Activity_ISSUE_PIPELINE_TASK_RUN_STATUS_UPDATE:
-			result = append(result, storepb.Activity_ISSUE_PIPELINE_TASK_RUN_STATUS_UPDATE)
-		case v1pb.Activity_NOTIFY_ISSUE_APPROVED:
-			result = append(result, storepb.Activity_NOTIFY_ISSUE_APPROVED)
-		case v1pb.Activity_NOTIFY_PIPELINE_ROLLOUT:
-			result = append(result, storepb.Activity_NOTIFY_PIPELINE_ROLLOUT)
+		case v1pb.Activity_ISSUE_CREATED:
+			result = append(result, storepb.Activity_ISSUE_CREATED)
+		case v1pb.Activity_ISSUE_APPROVAL_REQUESTED:
+			result = append(result, storepb.Activity_ISSUE_APPROVAL_REQUESTED)
+		case v1pb.Activity_ISSUE_SENT_BACK:
+			result = append(result, storepb.Activity_ISSUE_SENT_BACK)
+		case v1pb.Activity_PIPELINE_FAILED:
+			result = append(result, storepb.Activity_PIPELINE_FAILED)
+		case v1pb.Activity_PIPELINE_COMPLETED:
+			result = append(result, storepb.Activity_PIPELINE_COMPLETED)
 		default:
 			return nil, common.Errorf(common.Invalid, "unsupported activity type: %v", tp)
 		}
@@ -90,24 +78,16 @@ func convertToV1ActivityTypes(types []storepb.Activity_Type) []v1pb.Activity_Typ
 	var result []v1pb.Activity_Type
 	for _, tp := range types {
 		switch tp {
-		case storepb.Activity_ISSUE_CREATE:
-			result = append(result, v1pb.Activity_ISSUE_CREATE)
-		case storepb.Activity_ISSUE_COMMENT_CREATE:
-			result = append(result, v1pb.Activity_ISSUE_COMMENT_CREATE)
-		case storepb.Activity_ISSUE_FIELD_UPDATE:
-			result = append(result, v1pb.Activity_ISSUE_FIELD_UPDATE)
-		case storepb.Activity_ISSUE_STATUS_UPDATE:
-			result = append(result, v1pb.Activity_ISSUE_STATUS_UPDATE)
-		case storepb.Activity_ISSUE_APPROVAL_NOTIFY:
-			result = append(result, v1pb.Activity_ISSUE_APPROVAL_NOTIFY)
-		case storepb.Activity_ISSUE_PIPELINE_STAGE_STATUS_UPDATE:
-			result = append(result, v1pb.Activity_ISSUE_PIPELINE_STAGE_STATUS_UPDATE)
-		case storepb.Activity_ISSUE_PIPELINE_TASK_RUN_STATUS_UPDATE:
-			result = append(result, v1pb.Activity_ISSUE_PIPELINE_TASK_RUN_STATUS_UPDATE)
-		case storepb.Activity_NOTIFY_ISSUE_APPROVED:
-			result = append(result, v1pb.Activity_NOTIFY_ISSUE_APPROVED)
-		case storepb.Activity_NOTIFY_PIPELINE_ROLLOUT:
-			result = append(result, v1pb.Activity_NOTIFY_PIPELINE_ROLLOUT)
+		case storepb.Activity_ISSUE_CREATED:
+			result = append(result, v1pb.Activity_ISSUE_CREATED)
+		case storepb.Activity_ISSUE_APPROVAL_REQUESTED:
+			result = append(result, v1pb.Activity_ISSUE_APPROVAL_REQUESTED)
+		case storepb.Activity_ISSUE_SENT_BACK:
+			result = append(result, v1pb.Activity_ISSUE_SENT_BACK)
+		case storepb.Activity_PIPELINE_FAILED:
+			result = append(result, v1pb.Activity_PIPELINE_FAILED)
+		case storepb.Activity_PIPELINE_COMPLETED:
+			result = append(result, v1pb.Activity_PIPELINE_COMPLETED)
 		default:
 			result = append(result, v1pb.Activity_TYPE_UNSPECIFIED)
 		}
@@ -115,85 +95,67 @@ func convertToV1ActivityTypes(types []storepb.Activity_Type) []v1pb.Activity_Typ
 	return result
 }
 
-func convertToStoreWebhookType(tp v1pb.Webhook_Type) (storepb.ProjectWebhook_Type, error) {
+func convertToStoreWebhookType(tp v1pb.WebhookType) (storepb.WebhookType, error) {
 	switch tp {
-	case v1pb.Webhook_TYPE_UNSPECIFIED:
-		return storepb.ProjectWebhook_TYPE_UNSPECIFIED, common.Errorf(common.Invalid, "webhook type must not be unspecified")
-	case v1pb.Webhook_SLACK:
-		return storepb.ProjectWebhook_SLACK, nil
-	case v1pb.Webhook_DISCORD:
-		return storepb.ProjectWebhook_DISCORD, nil
-	case v1pb.Webhook_TEAMS:
-		return storepb.ProjectWebhook_TEAMS, nil
-	case v1pb.Webhook_DINGTALK:
-		return storepb.ProjectWebhook_DINGTALK, nil
-	case v1pb.Webhook_FEISHU:
-		return storepb.ProjectWebhook_FEISHU, nil
-	case v1pb.Webhook_WECOM:
-		return storepb.ProjectWebhook_WECOM, nil
-	case v1pb.Webhook_LARK:
-		return storepb.ProjectWebhook_LARK, nil
+	case v1pb.WebhookType_WEBHOOK_TYPE_UNSPECIFIED:
+		return storepb.WebhookType_WEBHOOK_TYPE_UNSPECIFIED, common.Errorf(common.Invalid, "webhook type must not be unspecified")
+	case v1pb.WebhookType_SLACK:
+		return storepb.WebhookType_SLACK, nil
+	case v1pb.WebhookType_DISCORD:
+		return storepb.WebhookType_DISCORD, nil
+	case v1pb.WebhookType_TEAMS:
+		return storepb.WebhookType_TEAMS, nil
+	case v1pb.WebhookType_DINGTALK:
+		return storepb.WebhookType_DINGTALK, nil
+	case v1pb.WebhookType_FEISHU:
+		return storepb.WebhookType_FEISHU, nil
+	case v1pb.WebhookType_WECOM:
+		return storepb.WebhookType_WECOM, nil
+	case v1pb.WebhookType_LARK:
+		return storepb.WebhookType_LARK, nil
 	default:
-		return storepb.ProjectWebhook_TYPE_UNSPECIFIED, common.Errorf(common.Invalid, "webhook type %q is not supported", tp)
+		return storepb.WebhookType_WEBHOOK_TYPE_UNSPECIFIED, common.Errorf(common.Invalid, "webhook type %q is not supported", tp)
 	}
 }
 
-func convertToV1WebhookType(tp storepb.ProjectWebhook_Type) v1pb.Webhook_Type {
+func convertToV1WebhookType(tp storepb.WebhookType) v1pb.WebhookType {
 	switch tp {
-	case storepb.ProjectWebhook_SLACK:
-		return v1pb.Webhook_SLACK
-	case storepb.ProjectWebhook_DISCORD:
-		return v1pb.Webhook_DISCORD
-	case storepb.ProjectWebhook_TEAMS:
-		return v1pb.Webhook_TEAMS
-	case storepb.ProjectWebhook_DINGTALK:
-		return v1pb.Webhook_DINGTALK
-	case storepb.ProjectWebhook_FEISHU:
-		return v1pb.Webhook_FEISHU
-	case storepb.ProjectWebhook_WECOM:
-		return v1pb.Webhook_WECOM
-	case storepb.ProjectWebhook_LARK:
-		return v1pb.Webhook_LARK
+	case storepb.WebhookType_SLACK:
+		return v1pb.WebhookType_SLACK
+	case storepb.WebhookType_DISCORD:
+		return v1pb.WebhookType_DISCORD
+	case storepb.WebhookType_TEAMS:
+		return v1pb.WebhookType_TEAMS
+	case storepb.WebhookType_DINGTALK:
+		return v1pb.WebhookType_DINGTALK
+	case storepb.WebhookType_FEISHU:
+		return v1pb.WebhookType_FEISHU
+	case storepb.WebhookType_WECOM:
+		return v1pb.WebhookType_WECOM
+	case storepb.WebhookType_LARK:
+		return v1pb.WebhookType_LARK
 	default:
-		return v1pb.Webhook_TYPE_UNSPECIFIED
+		return v1pb.WebhookType_WEBHOOK_TYPE_UNSPECIFIED
 	}
 }
 
-func convertToV1MemberInBinding(ctx context.Context, stores *store.Store, member string) string {
+func convertToV1MemberInBinding(member string) string {
 	if strings.HasPrefix(member, common.UserNamePrefix) {
-		userUID, err := common.GetUserID(member)
-		if err != nil {
-			slog.Error("failed to user id from member", slog.String("member", member), log.BBError(err))
-			return ""
-		}
-		user, err := stores.GetUserByID(ctx, userUID)
-		if err != nil {
-			slog.Error("failed to get user", slog.String("member", member), log.BBError(err))
-			return ""
-		}
-		if user == nil {
-			return ""
-		}
-		return fmt.Sprintf("%s%s", common.UserBindingPrefix, user.Email)
+		return common.UserBindingPrefix + strings.TrimPrefix(member, common.UserNamePrefix)
 	} else if strings.HasPrefix(member, common.GroupPrefix) {
-		email, err := common.GetGroupEmail(member)
-		if err != nil {
-			slog.Error("failed to parse group email from member", slog.String("member", member), log.BBError(err))
-			return ""
-		}
-		return fmt.Sprintf("%s%s", common.GroupBindingPrefix, email)
+		return common.GroupBindingPrefix + strings.TrimPrefix(member, common.GroupPrefix)
 	}
 	// handle allUsers.
 	return member
 }
 
-func convertToV1IamPolicy(ctx context.Context, stores *store.Store, iamPolicy *store.IamPolicyMessage) (*v1pb.IamPolicy, error) {
+func convertToV1IamPolicy(iamPolicy *store.IamPolicyMessage) (*v1pb.IamPolicy, error) {
 	var bindings []*v1pb.Binding
 
 	for _, binding := range iamPolicy.Policy.Bindings {
 		var members []string
 		for _, member := range binding.Members {
-			memberInBinding := convertToV1MemberInBinding(ctx, stores, member)
+			memberInBinding := convertToV1MemberInBinding(member)
 			if memberInBinding == "" {
 				continue
 			}
@@ -234,13 +196,13 @@ func convertToV1IamPolicy(ctx context.Context, stores *store.Store, iamPolicy *s
 	}, nil
 }
 
-func convertToStoreIamPolicy(ctx context.Context, stores *store.Store, iamPolicy *v1pb.IamPolicy) (*storepb.IamPolicy, error) {
+func convertToStoreIamPolicy(iamPolicy *v1pb.IamPolicy) (*storepb.IamPolicy, error) {
 	var bindings []*storepb.Binding
 
 	for _, binding := range iamPolicy.Bindings {
 		var members []string
-		for _, member := range utils.Uniq(binding.Members) {
-			storeMember, err := convertToStoreIamPolicyMember(ctx, stores, member)
+		for _, member := range common.Uniq(binding.Members) {
+			storeMember, err := convertToStoreIamPolicyMember(member)
 			if err != nil {
 				return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to convert iam member with error"))
 			}
@@ -270,17 +232,10 @@ func convertToStoreIamPolicy(ctx context.Context, stores *store.Store, iamPolicy
 	}, nil
 }
 
-func convertToStoreIamPolicyMember(ctx context.Context, stores *store.Store, member string) (string, error) {
+func convertToStoreIamPolicyMember(member string) (string, error) {
 	if strings.HasPrefix(member, common.UserBindingPrefix) {
 		email := strings.TrimPrefix(member, common.UserBindingPrefix)
-		user, err := stores.GetUserByEmail(ctx, email)
-		if err != nil {
-			return "", connect.NewError(connect.CodeInternal, err)
-		}
-		if user == nil {
-			return "", connect.NewError(connect.CodeNotFound, errors.Errorf("user %q not found", member))
-		}
-		return common.FormatUserUID(user.ID), nil
+		return common.FormatUserEmail(email), nil
 	} else if strings.HasPrefix(member, common.GroupBindingPrefix) {
 		email := strings.TrimPrefix(member, common.GroupBindingPrefix)
 		return common.FormatGroupEmail(email), nil
@@ -320,8 +275,6 @@ func convertToProject(projectMessage *store.ProjectMessage) *v1pb.Project {
 		DataClassificationConfigId: projectMessage.DataClassificationConfigID,
 		IssueLabels:                issueLabels,
 		ForceIssueLabels:           projectMessage.Setting.ForceIssueLabels,
-		AllowModifyStatement:       projectMessage.Setting.AllowModifyStatement,
-		AutoResolveIssue:           projectMessage.Setting.AutoResolveIssue,
 		EnforceIssueTitle:          projectMessage.Setting.EnforceIssueTitle,
 		EnforceSqlReview:           projectMessage.Setting.EnforceSqlReview,
 		AutoEnableBackup:           projectMessage.Setting.AutoEnableBackup,
@@ -332,6 +285,8 @@ func convertToProject(projectMessage *store.ProjectMessage) *v1pb.Project {
 		CiSamplingSize:             projectMessage.Setting.CiSamplingSize,
 		ParallelTasksPerRollout:    projectMessage.Setting.ParallelTasksPerRollout,
 		Labels:                     projectMessage.Setting.Labels,
+		RequireIssueApproval:       projectMessage.Setting.RequireIssueApproval,
+		RequirePlanCheckNoError:    projectMessage.Setting.RequirePlanCheckNoError,
 	}
 }
 
@@ -359,8 +314,6 @@ func convertToStoreExecutionRetryPolicy(policy *v1pb.Project_ExecutionRetryPolic
 
 func convertToProjectMessage(resourceID string, project *v1pb.Project) *store.ProjectMessage {
 	setting := &storepb.Project{
-		AllowModifyStatement:       project.AllowModifyStatement,
-		AutoResolveIssue:           project.AutoResolveIssue,
 		EnforceIssueTitle:          project.EnforceIssueTitle,
 		AutoEnableBackup:           project.AutoEnableBackup,
 		SkipBackupErrors:           project.SkipBackupErrors,
@@ -370,6 +323,8 @@ func convertToProjectMessage(resourceID string, project *v1pb.Project) *store.Pr
 		ParallelTasksPerRollout:    project.ParallelTasksPerRollout,
 		Labels:                     project.Labels,
 		EnforceSqlReview:           project.EnforceSqlReview,
+		RequireIssueApproval:       project.RequireIssueApproval,
+		RequirePlanCheckNoError:    project.RequirePlanCheckNoError,
 	}
 	return &store.ProjectMessage{
 		ResourceID: resourceID,

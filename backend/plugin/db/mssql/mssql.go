@@ -166,8 +166,9 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 	}
 
 	// Parse transaction mode from the script
-	transactionMode, cleanedStatement := base.ParseTransactionMode(statement)
+	config, cleanedStatement := base.ParseTransactionConfig(statement)
 	statement = cleanedStatement
+	transactionMode := config.Mode
 
 	// Apply default when transaction mode is not specified
 	if transactionMode == common.TransactionModeUnspecified {
@@ -214,8 +215,7 @@ func (d *Driver) executeInTransactionMode(ctx context.Context, statement string,
 				// Try send the last batch to server.
 				v := batch.Batch()
 				if v != nil && len(v.Text) > 0 {
-					indexes := []int32{int32(idx)}
-					opts.LogCommandExecute(indexes, v.Text)
+					opts.LogCommandExecute(&storepb.Range{Start: int32(v.Start), End: int32(v.End)}, v.Text)
 					rowsAffected, err := execute(ctx, tx, v.Text)
 					if err != nil {
 						opts.LogCommandResponse(0, nil, err.Error())
@@ -235,10 +235,9 @@ func (d *Driver) executeInTransactionMode(ctx context.Context, statement string,
 		case *tsqlbatch.GoCommand:
 			b := batch.Batch()
 			// Try send the batch to server.
-			indexes := []int32{int32(idx)}
 			idx++
 			for i := uint(0); i < v.Count; i++ {
-				opts.LogCommandExecute(indexes, b.Text)
+				opts.LogCommandExecute(&storepb.Range{Start: int32(b.Start), End: int32(b.End)}, b.Text)
 				rowsAffected, err := execute(ctx, tx, b.Text)
 				if err != nil {
 					opts.LogCommandResponse(0, nil, err.Error())
@@ -275,8 +274,7 @@ func (d *Driver) executeInAutoCommitMode(ctx context.Context, statement string, 
 				// Try send the last batch to server.
 				v := batch.Batch()
 				if v != nil && len(v.Text) > 0 {
-					indexes := []int32{int32(idx)}
-					opts.LogCommandExecute(indexes, v.Text)
+					opts.LogCommandExecute(&storepb.Range{Start: int32(v.Start), End: int32(v.End)}, v.Text)
 					rowsAffected, err := d.executeAutoCommit(ctx, v.Text)
 					if err != nil {
 						opts.LogCommandResponse(0, nil, err.Error())
@@ -296,10 +294,9 @@ func (d *Driver) executeInAutoCommitMode(ctx context.Context, statement string, 
 		case *tsqlbatch.GoCommand:
 			b := batch.Batch()
 			// Execute the batch in auto-commit mode
-			indexes := []int32{int32(idx)}
 			idx++
 			for i := uint(0); i < v.Count; i++ {
-				opts.LogCommandExecute(indexes, b.Text)
+				opts.LogCommandExecute(&storepb.Range{Start: int32(b.Start), End: int32(b.End)}, b.Text)
 				rowsAffected, err := d.executeAutoCommit(ctx, b.Text)
 				if err != nil {
 					opts.LogCommandResponse(0, nil, err.Error())
@@ -418,27 +415,31 @@ func (*Driver) queryBatch(ctx context.Context, conn *sql.Conn, batch string, que
 	if err != nil {
 		return nil, err
 	}
-	singleSQLs = base.FilterEmptySQL(singleSQLs)
+	singleSQLs = base.FilterEmptyStatements(singleSQLs)
 	if len(singleSQLs) == 0 {
 		return nil, nil
 	}
 
-	// Special handling for EXPLAIN queries in MSSQL using SHOWPLAN_ALL
+	// Special handling for EXPLAIN queries in MSSQL using explain
 	if queryContext.Explain {
-		// Enable SHOWPLAN_ALL mode once for all statements
-		if _, err := conn.ExecContext(ctx, "SET SHOWPLAN_ALL ON"); err != nil {
-			return nil, errors.Wrap(err, "failed to enable SHOWPLAN_ALL mode")
+		explain := "SHOWPLAN_ALL"
+		if queryContext.Option.MssqlExplainFormat == v1pb.QueryOption_MSSQL_EXPLAIN_FORMAT_XML {
+			explain = "SHOWPLAN_XML"
 		}
-		// Ensure SHOWPLAN_ALL is turned off after processing
+		// Enable explain mode once for all statements
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET %s ON", explain)); err != nil {
+			return nil, errors.Wrap(err, "failed to enable explain mode")
+		}
+		// Ensure explain is turned off after processing
 		defer func() {
-			if _, err := conn.ExecContext(ctx, "SET SHOWPLAN_ALL OFF"); err != nil {
-				slog.Warn("failed to disable SHOWPLAN_ALL mode", log.BBError(err))
+			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET %s OFF", explain)); err != nil {
+				slog.Warn("failed to disable explain mode", log.BBError(err))
 			}
 		}()
 
 		var results []*v1pb.QueryResult
 
-		// Process each statement with SHOWPLAN_ALL enabled
+		// Process each statement with explain enabled
 		for _, singleSQL := range singleSQLs {
 			startTime := time.Now()
 

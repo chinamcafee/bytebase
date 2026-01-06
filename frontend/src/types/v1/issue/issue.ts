@@ -1,19 +1,16 @@
 import { create as createProto } from "@bufbuild/protobuf";
+import { EMPTY_PROJECT_NAME, UNKNOWN_PROJECT_NAME } from "@/types";
+import type {
+  Issue,
+  Issue_ApprovalStatus,
+} from "@/types/proto-es/v1/issue_service_pb";
 import {
-  EMPTY_PROJECT_NAME,
-  EMPTY_ROLLOUT_NAME,
-  UNKNOWN_PROJECT_NAME,
-  UNKNOWN_ROLLOUT_NAME,
-} from "@/types";
-import type { Issue } from "@/types/proto-es/v1/issue_service_pb";
-import {
+  Issue_Type,
   IssueSchema,
   IssueStatus,
-  Issue_Type,
 } from "@/types/proto-es/v1/issue_service_pb";
 import type { Plan, PlanCheckRun } from "@/types/proto-es/v1/plan_service_pb";
-import type { TaskRun } from "@/types/proto-es/v1/rollout_service_pb";
-import type { Rollout } from "@/types/proto-es/v1/rollout_service_pb";
+import type { Rollout, TaskRun } from "@/types/proto-es/v1/rollout_service_pb";
 import { EMPTY_ID, UNKNOWN_ID } from "../../const";
 
 // For grant request issue, it has no plan and rollout.
@@ -33,7 +30,6 @@ export const emptyIssue = (): ComposedIssue => {
   return {
     ...createProto(IssueSchema, {
       name: EMPTY_ISSUE_NAME,
-      rollout: EMPTY_ROLLOUT_NAME,
       type: Issue_Type.DATABASE_CHANGE,
     }),
     planEntity: undefined,
@@ -48,7 +44,6 @@ export const unknownIssue = (): ComposedIssue => {
   return {
     ...createProto(IssueSchema, {
       name: UNKNOWN_ISSUE_NAME,
-      rollout: UNKNOWN_ROLLOUT_NAME,
       type: Issue_Type.DATABASE_CHANGE,
     }),
     planEntity: undefined,
@@ -61,18 +56,15 @@ export const unknownIssue = (): ComposedIssue => {
 
 export interface IssueFilter {
   project: string;
-  instance?: string;
-  database?: string;
-  environment?: string;
   query: string;
   creator?: string;
+  currentApprover?: string;
+  approvalStatus?: Issue_ApprovalStatus;
   statusList?: IssueStatus[];
   createdTsAfter?: number;
   createdTsBefore?: number;
   // type is the issue type, for example: GRANT_REQUEST, DATABASE_EXPORT
   type?: Issue_Type;
-  // taskType is the task type, for example: DDL, DML
-  taskType?: string;
   // filter by labels, for example: labels = "feature & bug"
   labels?: string[];
 }

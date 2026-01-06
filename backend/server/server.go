@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"path"
 	"sync"
 	"time"
@@ -16,24 +17,27 @@ import (
 
 	directorysync "github.com/bytebase/bytebase/backend/api/directory-sync"
 	"github.com/bytebase/bytebase/backend/api/lsp"
+	"github.com/bytebase/bytebase/backend/api/mcp"
+	"github.com/bytebase/bytebase/backend/api/oauth2"
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
+	"github.com/bytebase/bytebase/backend/component/bus"
 	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/dbfactory"
 	"github.com/bytebase/bytebase/backend/component/iam"
 	"github.com/bytebase/bytebase/backend/component/sampleinstance"
 	"github.com/bytebase/bytebase/backend/component/sheet"
-	"github.com/bytebase/bytebase/backend/component/state"
 	"github.com/bytebase/bytebase/backend/component/webhook"
 	"github.com/bytebase/bytebase/backend/demo"
 	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
+	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/migrator"
 	"github.com/bytebase/bytebase/backend/resources/postgres"
 	"github.com/bytebase/bytebase/backend/runner/approval"
-	"github.com/bytebase/bytebase/backend/runner/metricreport"
-	runnermigrator "github.com/bytebase/bytebase/backend/runner/migrator"
+	"github.com/bytebase/bytebase/backend/runner/cleaner"
 	"github.com/bytebase/bytebase/backend/runner/monitor"
+	"github.com/bytebase/bytebase/backend/runner/notifylistener"
 	"github.com/bytebase/bytebase/backend/runner/plancheck"
 	"github.com/bytebase/bytebase/backend/runner/schemasync"
 	"github.com/bytebase/bytebase/backend/runner/taskrun"
@@ -52,13 +56,13 @@ const (
 // Server is the Bytebase server.
 type Server struct {
 	// Asynchronous runners.
-	taskSchedulerV2      *taskrun.SchedulerV2
-	planCheckScheduler   *plancheck.Scheduler
-	metricReporter       *metricreport.Reporter
-	schemaSyncer         *schemasync.Syncer
-	approvalRunner       *approval.Runner
-	exportArchiveCleaner *runnermigrator.ExportArchiveCleaner
-	runnerWG             sync.WaitGroup
+	taskScheduler      *taskrun.Scheduler
+	planCheckScheduler *plancheck.Scheduler
+	schemaSyncer       *schemasync.Syncer
+	approvalRunner     *approval.Runner
+	notifyListener     *notifylistener.Listener
+	dataCleaner        *cleaner.DataCleaner
+	runnerWG           sync.WaitGroup
 
 	webhookManager        *webhook.Manager
 	iamManager            *iam.Manager
@@ -76,8 +80,8 @@ type Server struct {
 	// PG server stoppers.
 	stopper []func()
 
-	// stateCfg is the shared in-momory state within the server.
-	stateCfg *state.State
+	// bus is the message bus for inter-component communication within the server.
+	bus *bus.Bus
 
 	// boot specifies that whether the server boot correctly
 	cancel context.CancelFunc
@@ -139,7 +143,7 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 		return nil, errors.Wrapf(err, "failed to migrate schema")
 	}
 	s.store = stores
-	sheetManager := sheet.NewManager(stores)
+	sheetManager := sheet.NewManager()
 
 	// Initialize sample instance manager and start sample instances if they exist
 	s.sampleInstanceManager = sampleinstance.NewManager(stores, profile)
@@ -147,9 +151,9 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 		slog.Warn("failed to start sample instances", log.BBError(err))
 	}
 
-	s.stateCfg, err = state.New()
+	s.bus, err = bus.New()
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to create state config")
+		return nil, errors.Wrapf(err, "failed to create message bus")
 	}
 
 	if err := s.store.BackfillIssueTSVector(ctx); err != nil {
@@ -163,13 +167,12 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 	// Cache the license.
 	s.licenseService.LoadSubscription(ctx)
 
-	if err := s.initializeSetting(ctx); err != nil {
-		return nil, errors.Wrap(err, "failed to init config")
-	}
-	secret, err := s.store.GetSecret(ctx)
+	// Settings are now initialized in the database schema (LATEST.sql)
+	systemSetting, err := s.store.GetSystemSetting(ctx)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get secret")
+		return nil, errors.Wrap(err, "failed to get system setting")
 	}
+	secret := systemSetting.AuthSecret
 	s.iamManager, err = iam.NewManager(stores, s.licenseService)
 	if err := s.iamManager.ReloadCache(ctx); err != nil {
 		return nil, errors.Wrapf(err, "failed to reload iam cache")
@@ -177,47 +180,41 @@ func NewServer(ctx context.Context, profile *config.Profile) (*Server, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to create iam manager")
 	}
-	s.webhookManager = webhook.NewManager(stores, s.iamManager)
+	s.webhookManager = webhook.NewManager(stores, profile)
 	s.dbFactory = dbfactory.New(s.store, s.licenseService)
 
 	// Configure echo server.
 	s.echoServer = echo.New()
 
-	s.metricReporter = metricreport.NewReporter(s.store, s.licenseService, s.profile)
-	s.schemaSyncer = schemasync.NewSyncer(stores, s.dbFactory, s.profile, s.stateCfg, s.licenseService)
-	s.approvalRunner = approval.NewRunner(stores, sheetManager, s.dbFactory, s.stateCfg, s.webhookManager, s.licenseService)
+	s.schemaSyncer = schemasync.NewSyncer(stores, s.dbFactory)
+	s.approvalRunner = approval.NewRunner(stores, s.bus, s.webhookManager, s.licenseService)
 
-	s.taskSchedulerV2 = taskrun.NewSchedulerV2(stores, s.stateCfg, s.webhookManager, profile, s.licenseService)
-	s.taskSchedulerV2.Register(storepb.Task_DATABASE_CREATE, taskrun.NewDatabaseCreateExecutor(stores, s.dbFactory, s.schemaSyncer, s.stateCfg, profile))
-	s.taskSchedulerV2.Register(storepb.Task_DATABASE_MIGRATE, taskrun.NewDatabaseMigrateExecutor(stores, s.dbFactory, s.licenseService, s.stateCfg, s.schemaSyncer, profile))
-	s.taskSchedulerV2.Register(storepb.Task_DATABASE_EXPORT, taskrun.NewDataExportExecutor(stores, s.dbFactory, s.licenseService, s.stateCfg, s.schemaSyncer, profile))
-	s.taskSchedulerV2.Register(storepb.Task_DATABASE_SDL, taskrun.NewSchemaDeclareExecutor(stores, s.dbFactory, s.licenseService, s.stateCfg, s.schemaSyncer, profile))
+	s.taskScheduler = taskrun.NewScheduler(stores, s.bus, s.webhookManager, profile)
+	s.taskScheduler.Register(storepb.Task_DATABASE_CREATE, taskrun.NewDatabaseCreateExecutor(stores, s.dbFactory, s.schemaSyncer))
+	s.taskScheduler.Register(storepb.Task_DATABASE_MIGRATE, taskrun.NewDatabaseMigrateExecutor(stores, s.dbFactory, s.bus, s.schemaSyncer, profile))
+	s.taskScheduler.Register(storepb.Task_DATABASE_EXPORT, taskrun.NewDataExportExecutor(stores, s.dbFactory, s.licenseService))
 
-	s.planCheckScheduler = plancheck.NewScheduler(stores, s.licenseService, s.stateCfg)
-	databaseConnectExecutor := plancheck.NewDatabaseConnectExecutor(stores, s.dbFactory)
-	s.planCheckScheduler.Register(store.PlanCheckDatabaseConnect, databaseConnectExecutor)
-	statementAdviseExecutor := plancheck.NewStatementAdviseExecutor(stores, sheetManager, s.dbFactory, s.licenseService)
-	s.planCheckScheduler.Register(store.PlanCheckDatabaseStatementAdvise, statementAdviseExecutor)
-	ghostSyncExecutor := plancheck.NewGhostSyncExecutor(stores, s.dbFactory)
-	s.planCheckScheduler.Register(store.PlanCheckDatabaseGhostSync, ghostSyncExecutor)
-	statementReportExecutor := plancheck.NewStatementReportExecutor(stores, sheetManager, s.dbFactory)
-	s.planCheckScheduler.Register(store.PlanCheckDatabaseStatementSummaryReport, statementReportExecutor)
+	combinedExecutor := plancheck.NewCombinedExecutor(stores, sheetManager, s.dbFactory)
+	s.planCheckScheduler = plancheck.NewScheduler(stores, s.bus, combinedExecutor)
+	s.notifyListener = notifylistener.NewListener(stores.GetDB(), s.bus)
 
-	// Export archive cleaner
-	s.exportArchiveCleaner = runnermigrator.NewExportArchiveCleaner(stores)
-
-	// Metric reporter
-	s.initMetricReporter()
+	// Data cleaner
+	s.dataCleaner = cleaner.NewDataCleaner(stores)
 
 	// LSP server.
-	s.lspServer = lsp.NewServer(s.store, profile)
+	s.lspServer = lsp.NewServer(s.store, profile, secret, s.bus, s.iamManager, s.licenseService)
 
-	directorySyncServer := directorysync.NewService(s.store, s.licenseService, s.iamManager)
+	directorySyncServer := directorysync.NewService(s.store, s.licenseService, s.iamManager, profile)
+	oauth2Service := oauth2.NewService(stores, profile, secret)
+	mcpServer, err := mcp.NewServer(stores, profile, secret)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to create MCP server")
+	}
 
-	if err := configureGrpcRouters(ctx, s.echoServer, s.store, sheetManager, s.dbFactory, s.licenseService, s.profile, s.metricReporter, s.stateCfg, s.schemaSyncer, s.webhookManager, s.iamManager, secret, s.sampleInstanceManager); err != nil {
+	if err := configureGrpcRouters(ctx, s.echoServer, s.store, sheetManager, s.dbFactory, s.licenseService, s.profile, s.bus, s.schemaSyncer, s.webhookManager, s.iamManager, secret, s.sampleInstanceManager); err != nil {
 		return nil, errors.Wrapf(err, "failed to configure gRPC routers")
 	}
-	configureEchoRouters(s.echoServer, s.lspServer, directorySyncServer, profile)
+	configureEchoRouters(s.echoServer, s.lspServer, directorySyncServer, oauth2Service, mcpServer, profile)
 
 	serverStarted = true
 	return s, nil
@@ -229,24 +226,37 @@ func (s *Server) Run(ctx context.Context, port int) error {
 	s.cancel = cancel
 	// runnerWG waits for all goroutines to complete.
 	s.runnerWG.Add(1)
-	go s.taskSchedulerV2.Run(ctx, &s.runnerWG)
+	go s.taskScheduler.Run(ctx, &s.runnerWG)
 	s.runnerWG.Add(1)
 	go s.schemaSyncer.Run(ctx, &s.runnerWG)
 	s.runnerWG.Add(1)
 	go s.approvalRunner.Run(ctx, &s.runnerWG)
 
 	s.runnerWG.Add(1)
-	go s.metricReporter.Run(ctx, &s.runnerWG)
-
-	s.runnerWG.Add(1)
 	go s.planCheckScheduler.Run(ctx, &s.runnerWG)
 
 	s.runnerWG.Add(1)
-	go s.exportArchiveCleaner.Run(ctx, &s.runnerWG)
+	go s.dataCleaner.Run(ctx, &s.runnerWG)
+
+	s.runnerWG.Add(1)
+	go s.notifyListener.Run(ctx, &s.runnerWG)
 
 	s.runnerWG.Add(1)
 	mmm := monitor.NewMemoryMonitor(s.profile)
 	go mmm.Run(ctx, &s.runnerWG)
+
+	// Check workspace setting and set audit logger runtime flag
+	workspaceProfile, err := s.store.GetWorkspaceProfileSetting(ctx)
+	if err == nil && workspaceProfile.GetEnableAuditLogStdout() {
+		// Validate license before enabling (prevents usage after license downgrade/expiry)
+		if err := s.licenseService.IsFeatureEnabled(v1pb.PlanFeature_FEATURE_AUDIT_LOG); err != nil {
+			slog.Warn("audit logging enabled in workspace settings but license insufficient, keeping disabled",
+				log.BBError(err))
+		} else {
+			s.profile.RuntimeEnableAuditLogStdout.Store(true)
+			slog.Info("audit logging to stdout enabled via workspace setting")
+		}
+	}
 
 	address := fmt.Sprintf(":%d", port)
 	listener, err := net.Listen("tcp", address)
@@ -258,7 +268,9 @@ func (s *Server) Run(ctx context.Context, port int) error {
 
 	go func() {
 		if err := s.echoServer.StartH2CServer(address, &http2.Server{}); err != nil {
-			slog.Error("http server listen error", log.BBError(err))
+			if !errors.Is(err, http.ErrServerClosed) {
+				slog.Error("http server listen error", log.BBError(err))
+			}
 		}
 	}()
 
@@ -269,11 +281,6 @@ func (s *Server) Run(ctx context.Context, port int) error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	slog.Info("Stopping Bytebase...")
 	slog.Info("Stopping web server...")
-
-	// Close the metric reporter
-	if s.metricReporter != nil {
-		s.metricReporter.Close()
-	}
 
 	ctx, cancel := context.WithTimeout(ctx, gracefulShutdownPeriod)
 	defer cancel()

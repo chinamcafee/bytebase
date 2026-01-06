@@ -23,7 +23,8 @@
     "sentence": {
       "verb-type-target-by-people": "{verb} {type} {target}",
       "verb-type-target-by-system-bot": "{type} {target} {verb}",
-      "changed-x-link": "đã thay đổi {name}. {link}"
+      "changed-x-link": "đã thay đổi {name}. {link}",
+      "modified-sql-of-spec-link": "Đã sửa đổi SQL của {spec}. {link}"
     }
   },
   "settings": {
@@ -114,14 +115,6 @@
       "FEATURE_SCHEMA_DRIFT_DETECTION": {
         "title": "Phát hiện độ lệch schema",
         "desc": "Phát hiện các thay đổi schema ngoài luồng và báo cáo sự khác biệt."
-      },
-      "FEATURE_CHANGELIST": {
-        "title": "Danh sách thay đổi",
-        "desc": "Nhóm và quản lý nhiều thay đổi cơ sở dữ liệu cùng nhau."
-      },
-      "FEATURE_SCHEMA_TEMPLATE": {
-        "title": "Mẫu schema",
-        "desc": "Tạo mẫu trường có thể tái sử dụng cho thiết kế schema nhất quán."
       },
       "FEATURE_ROLLOUT_POLICY": {
         "title": "Chính sách triển khai",
@@ -279,9 +272,9 @@
         "title": "Đồng bộ thư mục",
         "desc": "Đồng bộ người dùng và nhóm từ Entra ID vào Bytebase."
       },
-      "FEATURE_SIGN_IN_FREQUENCY_CONTROL": {
-        "title": "Kiểm soát tần suất đăng nhập",
-        "desc": "Cấu hình tần suất người dùng phải xác thực lại."
+      "FEATURE_TOKEN_DURATION_CONTROL": {
+        "title": "Kiểm soát thời lượng token",
+        "desc": "Cấu hình thời lượng token truy cập và token làm mới."
       },
       "FEATURE_EXTERNAL_SECRET_MANAGER": {
         "title": "Trình quản lý bí mật bên ngoài",
@@ -359,7 +352,6 @@
     "project": "Dự án",
     "idp": "Nhà cung cấp danh tính",
     "database-group": "Nhóm cơ sở dữ liệu",
-    "changelist": "Danh sách thay đổi",
     "review-config": "Cấu hình đánh giá",
     "role": "Vai trò"
   }

@@ -7,14 +7,16 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/antlr4-go/antlr/v4"
-	"github.com/pkg/errors"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/antlr4-go/antlr/v4"
+
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -23,7 +25,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleTableNoDuplicateIndex, &TableNoDuplicateIndexAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_TABLE_NO_DUPLICATE_INDEX, &TableNoDuplicateIndexAdvisor{})
 }
 
 // TableNoDuplicateIndexAdvisor is the advisor checking for no duplicate index in table.
@@ -32,26 +34,28 @@ type TableNoDuplicateIndexAdvisor struct {
 
 // Check checks for no duplicate index in table.
 func (*TableNoDuplicateIndexAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parser result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewTableNoDuplicateIndexRule(level, string(checkCtx.Rule.Type))
+	rule := NewTableNoDuplicateIndexRule(level, checkCtx.Rule.Type.String())
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -134,7 +138,7 @@ func (r *TableNoDuplicateIndexRule) checkCreateTable(ctx *mysql.CreateTableConte
 	if index := hasDuplicateIndexes(r.indexList); index != nil {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.DuplicateIndexInTable.Int32(),
+			Code:          code.DuplicateIndexInTable.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("`%s` has duplicate index `%s`", tableName, index.indexName),
 			StartPosition: common.ConvertANTLRLineToPosition(index.line),
@@ -165,7 +169,7 @@ func (r *TableNoDuplicateIndexRule) checkAlterTable(ctx *mysql.AlterTableContext
 	if index := hasDuplicateIndexes(r.indexList); index != nil {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.DuplicateIndexInTable.Int32(),
+			Code:          code.DuplicateIndexInTable.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("`%s` has duplicate index `%s`", tableName, index.indexName),
 			StartPosition: common.ConvertANTLRLineToPosition(index.line),
@@ -247,7 +251,7 @@ func (r *TableNoDuplicateIndexRule) checkCreateIndex(ctx *mysql.CreateIndexConte
 	if index := hasDuplicateIndexes(r.indexList); index != nil {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.DuplicateIndexInTable.Int32(),
+			Code:          code.DuplicateIndexInTable.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("`%s` has duplicate index `%s`", tableName, index.indexName),
 			StartPosition: common.ConvertANTLRLineToPosition(index.line),

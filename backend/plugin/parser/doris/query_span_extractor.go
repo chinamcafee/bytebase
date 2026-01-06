@@ -5,7 +5,8 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/doris-parser"
+	parser "github.com/bytebase/parser/doris"
+	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
@@ -30,19 +31,23 @@ func newQuerySpanExtractor(database string, gCtx base.GetQuerySpanContext, ignor
 
 func (q *querySpanExtractor) getQuerySpan(ctx context.Context, statement string) (*base.QuerySpan, error) {
 	q.ctx = ctx
-	parseResult, err := ParseDorisSQL(statement)
+	antlrASTs, err := ParseDorisSQL(statement)
 	if err != nil {
 		return nil, err
 	}
 
-	if parseResult == nil {
+	if len(antlrASTs) == 0 {
 		return &base.QuerySpan{
 			SourceColumns: base.SourceColumnSet{},
 			Results:       []base.QuerySpanResult{},
 		}, nil
 	}
+	if len(antlrASTs) != 1 {
+		return nil, errors.Errorf("expecting only one statement to get query span, but got %d", len(antlrASTs))
+	}
 
-	accessTables := getAccessTables(q.defaultDatabase, parseResult, q.ctes, q.gCtx, q.ignoreCaseSensitive)
+	antlrAST := antlrASTs[0]
+	accessTables := getAccessTables(q.defaultDatabase, antlrAST, q.ctes, q.gCtx, q.ignoreCaseSensitive)
 
 	// We do not support simultaneous access to the system table and the user table
 	// because we do not synchronize the schema of the system table.
@@ -57,7 +62,7 @@ func (q *querySpanExtractor) getQuerySpan(ctx context.Context, statement string)
 		allSystems: allSystems,
 		result:     base.QueryTypeUnknown,
 	}
-	antlr.ParseTreeWalkerDefault.Walk(queryTypeListener, parseResult.Tree)
+	antlr.ParseTreeWalkerDefault.Walk(queryTypeListener, antlrAST.Tree)
 
 	return &base.QuerySpan{
 		Type:          queryTypeListener.result,
@@ -66,10 +71,10 @@ func (q *querySpanExtractor) getQuerySpan(ctx context.Context, statement string)
 	}, nil
 }
 
-func getAccessTables(database string, parseResult *ParseResult, ctes map[string]bool, gCtx base.GetQuerySpanContext, ignoreCaseSensitive bool) base.SourceColumnSet {
+func getAccessTables(database string, antlrAST *base.ANTLRAST, ctes map[string]bool, gCtx base.GetQuerySpanContext, ignoreCaseSensitive bool) base.SourceColumnSet {
 	// First, extract CTEs from the query
 	cteListener := newCTEListener()
-	antlr.ParseTreeWalkerDefault.Walk(cteListener, parseResult.Tree)
+	antlr.ParseTreeWalkerDefault.Walk(cteListener, antlrAST.Tree)
 
 	// Merge extracted CTEs with any existing ones
 	for cte := range cteListener.ctes {
@@ -77,13 +82,13 @@ func getAccessTables(database string, parseResult *ParseResult, ctes map[string]
 	}
 
 	accessTableListener := newAccessTableListener(database, ctes, gCtx, ignoreCaseSensitive)
-	antlr.ParseTreeWalkerDefault.Walk(accessTableListener, parseResult.Tree)
+	antlr.ParseTreeWalkerDefault.Walk(accessTableListener, antlrAST.Tree)
 
 	return accessTableListener.sourceColumnSet
 }
 
 type accessTableListener struct {
-	*parser.BaseDorisSQLListener
+	*parser.BaseDorisParserListener
 
 	defaultDatabase     string
 	sourceColumnSet     base.SourceColumnSet
@@ -102,12 +107,18 @@ func newAccessTableListener(database string, ctes map[string]bool, gCtx base.Get
 	}
 }
 
-func (l *accessTableListener) EnterTableAtom(ctx *parser.TableAtomContext) {
+// EnterTableName is called when entering a tableName production.
+func (l *accessTableListener) EnterTableName(ctx *parser.TableNameContext) {
 	if ctx == nil {
 		return
 	}
 
-	list := NormalizeQualifiedName(ctx.QualifiedName())
+	multipart := ctx.MultipartIdentifier()
+	if multipart == nil {
+		return
+	}
+
+	list := NormalizeMultipartIdentifier(multipart)
 	switch len(list) {
 	case 1:
 		// Check if this is a CTE reference
@@ -132,7 +143,7 @@ func (l *accessTableListener) EnterTableAtom(ctx *parser.TableAtomContext) {
 
 // cteListener extracts CTE names from WITH clauses
 type cteListener struct {
-	*parser.BaseDorisSQLListener
+	*parser.BaseDorisParserListener
 
 	ctes map[string]bool
 }
@@ -143,30 +154,22 @@ func newCTEListener() *cteListener {
 	}
 }
 
-// EnterWithClause is called when entering a WITH clause
-func (l *cteListener) EnterWithClause(ctx *parser.WithClauseContext) {
+// EnterCte is called when entering a CTE production.
+func (l *cteListener) EnterCte(ctx *parser.CteContext) {
 	if ctx == nil {
 		return
 	}
 
 	// Extract all CTEs from the WITH clause
-	for i := 0; i < ctx.GetChildCount(); i++ {
-		child := ctx.GetChild(i)
-		if cte, ok := child.(*parser.CommonTableExpressionContext); ok {
-			l.extractCTEName(cte)
+	for _, aliasQuery := range ctx.AllAliasQuery() {
+		if aliasQuery == nil {
+			continue
 		}
-	}
-}
-
-// extractCTEName extracts the CTE name from a CommonTableExpression context
-func (l *cteListener) extractCTEName(ctx *parser.CommonTableExpressionContext) {
-	if ctx == nil {
-		return
-	}
-
-	// Get the CTE identifier
-	if ctx.Identifier() != nil {
-		cteName := NormalizeIdentifier(ctx.Identifier())
+		id := aliasQuery.Identifier()
+		if id == nil {
+			continue
+		}
+		cteName := NormalizeIdentifier(id)
 		l.ctes[cteName] = true
 	}
 }

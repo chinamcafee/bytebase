@@ -2,37 +2,41 @@ import { create } from "@bufbuild/protobuf";
 import { createContextValues } from "@connectrpc/connect";
 import { uniq } from "lodash-es";
 import { defineStore } from "pinia";
-import { computed, reactive, ref, unref, watch, markRaw } from "vue";
-import { databaseServiceClientConnect } from "@/grpcweb";
-import { silentContextKey } from "@/grpcweb/context-key";
+import { computed, markRaw, reactive, ref, unref, watch } from "vue";
+import { databaseServiceClientConnect } from "@/connect";
+import { silentContextKey } from "@/connect/context-key";
 import type { ComposedDatabase, MaybeRef } from "@/types";
 import {
-  isValidProjectName,
-  isValidInstanceName,
   isValidDatabaseName,
   isValidEnvironmentName,
+  isValidInstanceName,
+  isValidProjectName,
   unknownDatabase,
+  unknownEnvironment,
   unknownInstanceResource,
 } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
-import {
-  GetDatabaseRequestSchema,
-  ListDatabasesRequestSchema,
-  BatchGetDatabasesRequestSchema,
-  BatchUpdateDatabasesRequestSchema,
-  UpdateDatabaseRequestSchema,
-  BatchSyncDatabasesRequestSchema,
-  SyncDatabaseRequestSchema,
-  GetDatabaseSchemaRequestSchema,
-  DiffSchemaRequestSchema,
-} from "@/types/proto-es/v1/database_service_pb";
 import type {
-  Database,
-  UpdateDatabaseRequest,
-  DiffSchemaRequest,
   BatchUpdateDatabasesRequest,
+  Database,
+  DiffSchemaRequest,
+  UpdateDatabaseRequest,
 } from "@/types/proto-es/v1/database_service_pb";
-import type { Instance } from "@/types/proto-es/v1/instance_service_pb";
+import {
+  BatchGetDatabasesRequestSchema,
+  BatchSyncDatabasesRequestSchema,
+  BatchUpdateDatabasesRequestSchema,
+  DiffSchemaRequestSchema,
+  GetDatabaseRequestSchema,
+  GetDatabaseSchemaRequestSchema,
+  ListDatabasesRequestSchema,
+  SyncDatabaseRequestSchema,
+  UpdateDatabaseRequestSchema,
+} from "@/types/proto-es/v1/database_service_pb";
+import {
+  type Instance,
+  InstanceResourceSchema,
+} from "@/types/proto-es/v1/instance_service_pb";
 import { extractDatabaseResourceName, isNullOrUndefined } from "@/utils";
 import {
   instanceNamePrefix,
@@ -41,7 +45,7 @@ import {
 } from "./common";
 import { useDBSchemaV1Store } from "./dbSchema";
 import { useEnvironmentV1Store } from "./environment";
-import { batchGetOrFetchProjects, useProjectV1Store } from "./project";
+import { useProjectV1Store } from "./project";
 
 export interface DatabaseFilter {
   project?: string;
@@ -112,10 +116,10 @@ const getListDatabaseFilter = (filter: DatabaseFilter): string => {
   if (isValidInstanceName(filter.instance)) {
     params.push(`instance == "${filter.instance}"`);
   }
-  if (filter.environment !== undefined) {
-    params.push(
-      `environment == "${isValidEnvironmentName(filter.environment) ? filter.environment : ""}"`
-    );
+  if (filter.environment === unknownEnvironment().name) {
+    params.push(`environment == ""`);
+  } else if (isValidEnvironmentName(filter.environment)) {
+    params.push(`environment == "${filter.environment}"`);
   }
   if (filter.excludeUnassigned) {
     params.push(`exclude_unassigned == true`);
@@ -182,6 +186,7 @@ export const useDatabaseV1Store = defineStore("database_v1", () => {
     parent: string;
     filter?: DatabaseFilter;
     skipCacheRemoval?: boolean;
+    orderBy?: string;
   }): Promise<{
     databases: ComposedDatabase[];
     nextPageToken: string;
@@ -197,6 +202,7 @@ export const useDatabaseV1Store = defineStore("database_v1", () => {
       parent: params.parent,
       pageSize: params.pageSize,
       pageToken: params.pageToken,
+      orderBy: params.orderBy,
       showDeleted: params.filter?.showDeleted,
       filter: getListDatabaseFilter(params.filter ?? {}),
     });
@@ -229,22 +235,14 @@ export const useDatabaseV1Store = defineStore("database_v1", () => {
       if (database.instance !== instance.name) {
         continue;
       }
-      // Conversion boundary: Extract InstanceResource fields from Instance
-      database.instanceResource = {
+      database.instanceResource = create(InstanceResourceSchema, {
         name: instance.name,
-        uid: "",
-        state: instance.state,
         title: instance.title,
         engine: instance.engine,
-        externalLink: "",
-        maximumConnections: 0,
         environment: instance.environment,
-        activation: true,
+        activation: instance.activation,
         dataSources: [],
-        lastSyncTime: undefined,
-        syncInterval: undefined,
-        options: undefined,
-      } as any; // Cross-service boundary conversion
+      });
     }
   };
   const batchSyncDatabases = async (databases: string[]) => {
@@ -292,9 +290,14 @@ export const useDatabaseV1Store = defineStore("database_v1", () => {
     databaseRequestCache.set(name, request);
     return request;
   };
+
   const batchGetDatabases = async (names: string[], silent = true) => {
+    const validNames = names.filter(isValidDatabaseName);
+    if (validNames.length === 0) {
+      return [];
+    }
     const request = create(BatchGetDatabasesRequestSchema, {
-      names,
+      names: validNames,
     });
     const response = await databaseServiceClientConnect.batchGetDatabases(
       request,
@@ -306,6 +309,22 @@ export const useDatabaseV1Store = defineStore("database_v1", () => {
     const composed = await upsertDatabaseMap(databases);
     return composed;
   };
+
+  const batchGetOrFetchDatabases = async (databaseNames: string[]) => {
+    const validDatabaseList = uniq(databaseNames).filter(isValidDatabaseName);
+    const pendingFetch = validDatabaseList.filter((databaseName) => {
+      if (
+        getDatabaseByName(databaseName) &&
+        isValidDatabaseName(getDatabaseByName(databaseName).name)
+      ) {
+        return false;
+      }
+      return true;
+    });
+    await batchGetDatabases(pendingFetch);
+    return validDatabaseList.map(getDatabaseByName);
+  };
+
   const batchUpdateDatabases = async (params: BatchUpdateDatabasesRequest) => {
     const request = create(BatchUpdateDatabasesRequestSchema, {
       parent: params.parent,
@@ -357,7 +376,7 @@ export const useDatabaseV1Store = defineStore("database_v1", () => {
     getDatabaseByName,
     fetchDatabaseByName,
     getOrFetchDatabaseByName,
-    batchGetDatabases,
+    batchGetOrFetchDatabases,
     batchUpdateDatabases,
     updateDatabase,
     fetchDatabaseSchema,
@@ -388,30 +407,13 @@ export const useDatabaseV1ByName = (name: MaybeRef<string>) => {
   };
 };
 
-export const batchGetOrFetchDatabases = async (databaseNames: string[]) => {
-  const store = useDatabaseV1Store();
-  const distinctDatabaseList = uniq(databaseNames).filter((databaseName) => {
-    if (!databaseName || !isValidDatabaseName(databaseName)) {
-      return false;
-    }
-    if (
-      store.getDatabaseByName(databaseName) &&
-      isValidDatabaseName(store.getDatabaseByName(databaseName).name)
-    ) {
-      return false;
-    }
-    return true;
-  });
-  if (distinctDatabaseList.length > 0) {
-    await store.batchGetDatabases(distinctDatabaseList);
-  }
-};
-
 export const batchComposeDatabase = async (databaseList: Database[]) => {
   const environmentV1Store = useEnvironmentV1Store();
   const projectV1Store = useProjectV1Store();
 
-  await batchGetOrFetchProjects(databaseList.map((db) => db.project));
+  await projectV1Store.batchGetOrFetchProjects(
+    databaseList.map((db) => db.project)
+  );
 
   return databaseList.map((db) => {
     const composed = db as ComposedDatabase;

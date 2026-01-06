@@ -23,7 +23,8 @@
     "sentence": {
       "verb-type-target-by-people": "{verb} {type} {target}",
       "verb-type-target-by-system-bot": "{type} {target} {verb}",
-      "changed-x-link": "{name} が変更されました。 {link}"
+      "changed-x-link": "{name} が変更されました。 {link}",
+      "modified-sql-of-spec-link": "{spec} の SQL が変更されました。{link}"
     }
   },
   "settings": {
@@ -114,14 +115,6 @@
       "FEATURE_SCHEMA_DRIFT_DETECTION": {
         "title": "スキーマドリフト検出",
         "desc": "帯域外のスキーマ変更を検出し、不一致を報告します。"
-      },
-      "FEATURE_CHANGELIST": {
-        "title": "変更リスト",
-        "desc": "複数のデータベース変更をまとめてグループ化し管理します。"
-      },
-      "FEATURE_SCHEMA_TEMPLATE": {
-        "title": "スキーマテンプレート",
-        "desc": "一貫したスキーマ設計のための再利用可能なフィールドテンプレートを作成します。"
       },
       "FEATURE_ROLLOUT_POLICY": {
         "title": "ロールアウトポリシー",
@@ -279,9 +272,9 @@
         "title": "ディレクトリ同期",
         "desc": "Entra IDからBytebaseにユーザーとグループを同期します。"
       },
-      "FEATURE_SIGN_IN_FREQUENCY_CONTROL": {
-        "title": "サインイン頻度制御",
-        "desc": "ユーザーが再認証する頻度を設定します。"
+      "FEATURE_TOKEN_DURATION_CONTROL": {
+        "title": "トークン期間制御",
+        "desc": "アクセストークンとリフレッシュトークンの有効期間を設定します。"
       },
       "FEATURE_EXTERNAL_SECRET_MANAGER": {
         "title": "外部シークレットマネージャー",
@@ -359,7 +352,6 @@
     "project": "プロジェクト",
     "idp": "アイデンティティプロバイダー",
     "database-group": "データベースのグループ化",
-    "changelist": "変更リスト",
     "review-config": "設定を確認する",
     "role": "役割"
   }

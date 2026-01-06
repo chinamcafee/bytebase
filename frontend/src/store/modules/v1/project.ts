@@ -4,34 +4,34 @@ import { orderBy, uniq } from "lodash-es";
 import { defineStore } from "pinia";
 import { computed, reactive, ref, unref, watchEffect } from "vue";
 import { useRoute } from "vue-router";
-import { projectServiceClientConnect } from "@/grpcweb";
-import { silentContextKey } from "@/grpcweb/context-key";
+import { projectServiceClientConnect } from "@/connect";
+import { silentContextKey } from "@/connect/context-key";
 import type { MaybeRef, ResourceId } from "@/types";
 import {
-  emptyProject,
-  EMPTY_PROJECT_NAME,
-  unknownProject,
-  defaultProject,
-  UNKNOWN_PROJECT_NAME,
   DEFAULT_PROJECT_NAME,
+  defaultProject,
+  EMPTY_PROJECT_NAME,
+  emptyProject,
   isValidProjectName,
+  UNKNOWN_PROJECT_NAME,
+  unknownProject,
 } from "@/types";
 import { State } from "@/types/proto-es/v1/common_pb";
 import {
+  BatchDeleteProjectsRequestSchema,
+  BatchGetProjectsRequestSchema,
+  CreateProjectRequestSchema,
+  DeleteProjectRequestSchema,
   GetProjectRequestSchema,
   ListProjectsRequestSchema,
-  SearchProjectsRequestSchema,
-  CreateProjectRequestSchema,
-  UpdateProjectRequestSchema,
-  DeleteProjectRequestSchema,
-  BatchDeleteProjectsRequestSchema,
-  UndeleteProjectRequestSchema,
   type Project,
+  SearchProjectsRequestSchema,
+  UndeleteProjectRequestSchema,
+  UpdateProjectRequestSchema,
 } from "@/types/proto-es/v1/project_service_pb";
 import { hasWorkspacePermissionV2 } from "@/utils";
 import { projectNamePrefix } from "./common";
 import { getLabelFilter } from "./database";
-import { useProjectIamPolicyStore } from "./projectIamPolicy";
 
 export interface ProjectFilter {
   query?: string;
@@ -87,14 +87,10 @@ export const useProjectV1Store = defineStore("project_v1", () => {
   const updateProjectCache = (project: Project) => {
     projectMapByName.set(project.name, project);
   };
-  const upsertProjectMap = async (projectList: Project[]) => {
-    await useProjectIamPolicyStore().batchGetOrFetchProjectIamPolicy(
-      projectList.map((project) => project.name)
-    );
+  const upsertProjectsCache = (projectList: Project[]) => {
     projectList.forEach((project) => {
       updateProjectCache(project);
     });
-    return projectList;
   };
   const getProjectList = (showDeleted = false) => {
     if (showDeleted) {
@@ -115,7 +111,8 @@ export const useProjectV1Store = defineStore("project_v1", () => {
     const response = await projectServiceClientConnect.getProject(request, {
       contextValues: createContextValues().set(silentContextKey, silent),
     });
-    await upsertProjectMap([response]);
+
+    upsertProjectsCache([response]);
     return response;
   };
 
@@ -124,6 +121,7 @@ export const useProjectV1Store = defineStore("project_v1", () => {
     pageToken?: string;
     silent?: boolean;
     filter?: ProjectFilter;
+    orderBy?: string;
   }): Promise<{
     projects: Project[];
     nextPageToken?: string;
@@ -143,6 +141,7 @@ export const useProjectV1Store = defineStore("project_v1", () => {
           ...params,
           pageToken,
           filter: getListProjectFilter(params.filter ?? {}),
+          orderBy: params.orderBy,
           showDeleted: params.filter?.state === State.DELETED ? true : false,
         });
         const connectResponse = await projectServiceClientConnect.listProjects(
@@ -158,6 +157,7 @@ export const useProjectV1Store = defineStore("project_v1", () => {
           ...params,
           pageToken,
           filter: getListProjectFilter(params.filter ?? {}),
+          orderBy: params.orderBy,
           showDeleted: params.filter?.state === State.DELETED ? true : false,
         });
         const connectResponse =
@@ -177,12 +177,52 @@ export const useProjectV1Store = defineStore("project_v1", () => {
       break;
     }
 
-    const composedProjects = await upsertProjectMap(response.projects);
+    upsertProjectsCache(response.projects);
 
     return {
-      projects: composedProjects,
+      projects: response.projects,
       nextPageToken: response.nextPageToken,
     };
+  };
+
+  const batchGetProjects = async (names: string[], silent = true) => {
+    const validNames = names.filter(isValidProjectName);
+    if (validNames.length === 0) {
+      return [];
+    }
+    const request = create(BatchGetProjectsRequestSchema, {
+      names: validNames,
+    });
+    const response = await projectServiceClientConnect.batchGetProjects(
+      request,
+      {
+        contextValues: createContextValues().set(silentContextKey, silent),
+      }
+    );
+    upsertProjectsCache(response.projects);
+    return response.projects;
+  };
+
+  const batchGetOrFetchProjects = async (projectNames: string[]) => {
+    const validProjectList = uniq(projectNames).filter((projectName) => {
+      if (
+        !projectName ||
+        !isValidProjectName(projectName) ||
+        projectName === DEFAULT_PROJECT_NAME
+      ) {
+        return false;
+      }
+      return true;
+    });
+    const pendingFetch = validProjectList.filter((projectName) => {
+      const project = getProjectByName(projectName);
+      if (isValidProjectName(project.name)) {
+        return false;
+      }
+      return true;
+    });
+    await batchGetProjects(pendingFetch, true /* silent */);
+    return validProjectList.map(getProjectByName);
   };
 
   const getOrFetchProjectByName = async (name: string, silent = true) => {
@@ -193,6 +233,7 @@ export const useProjectV1Store = defineStore("project_v1", () => {
     if (!isValidProjectName(name)) {
       return unknownProject();
     }
+
     const cached = projectRequestCache.get(name);
     if (cached) return cached;
     const request = fetchProjectByName(name, silent);
@@ -205,8 +246,8 @@ export const useProjectV1Store = defineStore("project_v1", () => {
       projectId: resourceId,
     });
     const response = await projectServiceClientConnect.createProject(request);
-    const composed = await upsertProjectMap([response]);
-    return composed[0];
+    upsertProjectsCache([response]);
+    return response;
   };
   const updateProject = async (project: Project, updateMask: string[]) => {
     const request = create(UpdateProjectRequestSchema, {
@@ -214,8 +255,8 @@ export const useProjectV1Store = defineStore("project_v1", () => {
       updateMask: { paths: updateMask },
     });
     const response = await projectServiceClientConnect.updateProject(request);
-    const composed = await upsertProjectMap([response]);
-    return composed[0];
+    upsertProjectsCache([project]);
+    return response;
   };
   const archiveProject = async (project: Project, force = false) => {
     const request = create(DeleteProjectRequestSchema, {
@@ -224,7 +265,7 @@ export const useProjectV1Store = defineStore("project_v1", () => {
     });
     await projectServiceClientConnect.deleteProject(request);
     project.state = State.DELETED;
-    await upsertProjectMap([project]);
+    upsertProjectsCache([project]);
   };
   const deleteProject = async (project: string) => {
     const request = create(DeleteProjectRequestSchema, {
@@ -251,21 +292,18 @@ export const useProjectV1Store = defineStore("project_v1", () => {
       })
       .filter((p): p is Project => p !== null);
 
-    if (projects.length > 0) {
-      await upsertProjectMap(projects);
-    }
+    upsertProjectsCache(projects);
   };
   const restoreProject = async (project: Project) => {
     const request = create(UndeleteProjectRequestSchema, {
       name: project.name,
     });
     const response = await projectServiceClientConnect.undeleteProject(request);
-    await upsertProjectMap([response]);
+    upsertProjectsCache([response]);
   };
 
   return {
     reset,
-    upsertProjectMap,
     getProjectList,
     getProjectByName,
     getOrFetchProjectByName,
@@ -277,6 +315,7 @@ export const useProjectV1Store = defineStore("project_v1", () => {
     restoreProject,
     updateProjectCache,
     fetchProjectList,
+    batchGetOrFetchProjects,
   };
 });
 
@@ -303,22 +342,4 @@ export const useCurrentProjectV1 = () => {
       : unknownProject().name
   );
   return useProjectByName(projectName);
-};
-
-export const batchGetOrFetchProjects = async (projectNames: string[]) => {
-  const store = useProjectV1Store();
-
-  const distinctProjectList = uniq(projectNames);
-  await Promise.all(
-    distinctProjectList.map((projectName) => {
-      if (
-        !projectName ||
-        !isValidProjectName(projectName) ||
-        projectName === DEFAULT_PROJECT_NAME
-      ) {
-        return;
-      }
-      return store.getOrFetchProjectByName(projectName, true /* silent */);
-    })
-  );
 };

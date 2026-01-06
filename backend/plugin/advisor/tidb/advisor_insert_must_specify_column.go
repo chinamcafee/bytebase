@@ -7,11 +7,11 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 )
 
 var (
@@ -20,7 +20,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleStatementInsertMustSpecifyColumn, &InsertMustSpecifyColumnAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_STATEMENT_INSERT_MUST_SPECIFY_COLUMN, &InsertMustSpecifyColumnAdvisor{})
 }
 
 // InsertMustSpecifyColumnAdvisor is the advisor checking for to enforce column specified.
@@ -29,9 +29,10 @@ type InsertMustSpecifyColumnAdvisor struct {
 
 // Check checks for to enforce column specified.
 func (*InsertMustSpecifyColumnAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -40,7 +41,7 @@ func (*InsertMustSpecifyColumnAdvisor) Check(_ context.Context, checkCtx advisor
 	}
 	checker := &insertMustSpecifyColumnChecker{
 		level: level,
-		title: string(checkCtx.Rule.Type),
+		title: checkCtx.Rule.Type.String(),
 	}
 
 	for _, stmt := range stmtList {
@@ -66,7 +67,7 @@ func (checker *insertMustSpecifyColumnChecker) Enter(in ast.Node) (ast.Node, boo
 		if node.Columns == nil {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.InsertNotSpecifyColumn.Int32(),
+				Code:          code.InsertNotSpecifyColumn.Int32(),
 				Title:         checker.title,
 				Content:       fmt.Sprintf("The INSERT statement must specify columns but \"%s\" does not", checker.text),
 				StartPosition: common.ConvertANTLRLineToPosition(checker.line),

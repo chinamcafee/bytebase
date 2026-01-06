@@ -17,19 +17,12 @@ func TestExtractChangedResources(t *testing.T) {
 	INSERT INTO t1 (c1) VALUES (1), (5);
 	UPDATE t1 SET c1 = 5;
 	`
-	changedResources := model.NewChangedResources(nil /* dbSchema */)
+	changedResources := model.NewChangedResources(nil /* dbMetadata */)
 	changedResources.AddTable(
 		"DB",
 		"dbo",
 		&storepb.ChangedResourceTable{
 			Name: "t1",
-			Ranges: []*storepb.Range{
-				{Start: 0, End: 25},
-				{Start: 27, End: 41},
-				{Start: 43, End: 71},
-				{Start: 73, End: 109},
-				{Start: 111, End: 132},
-			},
 		},
 		true,
 	)
@@ -42,9 +35,10 @@ func TestExtractChangedResources(t *testing.T) {
 		InsertCount: 2,
 	}
 
-	asts, err := ParseTSQL(statement)
+	asts, err := base.Parse(storepb.Engine_MSSQL, statement)
 	require.NoError(t, err)
-	got, err := extractChangedResources("DB", "dbo", nil /* dbSchema */, asts.Tree, statement)
+	require.Len(t, asts, 5)
+	got, err := extractChangedResources("DB", "dbo", nil /* dbMetadata */, asts, statement)
 	require.NoError(t, err)
 	require.Equal(t, want, got)
 }

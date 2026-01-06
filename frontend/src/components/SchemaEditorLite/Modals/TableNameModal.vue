@@ -5,7 +5,7 @@
         ? $t('schema-editor.actions.create-table')
         : $t('schema-editor.actions.rename')
     "
-    class="shadow-inner outline outline-gray-200"
+    class="shadow-inner outline-solid outline-gray-200"
     @close="dismissModal"
   >
     <div class="w-72">
@@ -41,8 +41,8 @@ import { Engine } from "@/types/proto-es/v1/common_pb";
 import type {
   DatabaseMetadata,
   SchemaMetadata,
+  TableMetadata,
 } from "@/types/proto-es/v1/database_service_pb";
-import type { TableMetadata } from "@/types/proto-es/v1/database_service_pb";
 import {
   ColumnMetadataSchema,
   TableMetadataSchema,
@@ -69,14 +69,8 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const {
-  events,
-  addTab,
-  markEditStatus,
-  queuePendingScrollToTable,
-  upsertTableCatalog,
-  removeTableCatalog,
-} = useSchemaEditorContext();
+const { events, addTab, markEditStatus, queuePendingScrollToTable } =
+  useSchemaEditorContext();
 const inputRef = ref<InputInst>();
 const notificationStore = useNotificationStore();
 const mode = computed(() => {
@@ -163,21 +157,6 @@ const handleConfirmButtonClick = async () => {
     });
   } else {
     const { table } = props;
-    upsertTableCatalog(
-      {
-        database: props.database.name,
-        schema: props.schema.name,
-        table: table.name,
-      },
-      (catalog) => {
-        catalog.name = state.tableName;
-      }
-    );
-    removeTableCatalog({
-      database: props.database.name,
-      schema: props.schema.name,
-      table: table.name,
-    });
 
     table.name = state.tableName;
     events.emit("rebuild-edit-status", {

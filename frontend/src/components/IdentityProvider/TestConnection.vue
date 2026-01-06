@@ -12,7 +12,7 @@
   <NModal
     v-model:show="showClaimsDialog"
     preset="dialog"
-    class="!w-128"
+    class="w-128!"
     :show-icon="false"
   >
     <template #header>
@@ -21,12 +21,12 @@
         <span>{{ $t("identity-provider.test-connection-success") }}</span>
       </div>
     </template>
-    <div v-if="testIdentityProviderResponse" class="space-y-4">
+    <div v-if="testIdentityProviderResponse" class="flex flex-col gap-y-4">
       <p class="text-sm text-control-light">
         {{ $t("identity-provider.userinfo-description") }}
       </p>
       <div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
-        <div class="space-y-2">
+        <div class="flex flex-col gap-y-2">
           <div
             v-for="[key, value] in Object.entries(
               testIdentityProviderResponse.userInfo
@@ -47,7 +47,7 @@
         {{ $t("identity-provider.claims-description") }}
       </p>
       <div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
-        <div class="space-y-2">
+        <div class="flex flex-col gap-y-2">
           <div
             v-if="Object.keys(testIdentityProviderResponse.claims).length === 0"
             class="text-sm text-control-light italic"
@@ -91,18 +91,18 @@
 import { create } from "@bufbuild/protobuf";
 import type { ConnectError } from "@connectrpc/connect";
 import { NButton, NModal } from "naive-ui";
-import { ref, onUnmounted, watch } from "vue";
-import { identityProviderServiceClientConnect } from "@/grpcweb";
+import { onUnmounted, ref, watch } from "vue";
+import { identityProviderServiceClientConnect } from "@/connect";
 import { pushNotification } from "@/store";
 import type { OAuthWindowEventPayload } from "@/types";
 import type {
   IdentityProvider,
   TestIdentityProviderResponse,
 } from "@/types/proto-es/v1/idp_service_pb";
-import { IdentityProviderType } from "@/types/proto-es/v1/idp_service_pb";
 import {
-  TestIdentityProviderRequestSchema,
   CreateIdentityProviderRequestSchema,
+  IdentityProviderType,
+  TestIdentityProviderRequestSchema,
 } from "@/types/proto-es/v1/idp_service_pb";
 import { openWindowForSSO } from "@/utils";
 
@@ -143,14 +143,26 @@ const loginWithIdentityProviderEventListener = async (event: Event) => {
   const code = payload.code;
   try {
     isTestingInProgress.value = true;
+
+    // Send correct context type based on IdP type
+    // OIDC providers use oidcContext, OAuth2 providers use oauth2Context
+    const isOidc = props.idp.type === IdentityProviderType.OIDC;
+
     const request = create(TestIdentityProviderRequestSchema, {
       identityProvider: props.idp,
-      context: {
-        case: "oauth2Context",
-        value: {
-          code: code,
-        },
-      },
+      context: isOidc
+        ? {
+            case: "oidcContext",
+            value: {
+              code: code,
+            },
+          }
+        : {
+            case: "oauth2Context",
+            value: {
+              code: code,
+            },
+          },
     });
     const response =
       await identityProviderServiceClientConnect.testIdentityProvider(request);

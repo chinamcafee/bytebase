@@ -1,7 +1,6 @@
 package store
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -9,11 +8,6 @@ import (
 )
 
 func TestGetListPlanFilter(t *testing.T) {
-	// Create a minimal store instance for testing
-	// Note: Some tests will be limited without a full database connection
-	s := &Store{}
-	ctx := context.Background()
-
 	tests := []struct {
 		name        string
 		filter      string
@@ -31,17 +25,17 @@ func TestGetListPlanFilter(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name:     "has_pipeline filter - true",
-			filter:   `has_pipeline == true`,
-			wantSQL:  "(plan.pipeline_id IS NOT NULL)",
-			wantArgs: []any{},
+			name:     "has_rollout filter - true",
+			filter:   `has_rollout == true`,
+			wantSQL:  "(plan.config->>'hasRollout' = $1)",
+			wantArgs: []any{"true"},
 			wantErr:  false,
 		},
 		{
-			name:     "has_pipeline filter - false",
-			filter:   `has_pipeline == false`,
-			wantSQL:  "(plan.pipeline_id IS NULL)",
-			wantArgs: []any{},
+			name:     "has_rollout filter - false",
+			filter:   `has_rollout == false`,
+			wantSQL:  "((plan.config->>'hasRollout' IS NULL OR plan.config->>'hasRollout' = $1))",
+			wantArgs: []any{"false"},
 			wantErr:  false,
 		},
 		{
@@ -128,17 +122,17 @@ func TestGetListPlanFilter(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:     "AND condition with has_pipeline and has_issue",
-			filter:   `has_pipeline == true && has_issue == true`,
-			wantSQL:  "((plan.pipeline_id IS NOT NULL AND issue.id IS NOT NULL))",
-			wantArgs: []any{},
+			name:     "AND condition with has_rollout and has_issue",
+			filter:   `has_rollout == true && has_issue == true`,
+			wantSQL:  "((plan.config->>'hasRollout' = $1 AND issue.id IS NOT NULL))",
+			wantArgs: []any{"true"},
 			wantErr:  false,
 		},
 		{
 			name:     "complex AND condition",
-			filter:   `title == "Test Plan" && state == "STATE_ACTIVE" && has_pipeline == true`,
-			wantSQL:  "(((plan.name = $1 AND plan.deleted = $2) AND plan.pipeline_id IS NOT NULL))",
-			wantArgs: []any{"Test Plan", false},
+			filter:   `title == "Test Plan" && state == "STATE_ACTIVE" && has_rollout == true`,
+			wantSQL:  "(((plan.name = $1 AND plan.deleted = $2) AND plan.config->>'hasRollout' = $3))",
+			wantArgs: []any{"Test Plan", false, "true"},
 			wantErr:  false,
 		},
 		{
@@ -173,10 +167,10 @@ func TestGetListPlanFilter(t *testing.T) {
 			errContains: "invalid spec_type value",
 		},
 		{
-			name:        "has_pipeline with non-bool value",
-			filter:      `has_pipeline == "true"`,
+			name:        "has_rollout with non-bool value",
+			filter:      `has_rollout == "true"`,
 			wantErr:     true,
-			errContains: `"has_pipeline" should be bool`,
+			errContains: `"has_rollout" should be bool`,
 		},
 		{
 			name:        "has_issue with non-bool value",
@@ -204,7 +198,7 @@ func TestGetListPlanFilter(t *testing.T) {
 				t.Skip("Test requires database connection")
 			}
 
-			q, err := s.GetListPlanFilter(ctx, tt.filter)
+			q, err := GetListPlanFilter(tt.filter)
 
 			if tt.wantErr {
 				require.Error(t, err)

@@ -46,7 +46,7 @@ func TestSchemaAndDataUpdate(t *testing.T) {
 
 	// Create an issue that creates a database.
 	databaseName := "testSchemaUpdate"
-	err = ctl.createDatabaseV2(ctx, ctl.project, instance, nil /* environment */, databaseName, "")
+	err = ctl.createDatabase(ctx, ctl.project, instance, nil /* environment */, databaseName, "")
 	a.NoError(err)
 
 	databaseResp, err := ctl.databaseServiceClient.GetDatabase(ctx, connect.NewRequest(&v1pb.GetDatabaseRequest{
@@ -58,7 +58,6 @@ func TestSchemaAndDataUpdate(t *testing.T) {
 	sheetResp, err := ctl.sheetServiceClient.CreateSheet(ctx, connect.NewRequest(&v1pb.CreateSheetRequest{
 		Parent: ctl.project.Name,
 		Sheet: &v1pb.Sheet{
-			Title:   "migration statement sheet",
 			Content: []byte(migrationStatement1),
 		},
 	}))
@@ -66,7 +65,7 @@ func TestSchemaAndDataUpdate(t *testing.T) {
 	sheet := sheetResp.Msg
 
 	// Create an issue that updates database schema.
-	err = ctl.changeDatabase(ctx, ctl.project, database, sheet, v1pb.MigrationType_DDL)
+	err = ctl.changeDatabase(ctx, ctl.project, database, sheet, false)
 	a.NoError(err)
 
 	// Query schema.
@@ -78,7 +77,6 @@ func TestSchemaAndDataUpdate(t *testing.T) {
 	sheetResp, err = ctl.sheetServiceClient.CreateSheet(ctx, connect.NewRequest(&v1pb.CreateSheetRequest{
 		Parent: ctl.project.Name,
 		Sheet: &v1pb.Sheet{
-			Title:   "dataUpdateStatement",
 			Content: []byte(dataUpdateStatement),
 		},
 	}))
@@ -86,7 +84,7 @@ func TestSchemaAndDataUpdate(t *testing.T) {
 	sheet = sheetResp.Msg
 
 	// Create an issue that updates database data.
-	err = ctl.changeDatabase(ctx, ctl.project, database, sheet, v1pb.MigrationType_DML)
+	err = ctl.changeDatabase(ctx, ctl.project, database, sheet, false)
 	a.NoError(err)
 
 	resp, err := ctl.databaseServiceClient.ListChangelogs(ctx, connect.NewRequest(&v1pb.ListChangelogsRequest{
@@ -95,37 +93,19 @@ func TestSchemaAndDataUpdate(t *testing.T) {
 	}))
 	a.NoError(err)
 	changelogs := resp.Msg.Changelogs
-	wantChangelogs := []*v1pb.Changelog{
-		{
-			Type:          v1pb.Changelog_MIGRATE,
-			MigrationType: v1pb.Changelog_DML,
-			Status:        v1pb.Changelog_DONE,
-			Schema:        dumpedSchema,
-			PrevSchema:    dumpedSchema,
-			Version:       "",
-		},
-		{
-			Type:          v1pb.Changelog_MIGRATE,
-			MigrationType: v1pb.Changelog_DDL,
-			Status:        v1pb.Changelog_DONE,
-			Schema:        dumpedSchema,
-			PrevSchema:    "",
-			Version:       "",
-		},
-	}
-	a.Equal(len(wantChangelogs), len(changelogs))
-	for i, changelog := range changelogs {
-		got := &v1pb.Changelog{
-			Type:          changelog.Type,
-			MigrationType: changelog.MigrationType,
-			Status:        changelog.Status,
-			Schema:        changelog.Schema,
-			PrevSchema:    changelog.PrevSchema,
-			Version:       changelog.Version,
-		}
-		want := wantChangelogs[i]
-		a.Equal(want, got)
-	}
+	// Expect 3 changelogs: 2 migrations + baseline (auto-created on first migration)
+	a.Equal(3, len(changelogs))
+	// First changelog should be the data update migration (most recent)
+	a.Equal(v1pb.Changelog_MIGRATE, changelogs[0].Type)
+	a.Equal(v1pb.Changelog_DONE, changelogs[0].Status)
+	a.Equal(dumpedSchema, changelogs[0].Schema)
+	// Second changelog should be the schema migration
+	a.Equal(v1pb.Changelog_MIGRATE, changelogs[1].Type)
+	a.Equal(v1pb.Changelog_DONE, changelogs[1].Status)
+	a.Equal(dumpedSchema, changelogs[1].Schema)
+	// Third changelog should be the baseline
+	a.Equal(v1pb.Changelog_BASELINE, changelogs[2].Type)
+	a.Equal(v1pb.Changelog_DONE, changelogs[2].Status)
 }
 
 func TestGetLatestSchema(t *testing.T) {
@@ -304,7 +284,7 @@ CREATE TABLE "public"."book" (
 				a.FailNow("unsupported db type")
 			}
 
-			err = ctl.createDatabaseV2(ctx, ctl.project, instance, nil, test.databaseName, "postgres")
+			err = ctl.createDatabase(ctx, ctl.project, instance, nil, test.databaseName, "postgres")
 			a.NoError(err)
 
 			databaseResp, err := ctl.databaseServiceClient.GetDatabase(ctx, connect.NewRequest(&v1pb.GetDatabaseRequest{
@@ -316,7 +296,6 @@ CREATE TABLE "public"."book" (
 			ddlSheetResp, err := ctl.sheetServiceClient.CreateSheet(ctx, connect.NewRequest(&v1pb.CreateSheetRequest{
 				Parent: ctl.project.Name,
 				Sheet: &v1pb.Sheet{
-					Title:   "test ddl",
 					Content: []byte(test.ddl),
 				},
 			}))
@@ -324,7 +303,7 @@ CREATE TABLE "public"."book" (
 			ddlSheet := ddlSheetResp.Msg
 
 			// Create an issue that updates database schema.
-			err = ctl.changeDatabase(ctx, ctl.project, database, ddlSheet, v1pb.MigrationType_DDL)
+			err = ctl.changeDatabase(ctx, ctl.project, database, ddlSheet, false)
 			a.NoError(err)
 
 			latestSchemaResp, err := ctl.databaseServiceClient.GetDatabaseSchema(ctx, connect.NewRequest(&v1pb.GetDatabaseSchemaRequest{
@@ -375,7 +354,7 @@ func TestMarkTaskAsDone(t *testing.T) {
 
 	// Create an issue that creates a database.
 	databaseName := "testSchemaUpdate"
-	err = ctl.createDatabaseV2(ctx, ctl.project, instance, nil, databaseName, "")
+	err = ctl.createDatabase(ctx, ctl.project, instance, nil, databaseName, "")
 	a.NoError(err)
 
 	databaseResp, err := ctl.databaseServiceClient.GetDatabase(ctx, connect.NewRequest(&v1pb.GetDatabaseRequest{
@@ -387,7 +366,6 @@ func TestMarkTaskAsDone(t *testing.T) {
 	sheetResp, err := ctl.sheetServiceClient.CreateSheet(ctx, connect.NewRequest(&v1pb.CreateSheetRequest{
 		Parent: ctl.project.Name,
 		Sheet: &v1pb.Sheet{
-			Title:   "migration statement sheet",
 			Content: []byte(migrationStatement1),
 		},
 	}))
@@ -405,7 +383,6 @@ func TestMarkTaskAsDone(t *testing.T) {
 						ChangeDatabaseConfig: &v1pb.Plan_ChangeDatabaseConfig{
 							Targets: []string{database.Name},
 							Sheet:   sheet.Name,
-							Type:    v1pb.DatabaseChangeType_MIGRATE,
 						},
 					},
 				},
@@ -425,7 +402,7 @@ func TestMarkTaskAsDone(t *testing.T) {
 	}))
 	a.NoError(err)
 	issue := issueResp.Msg
-	rolloutResp, err := ctl.rolloutServiceClient.CreateRollout(ctx, connect.NewRequest(&v1pb.CreateRolloutRequest{Parent: ctl.project.Name, Rollout: &v1pb.Rollout{Plan: plan.Name}}))
+	rolloutResp, err := ctl.rolloutServiceClient.CreateRollout(ctx, connect.NewRequest(&v1pb.CreateRolloutRequest{Parent: plan.Name}))
 	a.NoError(err)
 	rollout := rolloutResp.Msg
 

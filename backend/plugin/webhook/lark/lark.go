@@ -19,6 +19,19 @@ import (
 	"github.com/bytebase/bytebase/backend/plugin/webhook"
 )
 
+// getLarkConfig extracts the Lark configuration from the AppIMSetting.
+func getLarkConfig(setting *storepb.AppIMSetting) *storepb.AppIMSetting_Lark {
+	if setting == nil {
+		return nil
+	}
+	for _, s := range setting.Settings {
+		if s.Type == storepb.WebhookType_LARK {
+			return s.GetLark()
+		}
+	}
+	return nil
+}
+
 // WebhookResponse is the API message for Lark webhook response.
 type WebhookResponse struct {
 	Code    int    `json:"code"`
@@ -96,7 +109,7 @@ type Webhook struct {
 }
 
 func init() {
-	webhook.Register(storepb.ProjectWebhook_LARK, &larkReceiver{})
+	webhook.Register(storepb.WebhookType_LARK, &larkReceiver{})
 }
 
 // larkReceiver is the receiver for Lark.
@@ -113,7 +126,7 @@ func (*larkReceiver) Post(context webhook.Context) error {
 }
 
 func postDirectMessage(webhookCtx webhook.Context) bool {
-	lark := webhookCtx.IMSetting.GetLark()
+	lark := getLarkConfig(webhookCtx.IMSetting)
 	if lark == nil {
 		return false
 	}
@@ -220,7 +233,10 @@ func getMessageCard(context webhook.Context) *WebhookCard {
 		_, _ = markdownBuf.WriteString(fmt.Sprintf("**%s**: %s\n", meta.Name, meta.Value))
 	}
 
-	_, _ = markdownBuf.WriteString(fmt.Sprintf("**Actor**: %s (%s)\n[View in Bytebase](%s)", context.ActorName, context.ActorEmail, context.Link))
+	if context.ActorName != "" {
+		_, _ = markdownBuf.WriteString(fmt.Sprintf("**Actor**: %s (%s)\n", context.ActorName, context.ActorEmail))
+	}
+	_, _ = markdownBuf.WriteString(fmt.Sprintf("[View in Bytebase](%s)", context.Link))
 
 	return &WebhookCard{
 		Config: WebhookCardConfig{

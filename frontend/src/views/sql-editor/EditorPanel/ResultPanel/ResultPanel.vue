@@ -53,7 +53,7 @@
           {{
             $t("sql-editor.batch-query.select-data-source.not-match", {
               expect: getDataSourceTypeI18n(
-                tabStore.currentTab?.batchQueryContext?.dataSourceType
+                tabStore.currentTab?.batchQueryContext.dataSourceType
               ),
               actual: getDataSourceTypeI18n(dataSourceInContext(context)?.type),
             })
@@ -91,14 +91,13 @@
 import dayjs from "dayjs";
 import { CircleAlertIcon, XIcon } from "lucide-vue-next";
 import type { DropdownOption } from "naive-ui";
-import { NTabs, NTabPane, NTooltip, NDropdown } from "naive-ui";
-import { computed, ref, watch, nextTick } from "vue";
+import { NDropdown, NTabPane, NTabs, NTooltip } from "naive-ui";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { BBSpin } from "@/bbkit";
-import { BBAttention } from "@/bbkit";
+import { BBAttention, BBSpin } from "@/bbkit";
 import { useSQLEditorTabStore } from "@/store";
-import { getDataSourceTypeI18n } from "@/types";
 import type { ComposedDatabase, SQLEditorDatabaseQueryContext } from "@/types";
+import { getDataSourceTypeI18n } from "@/types";
 import BatchQuerySelect from "./BatchQuerySelect.vue";
 import DatabaseQueryContext from "./DatabaseQueryContext.vue";
 
@@ -260,7 +259,7 @@ const dataSourceInContext = (context: SQLEditorDatabaseQueryContext) => {
 // Memoize batch mode check
 const batchModeDataSourceType = computed(() => {
   if (!tabStore.isInBatchMode) return null;
-  return tabStore.currentTab?.batchQueryContext?.dataSourceType ?? null;
+  return tabStore.currentTab?.batchQueryContext.dataSourceType ?? null;
 });
 
 const isMatchedDataSource = (context: SQLEditorDatabaseQueryContext) => {

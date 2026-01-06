@@ -1,7 +1,7 @@
 <template>
   <div class="px-4 flex flex-col h-full items-center relative">
     <div class="flex-1" />
-    <div class="flex-[60%] space-y-6">
+    <div class="flex-[60%] flex flex-col gap-y-6">
       <div class="flex items-baseline gap-x-4">
         <div class="flex items-start gap-x-1">
           <div class="font-semibold text-2xl">
@@ -36,14 +36,14 @@
           :to="{
             name: access.route,
           }"
-          class="flex justify-center items-center gap-x-2 cursor-pointer border rounded px-4 py-5 bg-white hover:bg-gray-100"
+          class="flex justify-center items-center gap-x-2 cursor-pointer border rounded-sm px-4 py-5 bg-white hover:bg-gray-100"
           @click="handleClick(access)"
         >
           <component :is="access.icon" class="w-5 h-5 text-gray-500" />
           {{ access.title }}
         </component>
       </div>
-      <div class="space-y-2">
+      <div class="flex flex-col gap-y-2">
         <a
           v-if="actuatorStore.changelogURL"
           class="underline normal-link"
@@ -85,14 +85,14 @@
   >
     <DrawerContent
       :title="$t('landing.quick-link.manage')"
-      class="!w-96 max-w-full"
+      class="w-96! max-w-full"
       style="max-width: calc(100vw - 8rem)"
     >
       <div>
         <Draggable v-model="quickLinkList" item-key="id" animation="300">
           <template #item="{ element }: { element: QuickLink }">
             <div
-              class="group flex items-center justify-between p-2 hover:bg-gray-100 rounded-sm cursor-grab"
+              class="flex items-center justify-between p-2 hover:bg-gray-100 rounded-xs cursor-grab"
             >
               <div :key="element.id" class="flex items-center gap-x-2">
                 <NCheckbox
@@ -103,9 +103,7 @@
                 <component :is="element.icon" class="w-5 h-5 text-gray-500" />
                 {{ element.title }}
               </div>
-              <GripVerticalIcon
-                class="w-5 h-5 text-gray-500 hidden group-hover:block"
-              />
+              <GripVerticalIcon class="w-5 h-5 text-gray-500" />
             </div>
           </template>
         </Draggable>
@@ -114,7 +112,7 @@
         <div
           v-for="access in unSelectedAccessList"
           :key="access.id"
-          class="flex items-center gap-x-2 p-2 hover:bg-gray-100 rounded-sm cursor-pointer"
+          class="flex items-center gap-x-2 p-2 hover:bg-gray-100 rounded-xs cursor-pointer"
           @click.prevent.stop="() => checkAccessItem(access)"
         >
           <NCheckbox
@@ -131,7 +129,7 @@
 
 <script lang="tsx" setup>
 import { computedAsync } from "@vueuse/core";
-import { Volume2Icon, SettingsIcon, GripVerticalIcon } from "lucide-vue-next";
+import { GripVerticalIcon, SettingsIcon, Volume2Icon } from "lucide-vue-next";
 import { NButton, NCheckbox, NDivider } from "naive-ui";
 import { computed, reactive } from "vue";
 import { useRouter } from "vue-router";
@@ -141,10 +139,10 @@ import { Drawer, DrawerContent } from "@/components/v2";
 import { WORKSPACE_ROUTE_MY_ISSUES } from "@/router/dashboard/workspaceRoutes";
 import { useRecentVisit } from "@/router/useRecentVisit";
 import {
-  useProjectV1Store,
-  useActuatorV1Store,
-  useQuickLink,
   type QuickLink,
+  useActuatorV1Store,
+  useProjectV1Store,
+  useQuickLink,
 } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import { UNKNOWN_PROJECT_NAME } from "@/types";

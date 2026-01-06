@@ -6,9 +6,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -21,7 +22,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleColumnAutoIncrementMustUnsigned, &ColumnAutoIncrementMustUnsignedAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_COLUMN_AUTO_INCREMENT_MUST_UNSIGNED, &ColumnAutoIncrementMustUnsignedAdvisor{})
 }
 
 // ColumnAutoIncrementMustUnsignedAdvisor is the advisor checking for unsigned auto-increment column.
@@ -30,9 +31,10 @@ type ColumnAutoIncrementMustUnsignedAdvisor struct {
 
 // Check checks for unsigned auto-increment column.
 func (*ColumnAutoIncrementMustUnsignedAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -41,7 +43,7 @@ func (*ColumnAutoIncrementMustUnsignedAdvisor) Check(_ context.Context, checkCtx
 	}
 	checker := &columnAutoIncrementMustUnsignedChecker{
 		level: level,
-		title: string(checkCtx.Rule.Type),
+		title: checkCtx.Rule.Type.String(),
 	}
 
 	for _, stmt := range stmtList {
@@ -104,7 +106,7 @@ func (checker *columnAutoIncrementMustUnsignedChecker) Enter(in ast.Node) (ast.N
 	for _, column := range columnList {
 		checker.adviceList = append(checker.adviceList, &storepb.Advice{
 			Status:        checker.level,
-			Code:          advisor.AutoIncrementColumnSigned.Int32(),
+			Code:          code.AutoIncrementColumnSigned.Int32(),
 			Title:         checker.title,
 			Content:       fmt.Sprintf("Auto-increment column `%s`.`%s` is not UNSIGNED type", column.table, column.column),
 			StartPosition: common.ConvertANTLRLineToPosition(checker.line),

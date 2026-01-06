@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/bytebase/parser/mysql"
 	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -21,9 +24,9 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleIndexPKTypeLimit, &IndexPkTypeAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleIndexPKTypeLimit, &IndexPkTypeAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleIndexPKTypeLimit, &IndexPkTypeAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_INDEX_PK_TYPE_LIMIT, &IndexPkTypeAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_INDEX_PK_TYPE_LIMIT, &IndexPkTypeAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_INDEX_PK_TYPE_LIMIT, &IndexPkTypeAdvisor{})
 }
 
 // IndexPkTypeAdvisor is the advisor checking for correct type of PK.
@@ -32,26 +35,28 @@ type IndexPkTypeAdvisor struct {
 
 // Check checks for correct type of PK.
 func (*IndexPkTypeAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewIndexPkTypeRule(level, string(checkCtx.Rule.Type), checkCtx.Catalog)
+	rule := NewIndexPkTypeRule(level, checkCtx.Rule.Type.String(), checkCtx.OriginalMetadata)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -61,19 +66,19 @@ func (*IndexPkTypeAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([
 type IndexPkTypeRule struct {
 	BaseRule
 	line             map[string]int
-	catalog          *catalog.Finder
+	originalMetadata *model.DatabaseMetadata
 	tablesNewColumns tableColumnTypes
 }
 
 // NewIndexPkTypeRule creates a new IndexPkTypeRule.
-func NewIndexPkTypeRule(level storepb.Advice_Status, title string, catalog *catalog.Finder) *IndexPkTypeRule {
+func NewIndexPkTypeRule(level storepb.Advice_Status, title string, originalMetadata *model.DatabaseMetadata) *IndexPkTypeRule {
 	return &IndexPkTypeRule{
 		BaseRule: BaseRule{
 			level: level,
 			title: title,
 		},
 		line:             make(map[string]int),
-		catalog:          catalog,
+		originalMetadata: originalMetadata,
 		tablesNewColumns: make(tableColumnTypes),
 	}
 }
@@ -223,7 +228,7 @@ func (r *IndexPkTypeRule) addAdvice(tableName, columnName, columnType string, li
 	if !strings.EqualFold(columnType, "INT") && !strings.EqualFold(columnType, "BIGINT") {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.IndexPKType.Int32(),
+			Code:          code.IndexPKType.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("Columns in primary key must be INT/BIGINT but `%s`.`%s` is %s", tableName, columnName, columnType),
 			StartPosition: common.ConvertANTLRLineToPosition(lineNumber),
@@ -236,12 +241,9 @@ func (r *IndexPkTypeRule) getPKColumnType(tableName string, columnName string) (
 	if columnType, ok := r.tablesNewColumns.get(tableName, columnName); ok {
 		return columnType, nil
 	}
-	column := r.catalog.Origin.FindColumn(&catalog.ColumnFind{
-		TableName:  tableName,
-		ColumnName: columnName,
-	})
+	column := r.originalMetadata.GetSchemaMetadata("").GetTable(tableName).GetColumn(columnName)
 	if column != nil {
-		return column.Type(), nil
+		return column.GetProto().Type, nil
 	}
 	return "", errors.Errorf("cannot find the type of `%s`.`%s`", tableName, columnName)
 }

@@ -23,7 +23,7 @@
 
 <script lang="ts" setup>
 import { NInput, NInputGroup, NInputGroupLabel, NSelect } from "naive-ui";
-import { reactive, watch, computed, watchEffect } from "vue";
+import { computed, reactive, watch, watchEffect } from "vue";
 import { useSettingV1Store } from "@/store";
 
 interface LocalState {
@@ -99,7 +99,7 @@ watchEffect(() => {
   }
 });
 
-watch([() => state.value, () => state.shortValue], () => {
+watch([() => state.value, () => state.shortValue, () => state.domain], () => {
   const email = enforceDomain.value
     ? state.shortValue
       ? `${state.shortValue}@${state.domain}`

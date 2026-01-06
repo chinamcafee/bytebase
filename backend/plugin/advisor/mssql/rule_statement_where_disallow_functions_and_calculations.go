@@ -5,16 +5,17 @@ import (
 	"fmt"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/tsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/tsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MSSQL, advisor.SchemaRuleStatementWhereDisallowFunctionsAndCalculations, &DisallowFuncAndCalculationsAdvisor{})
+	advisor.Register(storepb.Engine_MSSQL, storepb.SQLReviewRule_STATEMENT_WHERE_DISALLOW_FUNCTIONS_AND_CALCULATIONS, &DisallowFuncAndCalculationsAdvisor{})
 }
 
 type DisallowFuncAndCalculationsAdvisor struct{}
@@ -22,23 +23,28 @@ type DisallowFuncAndCalculationsAdvisor struct{}
 var _ advisor.Advisor = (*DisallowFuncAndCalculationsAdvisor)(nil)
 
 func (*DisallowFuncAndCalculationsAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to AST tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewDisallowFuncAndCalculationsRule(level, string(checkCtx.Rule.Type))
+	rule := NewDisallowFuncAndCalculationsRule(level, checkCtx.Rule.Type.String())
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList(), nil
 }
@@ -131,7 +137,7 @@ func (r *DisallowFuncAndCalculationsRule) generateAdviceOnFunctionUsing(ctx antl
 	r.hasTriggeredRule = true
 	return &storepb.Advice{
 		Status:        r.level,
-		Code:          advisor.StatementDisallowFunctionsAndCalculations.Int32(),
+		Code:          code.StatementDisallowFunctionsAndCalculations.Int32(),
 		Title:         r.title,
 		Content:       fmt.Sprintf("Calling function '%s' in 'WHERE' clause is not allowed", ctx.GetText()),
 		StartPosition: common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),
@@ -145,7 +151,7 @@ func (r *DisallowFuncAndCalculationsRule) generateAdviceOnPerformingCalculations
 	r.hasTriggeredRule = true
 	return &storepb.Advice{
 		Status:        r.level,
-		Code:          advisor.StatementDisallowFunctionsAndCalculations.Int32(),
+		Code:          code.StatementDisallowFunctionsAndCalculations.Int32(),
 		Title:         r.title,
 		Content:       "Performing calculations in 'WHERE' clause is not allowed",
 		StartPosition: common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),

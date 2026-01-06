@@ -4,13 +4,15 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
-	"github.com/pkg/errors"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -19,9 +21,9 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleColumnDisallowSetCharset, &ColumnDisallowSetCharsetAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleColumnDisallowSetCharset, &ColumnDisallowSetCharsetAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleColumnDisallowSetCharset, &ColumnDisallowSetCharsetAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_COLUMN_DISALLOW_SET_CHARSET, &ColumnDisallowSetCharsetAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_COLUMN_DISALLOW_SET_CHARSET, &ColumnDisallowSetCharsetAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_COLUMN_DISALLOW_SET_CHARSET, &ColumnDisallowSetCharsetAdvisor{})
 }
 
 // ColumnDisallowSetCharsetAdvisor is the advisor checking for disallow set column charset.
@@ -30,26 +32,28 @@ type ColumnDisallowSetCharsetAdvisor struct {
 
 // Check checks for disallow set column charset.
 func (*ColumnDisallowSetCharsetAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewColumnDisallowSetCharsetRule(level, string(checkCtx.Rule.Type))
+	rule := NewColumnDisallowSetCharsetRule(level, checkCtx.Rule.Type.String())
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -122,7 +126,7 @@ func (r *ColumnDisallowSetCharsetRule) checkCreateTable(ctx *mysql.CreateTableCo
 		if !r.checkCharset(charset) {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.SetColumnCharset.Int32(),
+				Code:          code.SetColumnCharset.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("Disallow set column charset but \"%s\" does", r.text),
 				StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),
@@ -201,7 +205,7 @@ func (r *ColumnDisallowSetCharsetRule) checkAlterTable(ctx *mysql.AlterTableCont
 			if !r.checkCharset(charsetName) {
 				r.AddAdvice(&storepb.Advice{
 					Status:        r.level,
-					Code:          advisor.SetColumnCharset.Int32(),
+					Code:          code.SetColumnCharset.Int32(),
 					Title:         r.title,
 					Content:       fmt.Sprintf("Disallow set column charset but \"%s\" does", r.text),
 					StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),

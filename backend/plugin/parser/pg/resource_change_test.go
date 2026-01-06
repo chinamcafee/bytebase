@@ -7,12 +7,12 @@ import (
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
-	pgrawparser "github.com/bytebase/bytebase/backend/plugin/parser/pg/legacy"
+
 	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 func TestExtractChangedResources(t *testing.T) {
-	dbSchema := model.NewDatabaseSchema(&storepb.DatabaseSchemaMetadata{}, []byte{}, &storepb.DatabaseConfig{}, storepb.Engine_POSTGRES, true /* caseSensitive */)
+	dbMetadata := model.NewDatabaseMetadata(&storepb.DatabaseSchemaMetadata{}, []byte{}, &storepb.DatabaseConfig{}, storepb.Engine_POSTGRES, true /* caseSensitive */)
 	statement :=
 		`CREATE TABLE t1 (c1 INT);
 						DROP TABLE t1;
@@ -22,18 +22,12 @@ func TestExtractChangedResources(t *testing.T) {
 						INSERT INTO t1 (c1) VALUES (1), (5);
 						UPDATE t1 SET c1 = 5;
 			`
-	changedResources := model.NewChangedResources(dbSchema)
+	changedResources := model.NewChangedResources(dbMetadata)
 	changedResources.AddTable(
 		"db",
 		"public",
 		&storepb.ChangedResourceTable{
 			Name: "t1",
-			Ranges: []*storepb.Range{
-				{Start: 0, End: 25},
-				{Start: 32, End: 46},
-				{Start: 53, End: 86},
-				{Start: 93, End: 121},
-			},
 		},
 		true,
 	)
@@ -41,8 +35,7 @@ func TestExtractChangedResources(t *testing.T) {
 		"db",
 		"public",
 		&storepb.ChangedResourceTable{
-			Name:   "t2",
-			Ranges: []*storepb.Range{{Start: 93, End: 121}},
+			Name: "t2",
 		},
 		false,
 	)
@@ -51,10 +44,6 @@ func TestExtractChangedResources(t *testing.T) {
 		"public",
 		&storepb.ChangedResourceTable{
 			Name: "t1",
-			Ranges: []*storepb.Range{
-				{Start: 168, End: 204},
-				{Start: 211, End: 232},
-			},
 		},
 		false,
 	)
@@ -65,9 +54,9 @@ func TestExtractChangedResources(t *testing.T) {
 		InsertCount:      2,
 	}
 
-	nodes, err := pgrawparser.Parse(pgrawparser.ParseContext{}, statement)
+	asts, err := base.Parse(storepb.Engine_POSTGRES, statement)
 	require.NoError(t, err)
-	got, err := extractChangedResources("db", "public", dbSchema, nodes, statement)
+	got, err := extractChangedResources("db", "public", dbMetadata, asts, statement)
 	require.NoError(t, err)
 	require.Equal(t, want, got)
 }

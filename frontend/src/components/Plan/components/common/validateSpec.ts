@@ -1,4 +1,4 @@
-import { ref, watchEffect, type Ref, unref } from "vue";
+import { type Ref, ref, unref, watchEffect } from "vue";
 import { getLocalSheetByName } from "@/components/Plan";
 import { useSheetV1Store } from "@/store";
 import type { Plan_Spec } from "@/types/proto-es/v1/plan_service_pb";
@@ -14,6 +14,14 @@ export const useSpecsValidation = (specs: Plan_Spec[] | Ref<Plan_Spec[]>) => {
     if (
       spec.config?.case !== "changeDatabaseConfig" &&
       spec.config?.case !== "exportDataConfig"
+    ) {
+      return false;
+    }
+
+    // Released specs are not editable
+    if (
+      spec.config?.case === "changeDatabaseConfig" &&
+      spec.config.value.release
     ) {
       return false;
     }

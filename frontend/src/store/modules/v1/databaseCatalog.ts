@@ -2,19 +2,19 @@ import { create } from "@bufbuild/protobuf";
 import { createContextValues } from "@connectrpc/connect";
 import { defineStore } from "pinia";
 import { computed, unref, watchEffect } from "vue";
-import { databaseCatalogServiceClientConnect } from "@/grpcweb";
-import { silentContextKey } from "@/grpcweb/context-key";
+import { databaseCatalogServiceClientConnect } from "@/connect";
+import { silentContextKey } from "@/connect/context-key";
 import { useCache } from "@/store/cache";
 import type { MaybeRef } from "@/types";
-import { UNKNOWN_ID, EMPTY_ID, UNKNOWN_INSTANCE_NAME } from "@/types";
+import { EMPTY_ID, UNKNOWN_ID, UNKNOWN_INSTANCE_NAME } from "@/types";
 import type { DatabaseCatalog } from "@/types/proto-es/v1/database_catalog_service_pb";
 import {
-  GetDatabaseCatalogRequestSchema,
-  UpdateDatabaseCatalogRequestSchema,
-  DatabaseCatalogSchema,
-  TableCatalogSchema,
-  TableCatalog_ColumnsSchema,
   ColumnCatalogSchema,
+  DatabaseCatalogSchema,
+  GetDatabaseCatalogRequestSchema,
+  TableCatalog_ColumnsSchema,
+  TableCatalogSchema,
+  UpdateDatabaseCatalogRequestSchema,
 } from "@/types/proto-es/v1/database_catalog_service_pb";
 import { extractDatabaseResourceName, hasProjectPermissionV2 } from "@/utils";
 import { useDatabaseV1Store } from "./database";
@@ -168,7 +168,7 @@ export const getColumnCatalog = (
       ? tableCatalog.kind.value.columns
       : [];
   return (
-    columns.find((c: any) => c.name === column) ??
+    columns.find((c) => c.name === column) ??
     create(ColumnCatalogSchema, {
       name: column,
     })

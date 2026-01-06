@@ -2,280 +2,374 @@ package pg
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 
-	pgquery "github.com/pganalyze/pg_query_go/v6"
-	"github.com/pkg/errors"
+	"github.com/antlr4-go/antlr/v4"
+	parser "github.com/bytebase/parser/postgresql"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
-	"github.com/bytebase/bytebase/backend/plugin/parser/pg/legacy/ast"
+	pgparser "github.com/bytebase/bytebase/backend/plugin/parser/pg"
 )
-
-func init() {
-	advisor.Register(storepb.Engine_POSTGRES, advisor.SchemaRuleFullyQualifiedObjectName, &FullyQualifiedObjectNameAdvisor{})
-}
-
-type FullyQualifiedObjectNameAdvisor struct{}
-
-type FullyQualifiedObjectNameChecker struct {
-	adviceList   []*storepb.Advice
-	status       storepb.Advice_Status
-	title        string
-	line         int
-	isSelectStmt bool
-}
-
-// Visit implements ast.Visitor.
-func (checker *FullyQualifiedObjectNameChecker) Visit(in ast.Node) ast.Visitor {
-	switch node := in.(type) {
-	// Create statement.
-	case *ast.CreateTableStmt:
-		if node.Name != nil {
-			fullyQualifiedName := getFullyQualiufiedObjectName(node.Name)
-			checker.appendAdviceByObjName(fullyQualifiedName)
-		}
-	case *ast.CreateSequenceStmt:
-		if node.SequenceDef.SequenceName != nil {
-			fullyQualifiedName := getFullyQualiufiedObjectName(node.SequenceDef.SequenceName)
-			checker.appendAdviceByObjName(fullyQualifiedName)
-		}
-	case *ast.CreateTriggerStmt:
-		if node.Trigger != nil && node.Trigger.Table != nil {
-			fullyQualifiedName := getFullyQualiufiedObjectName(node.Trigger.Table)
-			checker.appendAdviceByObjName(fullyQualifiedName)
-		}
-	case *ast.CreateIndexStmt:
-		if node.Index != nil {
-			fullyQualifiedName := getFullyQualiufiedObjectName(node.Index)
-			checker.appendAdviceByObjName(fullyQualifiedName)
-		}
-
-	// Drop statement.
-	case *ast.DropSequenceStmt:
-		if node.SequenceNameList != nil {
-			for _, seqName := range node.SequenceNameList {
-				fullyQualifiedName := getFullyQualiufiedObjectName(seqName)
-				checker.appendAdviceByObjName(fullyQualifiedName)
-			}
-		}
-	case *ast.DropTableStmt:
-		if node.TableList != nil {
-			for _, table := range node.TableList {
-				fullyQualifiedName := getFullyQualiufiedObjectName(table)
-				checker.appendAdviceByObjName(fullyQualifiedName)
-			}
-		}
-	case *ast.DropIndexStmt:
-		if node.IndexList != nil {
-			for _, index := range node.IndexList {
-				fullyQualifiedName := getFullyQualiufiedObjectName(index)
-				checker.appendAdviceByObjName(fullyQualifiedName)
-			}
-		}
-	case *ast.DropTriggerStmt:
-		if node.Trigger != nil && node.Trigger.Table != nil {
-			fullyQualifiedName := getFullyQualiufiedObjectName(node.Trigger.Table)
-			checker.appendAdviceByObjName(fullyQualifiedName)
-		}
-
-	// Alter statement.
-	case *ast.AlterTableStmt:
-		if node.Table != nil {
-			fullyQualifiedName := getFullyQualiufiedObjectName(node.Table)
-			checker.appendAdviceByObjName(fullyQualifiedName)
-		}
-	case *ast.AlterSequenceStmt:
-		if node.Name != nil {
-			fullyQualifiedName := getFullyQualiufiedObjectName(node.Name)
-			checker.appendAdviceByObjName(fullyQualifiedName)
-		}
-
-	// Insert statement.
-	case *ast.InsertStmt:
-		if node.Table != nil {
-			fullyQualifiedName := getFullyQualiufiedObjectName(node.Table)
-			checker.appendAdviceByObjName(fullyQualifiedName)
-		}
-
-	// Select statement.
-	case *ast.SelectStmt:
-		checker.isSelectStmt = true
-
-	// Update statement.
-	case *ast.UpdateStmt:
-		if node.Table != nil {
-			fullyQualifiedName := getFullyQualiufiedObjectName(node.Table)
-			checker.appendAdviceByObjName(fullyQualifiedName)
-		}
-
-	// TODO(tommy): check whether this is needed.
-	// Comment statement.
-	case *ast.CommentStmt:
-	default:
-	}
-
-	return checker
-}
 
 var (
 	_ advisor.Advisor = (*FullyQualifiedObjectNameAdvisor)(nil)
-	_ ast.Visitor     = (*FullyQualifiedObjectNameChecker)(nil)
 )
 
+func init() {
+	advisor.Register(storepb.Engine_POSTGRES, storepb.SQLReviewRule_NAMING_FULLY_QUALIFIED, &FullyQualifiedObjectNameAdvisor{})
+}
+
+// FullyQualifiedObjectNameAdvisor is the advisor checking for fully qualified object names.
+type FullyQualifiedObjectNameAdvisor struct {
+}
+
+// Check checks for fully qualified object names.
 func (*FullyQualifiedObjectNameAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	checker := &FullyQualifiedObjectNameChecker{}
-	status, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
+	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	checker.status = status
-	checker.title = checkCtx.Rule.Type
 
-	nodes, ok := checkCtx.AST.([]ast.Node)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Node")
-	}
-
-	for _, node := range nodes {
-		checker.line = node.LastLine()
-		ast.Walk(checker, node)
-		// Dive in again for the object names in the subquery if it's a select statement.
-		if checker.isSelectStmt {
-			if checkCtx.DBSchema == nil {
-				continue
-			}
-			for _, tableName := range findAllTables(node.Text(), checkCtx.DBSchema) {
-				checker.appendAdviceByObjName(tableName.String())
-			}
+	var adviceList []*storepb.Advice
+	for _, stmtInfo := range checkCtx.ParsedStatements {
+		if stmtInfo.AST == nil {
+			continue
 		}
+		antlrAST, ok := base.GetANTLRAST(stmtInfo.AST)
+		if !ok {
+			continue
+		}
+		rule := &fullyQualifiedObjectNameRule{
+			BaseRule: BaseRule{
+				level: level,
+				title: checkCtx.Rule.Type.String(),
+			},
+			dbMetadata: checkCtx.DBSchema,
+			tokens:     antlrAST.Tokens,
+		}
+		rule.SetBaseLine(stmtInfo.BaseLine())
+
+		checker := NewGenericChecker([]Rule{rule})
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+		adviceList = append(adviceList, checker.GetAdviceList()...)
 	}
 
-	return checker.adviceList, nil
+	return adviceList, nil
 }
 
-func (checker *FullyQualifiedObjectNameChecker) appendAdviceByObjName(objName string) {
-	if objName == "" {
+type fullyQualifiedObjectNameRule struct {
+	BaseRule
+
+	dbMetadata *storepb.DatabaseSchemaMetadata
+	tokens     *antlr.CommonTokenStream
+}
+
+func (*fullyQualifiedObjectNameRule) Name() string {
+	return "naming_fully_qualified"
+}
+
+func (r *fullyQualifiedObjectNameRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
+	switch nodeType {
+	case "Createstmt":
+		if c, ok := ctx.(*parser.CreatestmtContext); ok {
+			r.handleCreatestmt(c)
+		}
+	case "Createseqstmt":
+		if c, ok := ctx.(*parser.CreateseqstmtContext); ok {
+			r.handleCreateseqstmt(c)
+		}
+	case "Createtrigstmt":
+		if c, ok := ctx.(*parser.CreatetrigstmtContext); ok {
+			r.handleCreatetrigstmt(c)
+		}
+	case "Indexstmt":
+		if c, ok := ctx.(*parser.IndexstmtContext); ok {
+			r.handleIndexstmt(c)
+		}
+	case "Dropstmt":
+		if c, ok := ctx.(*parser.DropstmtContext); ok {
+			r.handleDropstmt(c)
+		}
+	case "Altertablestmt":
+		if c, ok := ctx.(*parser.AltertablestmtContext); ok {
+			r.handleAltertablestmt(c)
+		}
+	case "Alterseqstmt":
+		if c, ok := ctx.(*parser.AlterseqstmtContext); ok {
+			r.handleAlterseqstmt(c)
+		}
+	case "Renamestmt":
+		if c, ok := ctx.(*parser.RenamestmtContext); ok {
+			r.handleRenamestmt(c)
+		}
+	case "Insertstmt":
+		if c, ok := ctx.(*parser.InsertstmtContext); ok {
+			r.handleInsertstmt(c)
+		}
+	case "Updatestmt":
+		if c, ok := ctx.(*parser.UpdatestmtContext); ok {
+			r.handleUpdatestmt(c)
+		}
+	case "Selectstmt":
+		if c, ok := ctx.(*parser.SelectstmtContext); ok {
+			r.handleSelectstmt(c)
+		}
+	default:
+		// Do nothing for other node types
+	}
+	return nil
+}
+
+func (*fullyQualifiedObjectNameRule) OnExit(_ antlr.ParserRuleContext, _ string) error {
+	return nil
+}
+
+// handleCreatestmt handles CREATE TABLE
+func (r *fullyQualifiedObjectNameRule) handleCreatestmt(ctx *parser.CreatestmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
 		return
 	}
-	re := regexp.MustCompile(`.+\..+`)
-	if !re.MatchString(objName) {
-		checker.adviceList = append(checker.adviceList, &storepb.Advice{
-			Status:        checker.status,
-			Code:          advisor.NamingNotFullyQualifiedName,
-			Title:         checker.title,
-			Content:       fmt.Sprintf("unqualified object name: '%s'", objName),
-			StartPosition: newPositionAtLineStart(checker.line),
+
+	allQualifiedNames := ctx.AllQualified_name()
+	if len(allQualifiedNames) > 0 {
+		r.checkQualifiedName(allQualifiedNames[0], ctx.GetStop().GetLine())
+	}
+}
+
+// handleCreateseqstmt handles CREATE SEQUENCE
+func (r *fullyQualifiedObjectNameRule) handleCreateseqstmt(ctx *parser.CreateseqstmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	if ctx.Qualified_name() != nil {
+		r.checkQualifiedName(ctx.Qualified_name(), ctx.GetStop().GetLine())
+	}
+}
+
+// handleCreatetrigstmt handles CREATE TRIGGER
+func (r *fullyQualifiedObjectNameRule) handleCreatetrigstmt(ctx *parser.CreatetrigstmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	// Check the table name in the ON clause
+	if ctx.Qualified_name() != nil {
+		r.checkQualifiedName(ctx.Qualified_name(), ctx.GetStop().GetLine())
+	}
+}
+
+// handleIndexstmt handles CREATE INDEX
+func (r *fullyQualifiedObjectNameRule) handleIndexstmt(ctx *parser.IndexstmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	// Check the table name in the ON clause
+	if ctx.Relation_expr() != nil && ctx.Relation_expr().Qualified_name() != nil {
+		r.checkQualifiedName(ctx.Relation_expr().Qualified_name(), ctx.GetStop().GetLine())
+	}
+}
+
+// handleDropstmt handles DROP TABLE, DROP SEQUENCE, DROP INDEX
+func (r *fullyQualifiedObjectNameRule) handleDropstmt(ctx *parser.DropstmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	// Check all qualified names in the drop statement
+	if ctx.Any_name_list() != nil {
+		for _, anyName := range ctx.Any_name_list().AllAny_name() {
+			r.checkAnyName(anyName, ctx.GetStop().GetLine())
+		}
+	}
+}
+
+// handleAltertablestmt handles ALTER TABLE
+func (r *fullyQualifiedObjectNameRule) handleAltertablestmt(ctx *parser.AltertablestmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	if ctx.Relation_expr() != nil && ctx.Relation_expr().Qualified_name() != nil {
+		r.checkQualifiedName(ctx.Relation_expr().Qualified_name(), ctx.GetStop().GetLine())
+	}
+}
+
+// handleAlterseqstmt handles ALTER SEQUENCE
+func (r *fullyQualifiedObjectNameRule) handleAlterseqstmt(ctx *parser.AlterseqstmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	if ctx.Qualified_name() != nil {
+		r.checkQualifiedName(ctx.Qualified_name(), ctx.GetStop().GetLine())
+	}
+}
+
+// handleRenamestmt handles ALTER TABLE RENAME
+func (r *fullyQualifiedObjectNameRule) handleRenamestmt(ctx *parser.RenamestmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	if ctx.Relation_expr() != nil && ctx.Relation_expr().Qualified_name() != nil {
+		r.checkQualifiedName(ctx.Relation_expr().Qualified_name(), ctx.GetStop().GetLine())
+	}
+}
+
+// handleInsertstmt handles INSERT
+func (r *fullyQualifiedObjectNameRule) handleInsertstmt(ctx *parser.InsertstmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	if ctx.Insert_target() != nil && ctx.Insert_target().Qualified_name() != nil {
+		r.checkQualifiedName(ctx.Insert_target().Qualified_name(), ctx.GetStop().GetLine())
+	}
+}
+
+// handleUpdatestmt handles UPDATE
+func (r *fullyQualifiedObjectNameRule) handleUpdatestmt(ctx *parser.UpdatestmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	if ctx.Relation_expr_opt_alias() != nil && ctx.Relation_expr_opt_alias().Relation_expr() != nil {
+		if ctx.Relation_expr_opt_alias().Relation_expr().Qualified_name() != nil {
+			r.checkQualifiedName(ctx.Relation_expr_opt_alias().Relation_expr().Qualified_name(), ctx.GetStop().GetLine())
+		}
+	}
+}
+
+// handleSelectstmt handles SELECT
+func (r *fullyQualifiedObjectNameRule) handleSelectstmt(ctx *parser.SelectstmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	// For SELECT statements, we need to extract tables from the query
+	// and check them against the database schema
+	if r.dbMetadata == nil {
+		return
+	}
+
+	statementText := getTextFromTokens(r.tokens, ctx)
+
+	// Find all table references in the SELECT statement
+	for _, tableName := range r.findAllTablesInSelect(statementText) {
+		objName := tableName.String()
+		if !r.isFullyQualified(objName) {
+			r.AddAdvice(&storepb.Advice{
+				Status:  r.level,
+				Code:    int32(code.NamingNotFullyQualifiedName),
+				Title:   r.title,
+				Content: fmt.Sprintf("unqualified object name: '%s'", objName),
+				StartPosition: &storepb.Position{
+					Line:   int32(ctx.GetStop().GetLine()),
+					Column: 0,
+				},
+			})
+		}
+	}
+}
+
+// checkQualifiedName checks if a qualified name is fully qualified
+func (r *fullyQualifiedObjectNameRule) checkQualifiedName(ctx parser.IQualified_nameContext, line int) {
+	if ctx == nil {
+		return
+	}
+
+	parts := pgparser.NormalizePostgreSQLQualifiedName(ctx)
+	objName := strings.Join(parts, ".")
+
+	if !r.isFullyQualified(objName) {
+		r.AddAdvice(&storepb.Advice{
+			Status:  r.level,
+			Code:    int32(code.NamingNotFullyQualifiedName),
+			Title:   r.title,
+			Content: fmt.Sprintf("unqualified object name: '%s'", objName),
+			StartPosition: &storepb.Position{
+				Line:   int32(line),
+				Column: 0,
+			},
 		})
 	}
 }
 
-func getFullyQualiufiedObjectName(nodeDef ast.Node) string {
-	sb := strings.Builder{}
-	switch def := nodeDef.(type) {
-	case *ast.TableDef:
-		if def.Database != "" {
-			if _, err := sb.WriteString(def.Database); err != nil {
-				return ""
-			}
-			if _, err := sb.WriteRune('.'); err != nil {
-				return ""
-			}
-		}
-		if def.Schema != "" {
-			if _, err := sb.WriteString(def.Schema); err != nil {
-				return ""
-			}
-			if _, err := sb.WriteRune('.'); err != nil {
-				return ""
-			}
-		}
-		if _, err := sb.WriteString(def.Name); err != nil {
-			return ""
-		}
-
-	case *ast.IndexDef:
-		if def.Table != nil && def.Table.Schema != "" {
-			if _, err := sb.WriteString(def.Table.Name); err != nil {
-				return ""
-			}
-			if _, err := sb.WriteRune('.'); err != nil {
-				return ""
-			}
-		}
-		if _, err := sb.WriteString(def.Name); err != nil {
-			return ""
-		}
-
-	case *ast.SequenceNameDef:
-		if def.Schema != "" {
-			if _, err := sb.WriteString(def.Schema); err != nil {
-				return ""
-			}
-			if _, err := sb.WriteRune('.'); err != nil {
-				return ""
-			}
-		}
-		if _, err := sb.WriteString(def.Name); err != nil {
-			return ""
-		}
-
-	case *ast.ColumnNameDef:
-		if def.Table != nil && def.Table.Name != "" {
-			_, _ = sb.WriteString(def.Table.Name)
-			if _, err := sb.WriteRune('.'); err != nil {
-				return ""
-			}
-		}
-		if _, err := sb.WriteString(def.ColumnName); err != nil {
-			return ""
-		}
-
-	default:
+// checkAnyName checks if an any_name is fully qualified
+func (r *fullyQualifiedObjectNameRule) checkAnyName(ctx parser.IAny_nameContext, line int) {
+	if ctx == nil {
+		return
 	}
-	return sb.String()
+
+	// Extract parts from any_name (schema.object or object)
+	parts := pgparser.NormalizePostgreSQLAnyName(ctx)
+	objName := strings.Join(parts, ".")
+
+	if !r.isFullyQualified(objName) {
+		r.AddAdvice(&storepb.Advice{
+			Status:  r.level,
+			Code:    int32(code.NamingNotFullyQualifiedName),
+			Title:   r.title,
+			Content: fmt.Sprintf("unqualified object name: '%s'", objName),
+			StartPosition: &storepb.Position{
+				Line:   int32(line),
+				Column: 0,
+			},
+		})
+	}
 }
 
-// Used for select statement.
-func findAllTables(statement string, schemaMetadata *storepb.DatabaseSchemaMetadata) []base.ColumnResource {
-	jsonText, err := pgquery.ParseToJSON(statement)
+// isFullyQualified checks if an object name is fully qualified (contains a dot)
+func (*fullyQualifiedObjectNameRule) isFullyQualified(objName string) bool {
+	if objName == "" {
+		return true
+	}
+	re := regexp.MustCompile(`.+\..+`)
+	return re.MatchString(objName)
+}
+
+// findAllTablesInSelect finds all table references in a SELECT statement
+func (r *fullyQualifiedObjectNameRule) findAllTablesInSelect(statement string) []base.ColumnResource {
+	// Parse the statement to extract table references
+	parsedStatements, err := pgparser.ParsePostgreSQL(statement)
 	if err != nil {
 		return nil
 	}
 
-	var jsonData map[string]any
-	if err := json.Unmarshal([]byte(jsonText), &jsonData); err != nil {
-		return nil
+	// Use a visitor to find all table references
+	collector := &tableReferenceCollector{
+		schemaNameMap: r.getSchemaNameMapFromPublic(),
 	}
 
-	schemaNameMap := getSchemaNameMapFromPublic(schemaMetadata)
-	if schemaNameMap == nil {
-		return []base.ColumnResource{}
+	for _, antlrAST := range parsedStatements {
+		if antlrAST != nil && antlrAST.Tree != nil {
+			antlr.ParseTreeWalkerDefault.Walk(collector, antlrAST.Tree)
+		}
 	}
 
-	resourceArray, err := getRangeVarsFromJSONRecursive(jsonData, &schemaNameMap)
-	if err != nil {
-		return nil
-	}
-
-	return resourceArray
+	return collector.tables
 }
 
-func getSchemaNameMapFromPublic(schemaMetadata *storepb.DatabaseSchemaMetadata) map[string]bool {
-	if schemaMetadata.Schemas == nil {
+// getSchemaNameMapFromPublic creates a map of table names from the database schema
+func (r *fullyQualifiedObjectNameRule) getSchemaNameMapFromPublic() map[string]bool {
+	if r.dbMetadata == nil || r.dbMetadata.Schemas == nil {
 		return nil
 	}
+
 	filterMap := map[string]bool{}
-	for _, schema := range schemaMetadata.Schemas {
-		// Tables.
+	for _, schema := range r.dbMetadata.Schemas {
+		// Tables
 		for _, tbl := range schema.Tables {
 			filterMap[tbl.Name] = true
 		}
-		// External Tables.
+		// External Tables
 		for _, tbl := range schema.ExternalTables {
 			filterMap[tbl.Name] = true
 		}
@@ -283,56 +377,31 @@ func getSchemaNameMapFromPublic(schemaMetadata *storepb.DatabaseSchemaMetadata) 
 	return filterMap
 }
 
-// get table names from Json.
-func getRangeVarsFromJSONRecursive(jsonData map[string]any, filterMap *map[string]bool) ([]base.ColumnResource, error) {
-	var result []base.ColumnResource
-	if jsonData["RangeVar"] != nil {
+// tableReferenceCollector collects table references from a SELECT statement
+type tableReferenceCollector struct {
+	*parser.BasePostgreSQLParserListener
+
+	tables        []base.ColumnResource
+	schemaNameMap map[string]bool
+}
+
+// EnterTable_ref collects table references
+func (c *tableReferenceCollector) EnterTable_ref(ctx *parser.Table_refContext) {
+	// Look for relation_expr in the table_ref
+	if ctx.Relation_expr() != nil && ctx.Relation_expr().Qualified_name() != nil {
+		parts := pgparser.NormalizePostgreSQLQualifiedName(ctx.Relation_expr().Qualified_name())
+
 		resource := base.ColumnResource{}
-
-		rangeVar, ok := jsonData["RangeVar"].(map[string]any)
-		if !ok {
-			return nil, errors.Errorf("failed to convert range var")
-		}
-		if rangeVar["schemaname"] != nil {
-			schema, ok := rangeVar["schemaname"].(string)
-			if !ok {
-				return nil, errors.Errorf("failed to convert schemaname")
-			}
-			resource.Schema = schema
-		}
-		if rangeVar["relname"] != nil {
-			table, ok := rangeVar["relname"].(string)
-			if !ok {
-				return nil, errors.Errorf("failed to convert relname")
-			}
-			resource.Table = table
+		if len(parts) == 2 {
+			resource.Schema = parts[0]
+			resource.Table = parts[1]
+		} else if len(parts) == 1 {
+			resource.Table = parts[0]
 		}
 
-		if _, ok := (*filterMap)[resource.Table]; ok {
-			result = append(result, resource)
+		// Only add if the table exists in the schema
+		if c.schemaNameMap == nil || c.schemaNameMap[resource.Table] {
+			c.tables = append(c.tables, resource)
 		}
 	}
-
-	for _, value := range jsonData {
-		switch v := value.(type) {
-		case map[string]any:
-			resources, err := getRangeVarsFromJSONRecursive(v, filterMap)
-			if err != nil {
-				return nil, err
-			}
-			result = append(result, resources...)
-		case []any:
-			for _, item := range v {
-				if m, ok := item.(map[string]any); ok {
-					resources, err := getRangeVarsFromJSONRecursive(m, filterMap)
-					if err != nil {
-						return nil, err
-					}
-					result = append(result, resources...)
-				}
-			}
-		}
-	}
-
-	return result, nil
 }

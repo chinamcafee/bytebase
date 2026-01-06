@@ -6,12 +6,13 @@ import (
 	"fmt"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/plsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	plsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/plsql"
 )
 
@@ -20,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_ORACLE, advisor.SchemaRuleColumnCommentConvention, &ColumnCommentConventionAdvisor{})
+	advisor.Register(storepb.Engine_ORACLE, storepb.SQLReviewRule_COLUMN_COMMENT, &ColumnCommentConventionAdvisor{})
 }
 
 // ColumnCommentConventionAdvisor is the advisor checking for column comment convention.
@@ -28,24 +29,27 @@ type ColumnCommentConventionAdvisor struct {
 }
 
 func (*ColumnCommentConventionAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalCommentConventionRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
+	commentPayload := checkCtx.Rule.GetCommentConventionPayload()
 
-	rule := NewColumnCommentConventionRule(level, string(checkCtx.Rule.Type), checkCtx.CurrentDatabase, payload, checkCtx.ClassificationConfig)
+	rule := NewColumnCommentConventionRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase, commentPayload)
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList()
 }
@@ -54,9 +58,8 @@ func (*ColumnCommentConventionAdvisor) Check(_ context.Context, checkCtx advisor
 type ColumnCommentConventionRule struct {
 	BaseRule
 
-	currentDatabase      string
-	payload              *advisor.CommentConventionRulePayload
-	classificationConfig *storepb.DataClassificationSetting_DataClassificationConfig
+	currentDatabase string
+	payload         *storepb.SQLReviewRule_CommentConventionRulePayload
 
 	tableName     string
 	columnNames   []string
@@ -65,15 +68,14 @@ type ColumnCommentConventionRule struct {
 }
 
 // NewColumnCommentConventionRule creates a new ColumnCommentConventionRule.
-func NewColumnCommentConventionRule(level storepb.Advice_Status, title string, currentDatabase string, payload *advisor.CommentConventionRulePayload, classificationConfig *storepb.DataClassificationSetting_DataClassificationConfig) *ColumnCommentConventionRule {
+func NewColumnCommentConventionRule(level storepb.Advice_Status, title string, currentDatabase string, payload *storepb.SQLReviewRule_CommentConventionRulePayload) *ColumnCommentConventionRule {
 	return &ColumnCommentConventionRule{
-		BaseRule:             NewBaseRule(level, title, 0),
-		currentDatabase:      currentDatabase,
-		payload:              payload,
-		classificationConfig: classificationConfig,
-		columnNames:          []string{},
-		columnComment:        make(map[string]string),
-		columnLine:           make(map[string]int),
+		BaseRule:        NewBaseRule(level, title, 0),
+		currentDatabase: currentDatabase,
+		payload:         payload,
+		columnNames:     []string{},
+		columnComment:   make(map[string]string),
+		columnLine:      make(map[string]int),
 	}
 }
 
@@ -105,8 +107,6 @@ func (r *ColumnCommentConventionRule) OnExit(_ antlr.ParserRuleContext, nodeType
 		r.handleCreateTableExit()
 	case "Add_column_clause":
 		r.handleAddColumnClauseExit()
-	case "Sql_script":
-		r.handleSQLScriptExit()
 	default:
 	}
 	return nil
@@ -130,7 +130,7 @@ func (r *ColumnCommentConventionRule) handleColumnDefinition(ctx *parser.Column_
 	}
 	columnName := fmt.Sprintf(`%s.%s`, r.tableName, normalizeIdentifier(ctx.Column_name(), r.currentDatabase))
 	r.columnNames = append(r.columnNames, columnName)
-	r.columnLine[columnName] = ctx.GetStart().GetLine()
+	r.columnLine[columnName] = r.baseLine + ctx.GetStart().GetLine()
 }
 
 func (r *ColumnCommentConventionRule) handleAlterTable(ctx *parser.Alter_tableContext) {
@@ -150,37 +150,30 @@ func (r *ColumnCommentConventionRule) handleCommentOnColumn(ctx *parser.Comment_
 	r.columnComment[columnName] = plsqlparser.NormalizeQuotedString(ctx.Quoted_string())
 }
 
-func (r *ColumnCommentConventionRule) handleSQLScriptExit() {
+// GetAdviceList returns the advice list.
+// We override this to perform final checks after all statements have been processed.
+func (r *ColumnCommentConventionRule) GetAdviceList() ([]*storepb.Advice, error) {
 	for _, columnName := range r.columnNames {
 		comment, ok := r.columnComment[columnName]
 		if !ok || comment == "" {
 			if r.payload.Required {
 				r.AddAdvice(
 					r.level,
-					advisor.CommentEmpty.Int32(),
+					code.CommentEmpty.Int32(),
 					fmt.Sprintf("Comment is required for column %s", normalizeIdentifierName(columnName)),
 					common.ConvertANTLRLineToPosition(r.columnLine[columnName]),
 				)
 			}
 		} else {
-			if r.payload.MaxLength > 0 && len(comment) > r.payload.MaxLength {
+			if r.payload.MaxLength > 0 && int32(len(comment)) > r.payload.MaxLength {
 				r.AddAdvice(
 					r.level,
-					advisor.CommentTooLong.Int32(),
+					code.CommentTooLong.Int32(),
 					fmt.Sprintf("Column %s comment is too long. The length of comment should be within %d characters", normalizeIdentifierName(columnName), r.payload.MaxLength),
 					common.ConvertANTLRLineToPosition(r.columnLine[columnName]),
 				)
 			}
-			if r.payload.RequiredClassification {
-				if classification, _ := common.GetClassificationAndUserComment(comment, r.classificationConfig); classification == "" {
-					r.AddAdvice(
-						r.level,
-						advisor.CommentMissingClassification.Int32(),
-						fmt.Sprintf("Column %s comment requires classification", normalizeIdentifierName(columnName)),
-						common.ConvertANTLRLineToPosition(r.columnLine[columnName]),
-					)
-				}
-			}
 		}
 	}
+	return r.BaseRule.GetAdviceList()
 }

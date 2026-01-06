@@ -6,11 +6,11 @@
       {{ $t("settings.general.workspace.password-restriction.self") }}
       <FeatureBadge :feature="PlanFeature.FEATURE_PASSWORD_RESTRICTIONS" />
     </p>
-    <div class="w-full flex flex-col space-y-3">
+    <div class="w-full flex flex-col gap-y-3">
       <div class="flex items-center">
         <NInputNumber
           :value="state.minLength"
-          :readonly="!allowEdit"
+          :disabled="!allowEdit"
           class="w-24 mr-2"
           :min="1"
           :placeholder="'Minimum length'"
@@ -34,7 +34,7 @@
       </div>
       <NCheckbox
         :checked="state.requireNumber"
-        :readonly="!allowEdit"
+        :disabled="!allowEdit"
         @update:checked="
           (val) => {
             onUpdate({ requireNumber: val });
@@ -47,7 +47,7 @@
       </NCheckbox>
       <NCheckbox
         :checked="state.requireLetter"
-        :readonly="!allowEdit"
+        :disabled="!allowEdit"
         @update:checked="
           (val) => {
             onUpdate({ requireLetter: val });
@@ -60,7 +60,7 @@
       </NCheckbox>
       <NCheckbox
         :checked="state.requireUppercaseLetter"
-        :readonly="!allowEdit"
+        :disabled="!allowEdit"
         @update:checked="
           (val) => {
             onUpdate({ requireUppercaseLetter: val });
@@ -75,7 +75,7 @@
       </NCheckbox>
       <NCheckbox
         :checked="state.requireSpecialCharacter"
-        :readonly="!allowEdit"
+        :disabled="!allowEdit"
         @update:checked="
           (val) => {
             onUpdate({ requireSpecialCharacter: val });
@@ -90,7 +90,7 @@
       </NCheckbox>
       <NCheckbox
         :checked="state.requireResetPasswordForFirstLogin"
-        :readonly="!allowEdit"
+        :disabled="!allowEdit"
         @update:checked="
           (val) => {
             onUpdate({ requireResetPasswordForFirstLogin: val });
@@ -105,8 +105,8 @@
       </NCheckbox>
       <NCheckbox
         :checked="!!state.passwordRotation"
-        :readonly="!allowEdit"
-        class="!flex !items-center"
+        :disabled="!allowEdit"
+        class="flex! items-center!"
         @update:checked="
           (checked) => {
             if (checked) {
@@ -125,13 +125,13 @@
         <i18n-t
           tag="div"
           keypath="settings.general.workspace.password-restriction.password-rotation"
-          class="flex items-center space-x-2"
+          class="flex items-center gap-x-2"
         >
           <template #day>
             <NInputNumber
               v-if="state.passwordRotation"
               :value="Number(state.passwordRotation.seconds) / (24 * 60 * 60)"
-              :readonly="!allowEdit"
+              :disabled="!allowEdit"
               :min="1"
               class="w-24 mx-2"
               :size="'small'"
@@ -164,18 +164,14 @@
 
 <script setup lang="tsx">
 import { create } from "@bufbuild/protobuf";
-import { DurationSchema } from "@bufbuild/protobuf/wkt";
+import { DurationSchema, FieldMaskSchema } from "@bufbuild/protobuf/wkt";
 import { cloneDeep, isEqual } from "lodash-es";
-import { NInputNumber, NCheckbox } from "naive-ui";
-import { computed, ref, reactive } from "vue";
+import { NCheckbox, NInputNumber } from "naive-ui";
+import { computed, reactive, ref } from "vue";
 import { featureToRef } from "@/store";
 import { useSettingV1Store } from "@/store/modules/v1/setting";
-import type { PasswordRestrictionSetting } from "@/types/proto-es/v1/setting_service_pb";
-import {
-  Setting_SettingName,
-  PasswordRestrictionSettingSchema,
-  ValueSchema as SettingValueSchema,
-} from "@/types/proto-es/v1/setting_service_pb";
+import type { WorkspaceProfileSetting_PasswordRestriction } from "@/types/proto-es/v1/setting_service_pb";
+import { WorkspaceProfileSetting_PasswordRestrictionSchema } from "@/types/proto-es/v1/setting_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import { FeatureBadge, FeatureModal } from "../FeatureGuard";
 
@@ -192,20 +188,19 @@ const hasPasswordFeature = featureToRef(
 );
 
 const passwordRestrictionSetting = computed(() => {
-  const setting = settingV1Store.getSettingByName(
-    Setting_SettingName.PASSWORD_RESTRICTION
+  return (
+    settingV1Store.workspaceProfileSetting?.passwordRestriction ??
+    create(WorkspaceProfileSetting_PasswordRestrictionSchema, {})
   );
-  if (setting?.value?.value?.case === "passwordRestrictionSetting") {
-    return setting.value.value.value;
-  }
-  return create(PasswordRestrictionSettingSchema, {});
 });
 
-const state = reactive<PasswordRestrictionSetting>(
+const state = reactive<WorkspaceProfileSetting_PasswordRestriction>(
   cloneDeep(passwordRestrictionSetting.value)
 );
 
-const onUpdate = async (update: Partial<PasswordRestrictionSetting>) => {
+const onUpdate = async (
+  update: Partial<WorkspaceProfileSetting_PasswordRestriction>
+) => {
   if (!hasPasswordFeature.value) {
     showFeatureModal.value = true;
     return;
@@ -216,15 +211,20 @@ const onUpdate = async (update: Partial<PasswordRestrictionSetting>) => {
 defineExpose({
   isDirty: computed(() => !isEqual(passwordRestrictionSetting.value, state)),
   update: async () => {
-    await settingV1Store.upsertSetting({
-      name: Setting_SettingName.PASSWORD_RESTRICTION,
-      value: create(SettingValueSchema, {
-        value: {
-          case: "passwordRestrictionSetting",
-          value: create(PasswordRestrictionSettingSchema, {
+    if (!settingV1Store.workspaceProfileSetting) {
+      return;
+    }
+    await settingV1Store.updateWorkspaceProfile({
+      payload: {
+        passwordRestriction: create(
+          WorkspaceProfileSetting_PasswordRestrictionSchema,
+          {
             ...state,
-          }),
-        },
+          }
+        ),
+      },
+      updateMask: create(FieldMaskSchema, {
+        paths: ["value.workspace_profile.password_restriction"],
       }),
     });
   },

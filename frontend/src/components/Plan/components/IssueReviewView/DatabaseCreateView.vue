@@ -1,7 +1,7 @@
 <template>
-  <div class="w-full space-y-4">
+  <div class="w-full flex flex-col gap-y-4">
     <!-- Database Information Section -->
-    <div class="space-y-2">
+    <div class="flex flex-col gap-y-2">
       <h3 class="text-base font-medium">
         {{ $t("common.overview") }}
       </h3>
@@ -41,10 +41,19 @@
             {{ databaseName }}
           </span>
         </div>
+
+        <!-- Task Status (only when rollout exists) -->
+        <div v-if="createDatabaseTask" class="flex items-center gap-2">
+          <span class="text-sm font-medium text-gray-600"
+            >{{ $t("common.status") }}:</span
+          >
+          <TaskStatus :status="createDatabaseTask.status" size="small" />
+        </div>
       </div>
 
+      <!-- Task Run Table (only when rollout exists and has task runs) -->
       <div
-        v-if="createDatabaseTask && taskRunsForCreateDatabase.length > 0"
+        v-if="rollout && createDatabaseTask && taskRunsForCreateDatabase.length > 0"
         class="mt-4"
       >
         <TaskRunTable
@@ -53,46 +62,32 @@
         />
       </div>
     </div>
-
-    <!-- SQL Statement Section -->
-    <div class="space-y-3">
-      <h3 class="text-base font-medium">
-        {{ $t("common.statement") }}
-      </h3>
-      <MonacoEditor
-        :content="createStatement"
-        :readonly="true"
-        :language="'sql'"
-        class="w-full h-24 border rounded-[3px]"
-      />
-    </div>
   </div>
 </template>
 
 <script lang="ts" setup>
 import { computed, watchEffect } from "vue";
 import { extractCoreDatabaseInfoFromDatabaseCreateTask } from "@/components/IssueV1/logic/utils";
-import MonacoEditor from "@/components/MonacoEditor/MonacoEditor.vue";
+import TaskStatus from "@/components/Rollout/kits/TaskStatus.vue";
+import TaskRunTable from "@/components/RolloutV1/components/TaskRunTable.vue";
 import {
   DatabaseV1Name,
   EnvironmentV1Name,
   InstanceV1Name,
 } from "@/components/v2";
 import {
+  useCurrentProjectV1,
   useEnvironmentV1Store,
   useInstanceV1Store,
   useSheetV1Store,
 } from "@/store";
-import { useCurrentProjectV1 } from "@/store";
 import type { Plan_CreateDatabaseConfig } from "@/types/proto-es/v1/plan_service_pb";
 import { Task_Status } from "@/types/proto-es/v1/rollout_service_pb";
 import { isValidInstanceName } from "@/types/v1/instance";
-import { getSheetStatement } from "@/utils";
 import { extractInstanceResourceName } from "@/utils/v1/instance";
-import { usePlanContextWithRollout } from "../..";
-import TaskRunTable from "../RolloutView/TaskRunTable.vue";
+import { usePlanContext } from "../..";
 
-const { plan, rollout, taskRuns } = usePlanContextWithRollout();
+const { plan, rollout, taskRuns } = usePlanContext();
 const { project } = useCurrentProjectV1();
 const environmentStore = useEnvironmentV1Store();
 const instanceStore = useInstanceV1Store();
@@ -129,7 +124,7 @@ const databaseName = computed(() => {
   return createDatabaseConfig.value.database || "";
 });
 
-// Find the task related to this create database spec
+// Find the task related to this create database spec (only exists after rollout is created)
 const createDatabaseTask = computed(() => {
   if (!rollout.value || !createDatabaseSpec.value) return null;
 
@@ -144,7 +139,7 @@ const createDatabaseTask = computed(() => {
   return null;
 });
 
-// Get the sheet name from the task payload
+// Get the sheet name from the task payload (when rollout exists)
 const sheetName = computed(() => {
   if (!createDatabaseTask.value) return null;
 
@@ -169,32 +164,9 @@ watchEffect(() => {
   }
 });
 
-// Get the sheet entity and its content
-const sheet = computed(() => {
-  if (!sheetName.value) return null;
-  return sheetStore.getSheetByName(sheetName.value);
-});
-
-const createStatement = computed(() => {
-  if (!createDatabaseTask.value) {
-    return "-- No task found for this create database spec";
-  }
-
-  if (!sheetName.value) {
-    return "-- No sheet reference found in task";
-  }
-
-  if (!sheet.value) {
-    return "-- Loading sheet content...";
-  }
-
-  // Return the actual sheet content
-  return getSheetStatement(sheet.value);
-});
-
 // Get task runs for this specific create database task
 const taskRunsForCreateDatabase = computed(() => {
-  if (!createDatabaseTask.value) return [];
+  if (!rollout.value || !createDatabaseTask.value) return [];
 
   const taskName = createDatabaseTask.value.name;
   return taskRuns.value.filter((taskRun) =>
@@ -213,7 +185,8 @@ const createdDatabase = computed(() => {
 
   return extractCoreDatabaseInfoFromDatabaseCreateTask(
     project.value,
-    createDatabaseTask.value
+    createDatabaseTask.value,
+    plan.value
   );
 });
 </script>

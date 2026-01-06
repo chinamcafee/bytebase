@@ -1,28 +1,29 @@
 <template>
-  <div class="flex flex-col divide-y gap-y-7">
-    <div class="space-y-4">
+  <div class="divide-y">
+    <div class="flex flex-col gap-y-4 pb-7">
       <div>
         <p class="text-lg font-medium leading-7 text-main">
           {{ $t("common.environment") }}
         </p>
         <EnvironmentSelect
           class="mt-1 max-w-md"
-          :environment-name="`${environmentNamePrefix}${environment.id}`"
+          :value="`${environmentNamePrefix}${environment.id}`"
           :disabled="!allowUpdateDatabase"
+          :clearable="!database.instanceResource.environment"
           :render-suffix="
-            (env: string) =>
-              database.instanceResource.environment === env
+            (env: Environment) =>
+              database.instanceResource.environment === env.name
                 ? `(${$t('common.default')})`
                 : ''
           "
-          @update:environment-name="handleSelectEnvironment"
+          @update:value="handleSelectEnvironment($event as (string | undefined))"
         />
       </div>
     </div>
     <Labels
       :database="database"
       :allow-edit="allowUpdateDatabase"
-      class="pt-5"
+      class="pt-7"
     />
   </div>
 </template>
@@ -36,13 +37,14 @@ import { useI18n } from "vue-i18n";
 import { useDatabaseDetailContext } from "@/components/Database/context";
 import { EnvironmentSelect } from "@/components/v2";
 import {
+  environmentNamePrefix,
+  pushNotification,
   useDatabaseV1Store,
   useEnvironmentV1Store,
-  pushNotification,
-  environmentNamePrefix,
 } from "@/store";
 import { type ComposedDatabase } from "@/types";
 import { UpdateDatabaseRequestSchema } from "@/types/proto-es/v1/database_service_pb";
+import type { Environment } from "@/types/v1/environment";
 import Labels from "./components/Labels.vue";
 
 const props = defineProps<{

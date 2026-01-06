@@ -13,8 +13,6 @@ import (
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
-	pgrawparser "github.com/bytebase/bytebase/backend/plugin/parser/pg/legacy"
-	"github.com/bytebase/bytebase/backend/plugin/parser/pg/legacy/ast"
 	"github.com/bytebase/bytebase/backend/store/model"
 )
 
@@ -27,7 +25,7 @@ func init() {
 }
 
 func GenerateRestoreSQL(ctx context.Context, rCtx base.RestoreContext, statement string, backupItem *storepb.PriorBackupDetail_Item) (string, error) {
-	originalSQL, err := extractSingleSQL(statement, backupItem)
+	originalSQL, err := extractStatement(statement, backupItem)
 	if err != nil {
 		return "", errors.Errorf("failed to extract single SQL: %v", err)
 	}
@@ -36,9 +34,31 @@ func GenerateRestoreSQL(ctx context.Context, rCtx base.RestoreContext, statement
 		return "", errors.Errorf("no original SQL")
 	}
 
-	tree, err := ParsePostgreSQL(statement)
+	parseResults, err := ParsePostgreSQL(statement)
 	if err != nil {
 		return "", err
+	}
+
+	// Find the parse result that contains the statement at the backup position
+	var targetResult *base.ANTLRAST
+	for _, parseResult := range parseResults {
+		// Walk the tree to find if this parse result contains the target statement
+		finder := &statementAtPositionFinder{
+			startPos: backupItem.StartPosition,
+			endPos:   backupItem.EndPosition,
+			baseLine: base.GetLineOffset(parseResult.StartPosition),
+		}
+		antlr.ParseTreeWalkerDefault.Walk(finder, parseResult.Tree)
+		if finder.found {
+			targetResult = parseResult
+			break
+		}
+	}
+
+	if targetResult == nil {
+		return "", errors.Errorf("could not find statement at position (line %d:%d - %d:%d)",
+			backupItem.StartPosition.Line, backupItem.StartPosition.Column,
+			backupItem.EndPosition.Line, backupItem.EndPosition.Column)
 	}
 
 	sqlForComment, truncated := common.TruncateString(originalSQL, maxCommentLength)
@@ -51,10 +71,10 @@ func GenerateRestoreSQL(ctx context.Context, rCtx base.RestoreContext, statement
 		return "", errors.Wrap(err, "failed to get prepend statements")
 	}
 
-	return doGenerate(ctx, rCtx, sqlForComment, tree, backupItem, prependStatements)
+	return doGenerate(ctx, rCtx, sqlForComment, targetResult, backupItem, prependStatements)
 }
 
-func doGenerate(ctx context.Context, rCtx base.RestoreContext, sqlForComment string, tree *ParseResult, backupItem *storepb.PriorBackupDetail_Item, prependStatements string) (string, error) {
+func doGenerate(ctx context.Context, rCtx base.RestoreContext, sqlForComment string, tree *base.ANTLRAST, backupItem *storepb.PriorBackupDetail_Item, prependStatements string) (string, error) {
 	_, sourceDatabase, err := common.GetInstanceDatabaseID(backupItem.SourceTable.Database)
 	if err != nil {
 		return "", errors.Wrapf(err, "failed to get source database ID for %s", backupItem.SourceTable.Database)
@@ -77,7 +97,7 @@ func doGenerate(ctx context.Context, rCtx base.RestoreContext, sqlForComment str
 	if schema == "" {
 		schema = "public"
 	}
-	schemaMetadata := metadata.GetSchema(schema)
+	schemaMetadata := metadata.GetSchemaMetadata(schema)
 	if schemaMetadata == nil {
 		return "", errors.Errorf("schema metadata not found for %s", schema)
 	}
@@ -220,12 +240,12 @@ func (l *setFieldListener) EnterSet_clause(ctx *parser.Set_clauseContext) {
 	}
 }
 
-func extractSingleSQL(statement string, backupItem *storepb.PriorBackupDetail_Item) (string, error) {
+func extractStatement(statement string, backupItem *storepb.PriorBackupDetail_Item) (string, error) {
 	if backupItem == nil {
 		return "", errors.Errorf("backup item is nil")
 	}
 
-	tree, err := ParsePostgreSQL(statement)
+	parseResults, err := ParsePostgreSQL(statement)
 	if err != nil {
 		return "", errors.Wrapf(err, "failed to parse statement")
 	}
@@ -234,7 +254,13 @@ func extractSingleSQL(statement string, backupItem *storepb.PriorBackupDetail_It
 		startPos: backupItem.StartPosition,
 		endPos:   backupItem.EndPosition,
 	}
-	antlr.ParseTreeWalkerDefault.Walk(l, tree.Tree)
+
+	// Walk all parse results to find statements within the specified position range
+	for _, parseResult := range parseResults {
+		l.baseLine = base.GetLineOffset(parseResult.StartPosition)
+		antlr.ParseTreeWalkerDefault.Walk(l, parseResult.Tree)
+	}
+
 	return strings.Join(l.originalSQL, ";\n"), nil
 }
 
@@ -244,15 +270,16 @@ type originalSQLExtractor struct {
 	originalSQL []string
 	startPos    *storepb.Position
 	endPos      *storepb.Position
+	baseLine    int
 }
 
 func (l *originalSQLExtractor) EnterUpdatestmt(ctx *parser.UpdatestmtContext) {
 	if isTopLevel(ctx.GetParent()) {
 		if inRange(&storepb.Position{
-			Line:   int32(ctx.GetStart().GetLine()),
+			Line:   int32(ctx.GetStart().GetLine()) + int32(l.baseLine),
 			Column: int32(ctx.GetStart().GetColumn()),
 		}, &storepb.Position{
-			Line:   int32(ctx.GetStop().GetLine()),
+			Line:   int32(ctx.GetStop().GetLine()) + int32(l.baseLine),
 			Column: int32(ctx.GetStop().GetColumn()),
 		}, l.startPos, l.endPos) {
 			l.originalSQL = append(l.originalSQL, ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx))
@@ -263,10 +290,10 @@ func (l *originalSQLExtractor) EnterUpdatestmt(ctx *parser.UpdatestmtContext) {
 func (l *originalSQLExtractor) EnterDeletestmt(ctx *parser.DeletestmtContext) {
 	if isTopLevel(ctx.GetParent()) {
 		if inRange(&storepb.Position{
-			Line:   int32(ctx.GetStart().GetLine()),
+			Line:   int32(ctx.GetStart().GetLine()) + int32(l.baseLine),
 			Column: int32(ctx.GetStart().GetColumn()),
 		}, &storepb.Position{
-			Line:   int32(ctx.GetStop().GetLine()),
+			Line:   int32(ctx.GetStop().GetLine()) + int32(l.baseLine),
 			Column: int32(ctx.GetStop().GetColumn()),
 		}, l.startPos, l.endPos) {
 			l.originalSQL = append(l.originalSQL, ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx))
@@ -285,18 +312,87 @@ func inRange(start, end, targetStart, targetEnd *storepb.Position) bool {
 }
 
 func getPrependStatements(statement string) (string, error) {
-	nodes, err := pgrawparser.Parse(pgrawparser.ParseContext{}, statement)
+	// Parse with ANTLR
+	parseResults, err := ParsePostgreSQL(statement)
 	if err != nil {
 		return "", errors.Wrap(err, "failed to parse statement")
 	}
 
-	for _, node := range nodes {
-		if n, ok := node.(*ast.VariableSetStmt); ok {
-			if n.Name == "role" {
-				return n.Text(), nil
-			}
+	// Create listener to find SET role statements across all parsed statements
+	listener := &setRoleListener{}
+	for _, parseResult := range parseResults {
+		antlr.ParseTreeWalkerDefault.Walk(listener, parseResult.Tree)
+		// If we found a SET role statement, return it immediately
+		if listener.setRoleText != "" {
+			break
 		}
 	}
 
-	return "", nil
+	return listener.setRoleText, nil
+}
+
+// setRoleListener detects SET role statements
+type setRoleListener struct {
+	*parser.BasePostgreSQLParserListener
+	setRoleText string
+}
+
+// EnterVariablesetstmt handles SET statements
+func (l *setRoleListener) EnterVariablesetstmt(ctx *parser.VariablesetstmtContext) {
+	// Only process if we haven't found a SET role statement yet
+	if l.setRoleText != "" {
+		return
+	}
+
+	// Check if this is SET role
+	// Structure: VariablesetstmtContext -> Set_rest -> Set_rest_more -> Generic_set -> Var_name
+	if ctx.Set_rest() != nil {
+		setRest := ctx.Set_rest()
+		if setRest.Set_rest_more() != nil {
+			setRestMore := setRest.Set_rest_more()
+			if setRestMore.Generic_set() != nil {
+				genericSet := setRestMore.Generic_set()
+				if genericSet.Var_name() != nil {
+					varName := genericSet.Var_name().GetText()
+					if strings.EqualFold(varName, "role") {
+						// Found SET role statement, capture the full text
+						l.setRoleText = ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx)
+					}
+				}
+			}
+		}
+	}
+}
+
+// statementAtPositionFinder finds if a parse tree contains a statement at the given position.
+type statementAtPositionFinder struct {
+	*parser.BasePostgreSQLParserListener
+	startPos *storepb.Position
+	endPos   *storepb.Position
+	baseLine int
+	found    bool
+}
+
+func (f *statementAtPositionFinder) EnterUpdatestmt(ctx *parser.UpdatestmtContext) {
+	if isTopLevel(ctx.GetParent()) && inRange(&storepb.Position{
+		Line:   int32(ctx.GetStart().GetLine()) + int32(f.baseLine),
+		Column: int32(ctx.GetStart().GetColumn()),
+	}, &storepb.Position{
+		Line:   int32(ctx.GetStop().GetLine()) + int32(f.baseLine),
+		Column: int32(ctx.GetStop().GetColumn()),
+	}, f.startPos, f.endPos) {
+		f.found = true
+	}
+}
+
+func (f *statementAtPositionFinder) EnterDeletestmt(ctx *parser.DeletestmtContext) {
+	if isTopLevel(ctx.GetParent()) && inRange(&storepb.Position{
+		Line:   int32(ctx.GetStart().GetLine()) + int32(f.baseLine),
+		Column: int32(ctx.GetStart().GetColumn()),
+	}, &storepb.Position{
+		Line:   int32(ctx.GetStop().GetLine()) + int32(f.baseLine),
+		Column: int32(ctx.GetStop().GetColumn()),
+	}, f.startPos, f.endPos) {
+		f.found = true
+	}
 }

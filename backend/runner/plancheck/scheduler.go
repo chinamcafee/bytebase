@@ -12,10 +12,11 @@ import (
 
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
-	"github.com/bytebase/bytebase/backend/component/state"
-	"github.com/bytebase/bytebase/backend/enterprise"
+	"github.com/bytebase/bytebase/backend/component/bus"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
+	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/store"
+	"github.com/bytebase/bytebase/backend/utils"
 )
 
 const (
@@ -23,21 +24,19 @@ const (
 )
 
 // NewScheduler creates a new plan check scheduler.
-func NewScheduler(s *store.Store, licenseService *enterprise.LicenseService, stateCfg *state.State) *Scheduler {
+func NewScheduler(s *store.Store, bus *bus.Bus, executor *CombinedExecutor) *Scheduler {
 	return &Scheduler{
-		store:          s,
-		licenseService: licenseService,
-		stateCfg:       stateCfg,
-		executors:      make(map[store.PlanCheckRunType]Executor),
+		store:    s,
+		bus:      bus,
+		executor: executor,
 	}
 }
 
 // Scheduler is the plan check run scheduler.
 type Scheduler struct {
-	store          *store.Store
-	licenseService *enterprise.LicenseService
-	stateCfg       *state.State
-	executors      map[store.PlanCheckRunType]Executor
+	store    *store.Store
+	bus      *bus.Bus
+	executor *CombinedExecutor
 }
 
 // Run runs the scheduler.
@@ -50,23 +49,12 @@ func (s *Scheduler) Run(ctx context.Context, wg *sync.WaitGroup) {
 		select {
 		case <-ticker.C:
 			s.runOnce(ctx)
-		case <-s.stateCfg.PlanCheckTickleChan:
+		case <-s.bus.PlanCheckTickleChan:
 			s.runOnce(ctx)
 		case <-ctx.Done():
 			return
 		}
 	}
-}
-
-// Register registers a plan check executor.
-func (s *Scheduler) Register(planCheckRunType store.PlanCheckRunType, executor Executor) {
-	if executor == nil {
-		panic("plan check scheduler: Register executor is nil for plan check run type: " + planCheckRunType)
-	}
-	if _, dup := s.executors[planCheckRunType]; dup {
-		panic("plan check scheduler: Register called twice for plan check run type: " + planCheckRunType)
-	}
-	s.executors[planCheckRunType] = executor
 }
 
 func (s *Scheduler) runOnce(ctx context.Context) {
@@ -80,106 +68,186 @@ func (s *Scheduler) runOnce(ctx context.Context) {
 		}
 	}()
 
-	planCheckRuns, err := s.store.ListPlanCheckRuns(ctx, &store.FindPlanCheckRunMessage{
-		Status: &[]store.PlanCheckRunStatus{
-			store.PlanCheckRunStatusRunning,
-		},
-	})
+	claimed, err := s.store.ClaimAvailablePlanCheckRuns(ctx)
 	if err != nil {
-		slog.Error("failed to list running plan check runs", log.BBError(err))
+		slog.Error("failed to claim available plan check runs", log.BBError(err))
 		return
 	}
 
-	for _, planCheckRun := range planCheckRuns {
-		s.runPlanCheckRun(ctx, planCheckRun)
+	for _, c := range claimed {
+		go s.runPlanCheckRun(ctx, c.UID, c.PlanUID)
 	}
 }
 
-func (s *Scheduler) runPlanCheckRun(ctx context.Context, planCheckRun *store.PlanCheckRunMessage) {
-	executor, ok := s.executors[planCheckRun.Type]
-	if !ok {
-		slog.Error("Skip running plan check for unknown type", slog.Int("uid", planCheckRun.UID), slog.Int64("plan_uid", planCheckRun.PlanUID), slog.String("type", string(planCheckRun.Type)))
-		return
-	}
-	// Skip the plan check run if it is already running.
-	if _, ok := s.stateCfg.RunningPlanChecks.Load(planCheckRun.UID); ok {
-		return
-	}
+func (s *Scheduler) runPlanCheckRun(ctx context.Context, uid int, planUID int64) {
+	ctxWithCancel, cancel := context.WithCancel(ctx)
+	defer cancel()
+	s.bus.RunningPlanCheckRunsCancelFunc.Store(uid, cancel)
+	defer s.bus.RunningPlanCheckRunsCancelFunc.Delete(uid)
 
-	instance, err := s.store.GetInstanceV2(ctx, &store.FindInstanceMessage{ResourceID: &planCheckRun.Config.InstanceId})
+	// Fetch plan to derive check targets at runtime
+	plan, err := s.store.GetPlan(ctxWithCancel, &store.FindPlanMessage{UID: &planUID})
 	if err != nil {
-		slog.Error("failed to find instance", slog.Int("uid", planCheckRun.UID), slog.Int64("plan_uid", planCheckRun.PlanUID), slog.String("instance", planCheckRun.Config.InstanceId))
+		s.markPlanCheckRunFailed(ctxWithCancel, uid, err.Error())
+		return
+	}
+	if plan == nil {
+		s.markPlanCheckRunFailed(ctxWithCancel, uid, "plan not found")
 		return
 	}
 
-	maximumConnections := int(instance.Metadata.GetMaximumConnections())
-	if maximumConnections <= 0 {
-		maximumConnections = common.DefaultInstanceMaximumConnections
+	project, err := s.store.GetProject(ctxWithCancel, &store.FindProjectMessage{ResourceID: &plan.ProjectID})
+	if err != nil {
+		s.markPlanCheckRunFailed(ctxWithCancel, uid, err.Error())
+		return
 	}
-	if s.stateCfg.InstanceOutstandingConnections.Increment(instance.ResourceID, maximumConnections) {
+	if project == nil {
+		s.markPlanCheckRunFailed(ctxWithCancel, uid, "project not found")
 		return
 	}
 
-	s.stateCfg.RunningPlanChecks.Store(planCheckRun.UID, true)
-	go func() {
-		defer func() {
-			s.stateCfg.RunningPlanChecks.Delete(planCheckRun.UID)
-			s.stateCfg.RunningPlanCheckRunsCancelFunc.Delete(planCheckRun.UID)
-			s.stateCfg.InstanceOutstandingConnections.Decrement(instance.ResourceID)
-		}()
+	// Get database group if needed (for spec expansion)
+	databaseGroup, err := s.getDatabaseGroupForPlan(ctxWithCancel, plan)
+	if err != nil {
+		s.markPlanCheckRunFailed(ctxWithCancel, uid, err.Error())
+		return
+	}
 
-		ctxWithCancel, cancel := context.WithCancel(ctx)
-		defer cancel()
-		s.stateCfg.RunningPlanCheckRunsCancelFunc.Store(planCheckRun.UID, cancel)
+	// Derive check targets from plan
+	targets, err := DeriveCheckTargets(project, plan, databaseGroup)
+	if err != nil {
+		s.markPlanCheckRunFailed(ctxWithCancel, uid, err.Error())
+		return
+	}
 
-		results, err := runExecutorOnce(ctxWithCancel, executor, planCheckRun.Config)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				s.markPlanCheckRunCanceled(ctx, planCheckRun, err.Error())
-			} else {
-				s.markPlanCheckRunFailed(ctx, planCheckRun, err.Error())
-			}
-		} else {
-			s.markPlanCheckRunDone(ctx, planCheckRun, results)
+	var results []*storepb.PlanCheckRunResult_Result
+	for _, target := range targets {
+		targetResults, targetErr := s.executor.RunForTarget(ctxWithCancel, target)
+		if targetErr != nil {
+			err = targetErr
+			break
 		}
-	}()
+		results = append(results, targetResults...)
+	}
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			s.markPlanCheckRunCanceled(ctxWithCancel, uid, err.Error())
+		} else {
+			s.markPlanCheckRunFailed(ctxWithCancel, uid, err.Error())
+		}
+	} else {
+		s.markPlanCheckRunDone(ctxWithCancel, uid, planUID, results)
+	}
 }
 
-func (s *Scheduler) markPlanCheckRunDone(ctx context.Context, planCheckRun *store.PlanCheckRunMessage, results []*storepb.PlanCheckRunResult_Result) {
+func (s *Scheduler) markPlanCheckRunDone(ctx context.Context, uid int, planUID int64, results []*storepb.PlanCheckRunResult_Result) {
 	result := &storepb.PlanCheckRunResult{
 		Results: results,
 	}
 	if err := s.store.UpdatePlanCheckRun(ctx,
 		store.PlanCheckRunStatusDone,
 		result,
-		planCheckRun.UID,
+		uid,
 	); err != nil {
 		slog.Error("failed to mark plan check run done", log.BBError(err))
+		return
+	}
+
+	// Auto-create rollout if plan checks pass
+	issue, err := s.store.GetIssue(ctx, &store.FindIssueMessage{PlanUID: &planUID})
+	if err != nil {
+		slog.Error("failed to get issue for approval check after plan check",
+			slog.Int("plan_id", int(planUID)),
+			log.BBError(err))
+		return
+	}
+	if issue != nil && issue.PlanUID != nil {
+		// Trigger approval finding
+		s.bus.ApprovalCheckChan <- int64(issue.UID)
+		// Trigger rollout creation (existing behavior)
+		s.bus.RolloutCreationChan <- planUID
 	}
 }
 
-func (s *Scheduler) markPlanCheckRunFailed(ctx context.Context, planCheckRun *store.PlanCheckRunMessage, reason string) {
+func (s *Scheduler) markPlanCheckRunFailed(ctx context.Context, uid int, reason string) {
 	result := &storepb.PlanCheckRunResult{
 		Error: reason,
 	}
 	if err := s.store.UpdatePlanCheckRun(ctx,
 		store.PlanCheckRunStatusFailed,
 		result,
-		planCheckRun.UID,
+		uid,
 	); err != nil {
 		slog.Error("failed to mark plan check run failed", log.BBError(err))
 	}
 }
 
-func (s *Scheduler) markPlanCheckRunCanceled(ctx context.Context, planCheckRun *store.PlanCheckRunMessage, reason string) {
+func (s *Scheduler) markPlanCheckRunCanceled(ctx context.Context, uid int, reason string) {
 	result := &storepb.PlanCheckRunResult{
 		Error: reason,
 	}
 	if err := s.store.UpdatePlanCheckRun(ctx,
 		store.PlanCheckRunStatusCanceled,
 		result,
-		planCheckRun.UID,
+		uid,
 	); err != nil {
 		slog.Error("failed to mark plan check run canceled", log.BBError(err))
 	}
+}
+
+// getDatabaseGroupForPlan checks if the plan targets a database group and returns it with matched databases.
+// Returns nil if the plan does not target a database group.
+func (s *Scheduler) getDatabaseGroupForPlan(ctx context.Context, plan *store.PlanMessage) (*v1pb.DatabaseGroup, error) {
+	for _, spec := range plan.Config.Specs {
+		cfg, ok := spec.Config.(*storepb.PlanConfig_Spec_ChangeDatabaseConfig)
+		if !ok {
+			continue
+		}
+		if len(cfg.ChangeDatabaseConfig.Targets) != 1 {
+			continue
+		}
+
+		target := cfg.ChangeDatabaseConfig.Targets[0]
+		_, databaseGroupID, err := common.GetProjectIDDatabaseGroupID(target)
+		if err != nil {
+			// Not a database group reference, skip
+			continue
+		}
+
+		// Found a database group reference - fetch and expand it
+		dbGroup, err := s.store.GetDatabaseGroup(ctx, &store.FindDatabaseGroupMessage{
+			ResourceID: &databaseGroupID,
+			ProjectID:  &plan.ProjectID,
+		})
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to get database group %q", target)
+		}
+		if dbGroup == nil {
+			return nil, errors.Errorf("database group %q not found", target)
+		}
+
+		// Get all databases in the project to compute matches
+		allDatabases, err := s.store.ListDatabases(ctx, &store.FindDatabaseMessage{ProjectID: &plan.ProjectID})
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to list databases for project %q", plan.ProjectID)
+		}
+
+		// Compute matched databases using CEL expression
+		matchedDatabases, err := utils.GetMatchedDatabasesInDatabaseGroup(ctx, dbGroup, allDatabases)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to get matched databases for group %q", databaseGroupID)
+		}
+
+		// Convert to v1pb.DatabaseGroup format
+		result := &v1pb.DatabaseGroup{
+			Name: target,
+		}
+		for _, db := range matchedDatabases {
+			result.MatchedDatabases = append(result.MatchedDatabases, &v1pb.DatabaseGroup_Database{
+				Name: common.FormatDatabase(db.InstanceID, db.DatabaseName),
+			})
+		}
+		return result, nil
+	}
+	return nil, nil
 }

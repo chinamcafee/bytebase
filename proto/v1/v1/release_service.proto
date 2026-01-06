@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package bytebase.v1;
 
+import "buf/validate/validate.proto";
 import "google/api/annotations.proto";
 import "google/api/client.proto";
 import "google/api/field_behavior.proto";
@@ -35,15 +36,6 @@ service ReleaseService {
     option (bytebase.v1.auth_method) = IAM;
   }
 
-  // Searches releases by digest or other criteria.
-  // Permissions required: bb.releases.get
-  rpc SearchReleases(SearchReleasesRequest) returns (SearchReleasesResponse) {
-    option (google.api.http) = {get: "/v1/{parent=projects/*}/releases:search"};
-    option (google.api.method_signature) = "parent";
-    option (bytebase.v1.permission) = "bb.releases.get";
-    option (bytebase.v1.auth_method) = IAM;
-  }
-
   // Creates a new release with SQL files.
   // Permissions required: bb.releases.create
   rpc CreateRelease(CreateReleaseRequest) returns (Release) {
@@ -66,7 +58,6 @@ service ReleaseService {
     };
     option (google.api.method_signature) = "release,update_mask";
     option (bytebase.v1.permission) = "bb.releases.update";
-    option (bytebase.v1.allow_missing_requires) = "bb.releases.create";
     option (bytebase.v1.auth_method) = IAM;
   }
 
@@ -139,38 +130,6 @@ message ListReleasesResponse {
   string next_page_token = 2;
 }
 
-message SearchReleasesRequest {
-  // Format: projects/{project}
-  string parent = 1 [
-    (google.api.field_behavior) = REQUIRED,
-    (google.api.resource_reference) = {type: "bytebase.com/Project"}
-  ];
-
-  // The maximum number of releases to return. The service may return fewer than this value.
-  // If unspecified, at most 10 releases will be returned.
-  // The maximum value is 1000; values above 1000 will be coerced to 1000.
-  int32 page_size = 2;
-
-  // A page token, received from a previous `ListReleases` call.
-  // Provide this to retrieve the subsequent page.
-  //
-  // When paginating, all other parameters provided to `ListReleases` must match
-  // the call that provided the page token.
-  string page_token = 3;
-
-  // Search by the digest of the release.
-  optional string digest = 4;
-}
-
-message SearchReleasesResponse {
-  // The releases matching the search criteria.
-  repeated Release releases = 1;
-
-  // A token, which can be sent as `page_token` to retrieve the next page.
-  // If this field is omitted, there are no subsequent pages.
-  string next_page_token = 2;
-}
-
 message CreateReleaseRequest {
   // Format: projects/{project}
   string parent = 1 [
@@ -228,6 +187,12 @@ message CheckReleaseRequest {
   // projects/{project}/databaseGroups/{databaseGroup}
   // instances/{instance}/databases/{database}
   repeated string targets = 3;
+
+  // Custom linting rules in natural language for AI-powered validation.
+  // Each rule should be a clear statement describing the desired schema constraint.
+  // Example: "All tables must have a primary key"
+  // Example: "VARCHAR columns should specify a maximum length"
+  string custom_rules = 4;
 }
 
 message CheckReleaseResponse {
@@ -270,7 +235,7 @@ message Release {
   string name = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   // The title of the release.
-  string title = 2;
+  string title = 2 [(buf.validate.field).string.max_len = 200];
 
   // The SQL files included in the release.
   repeated File files = 3;
@@ -292,20 +257,28 @@ message Release {
   // If the digest is not empty, it must be unique in the project. Otherwise, an ALREADY_EXISTS error will be returned.
   string digest = 8;
 
+  // The type of schema change for all files in this release.
+  Type type = 9;
+
+  // The type of schema change.
+  enum Type {
+    // Unspecified type.
+    TYPE_UNSPECIFIED = 0;
+    // Versioned schema migration.
+    VERSIONED = 1;
+    // Declarative schema definition.
+    DECLARATIVE = 2;
+  }
+
   // A SQL file in a release.
   message File {
-    // The unique identifier for the file.
-    string id = 1;
     // The path of the file. e.g., `2.2/V0001_create_table.sql`.
     string path = 2;
-    // The type of the file.
-    Type type = 5;
+
     // The version identifier for the file.
     string version = 6;
-    // The migration type of the file.
-    // For versioned files, it is the migration type of the file.
-    // For declarative files, this field is always DDL, thus meaningless.
-    MigrationType migration_type = 9;
+    // Whether to use gh-ost for online schema migration.
+    bool enable_ghost = 9;
 
     // For inputs, we must either use `sheet` or `statement`.
     // For outputs, we always use `sheet`. `statement` is the preview of the sheet content.
@@ -314,33 +287,9 @@ message Release {
     // Format: projects/{project}/sheets/{sheet}
     string sheet = 3 [(google.api.resource_reference) = {type: "bytebase.com/Sheet"}];
     // The raw SQL statement content.
-    bytes statement = 7;
+    bytes statement = 7 [(google.api.field_behavior) = INPUT_ONLY];
     // The SHA256 hash value of the sheet content or the statement.
     string sheet_sha256 = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
-    // The size of the statement in bytes.
-    int64 statement_size = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
-
-    // The type of migration file.
-    enum Type {
-      // Unspecified type.
-      TYPE_UNSPECIFIED = 0;
-      // Versioned migration file with sequential version numbers.
-      VERSIONED = 1;
-      // Declarative schema definition file describing desired state.
-      DECLARATIVE = 2;
-    }
-
-    // The migration type for versioned files.
-    enum MigrationType {
-      // Unspecified migration type.
-      MIGRATION_TYPE_UNSPECIFIED = 0;
-      // DDL (Data Definition Language) migration.
-      DDL = 1;
-      // DDL migration using gh-ost for online schema changes.
-      DDL_GHOST = 2;
-      // DML (Data Manipulation Language) migration.
-      DML = 3;
-    }
   }
 
   // Version control system source information.

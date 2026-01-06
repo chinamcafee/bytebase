@@ -10,9 +10,23 @@ export const AUTH_PASSWORD_RESET_MODULE = "auth.password.reset";
 export const AUTH_PASSWORD_FORGOT_MODULE = "auth.password.forgot";
 export const AUTH_OAUTH_CALLBACK_MODULE = "auth.oauth.callback";
 export const AUTH_OIDC_CALLBACK_MODULE = "auth.oidc.callback";
+export const AUTH_IDP_INIT_MODULE = "auth.idp.init";
 export const AUTH_2FA_SETUP_MODULE = "auth.2fa.setup";
+export const OAUTH2_CONSENT_MODULE = "oauth2.consent";
 
 const authRoutes: RouteRecordRaw[] = [
+  {
+    path: "/oauth2/consent",
+    component: SplashLayout,
+    children: [
+      {
+        path: "",
+        name: OAUTH2_CONSENT_MODULE,
+        meta: { title: () => t("oauth2.consent.title") },
+        component: () => import("@/views/OAuth2Consent.vue"),
+      },
+    ],
+  },
   {
     path: "/auth",
     name: "auth",
@@ -26,6 +40,7 @@ const authRoutes: RouteRecordRaw[] = [
         component: () => import("@/views/auth/Signin.vue"),
       },
       {
+        // We need the admin as the backdoor for the workspace admin.
         path: "admin",
         name: AUTH_SIGNIN_ADMIN_MODULE,
         meta: { title: () => t("common.sign-in-as-admin") },
@@ -54,6 +69,12 @@ const authRoutes: RouteRecordRaw[] = [
         name: AUTH_MFA_MODULE,
         meta: { title: () => t("multi-factor.self") },
         component: () => import("@/views/auth/MultiFactor.vue"),
+      },
+      {
+        path: "idp-init",
+        name: AUTH_IDP_INIT_MODULE,
+        meta: { title: () => "Initializing SSO" },
+        component: () => import("@/views/IdPInitiatedSSO.vue"),
       },
     ],
   },

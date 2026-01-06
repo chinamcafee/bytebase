@@ -6,8 +6,8 @@
   want:
     - status: 2
       code: 206
-      title: statement.disallow-commit
-      content: 'Commit is not allowed, related statement: "COMMIT;"'
+      title: STATEMENT_DISALLOW_COMMIT
+      content: 'Commit is not allowed, related statement: "COMMIT"'
       startposition:
         line: 3
         column: 0
@@ -24,16 +24,16 @@
   want:
     - status: 2
       code: 206
-      title: statement.disallow-commit
-      content: 'Commit is not allowed, related statement: "COMMIT;"'
+      title: STATEMENT_DISALLOW_COMMIT
+      content: 'Commit is not allowed, related statement: "COMMIT"'
       startposition:
         line: 3
         column: 0
       endposition: null
     - status: 2
       code: 206
-      title: statement.disallow-commit
-      content: 'Commit is not allowed, related statement: "COMMIT;"'
+      title: STATEMENT_DISALLOW_COMMIT
+      content: 'Commit is not allowed, related statement: "COMMIT"'
       startposition:
         line: 7
         column: 0

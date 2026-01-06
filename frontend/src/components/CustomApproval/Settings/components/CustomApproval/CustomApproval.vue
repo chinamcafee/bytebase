@@ -1,31 +1,23 @@
 <template>
-  <div class="w-full">
-    <NTabs v-model:value="tab">
-      <NTabPane
-        name="rules"
-        :tab="$t('custom-approval.rule.rules')"
-        display-directive="show:lazy"
-      >
-        <RulesPanel />
-      </NTabPane>
-      <NTabPane
-        name="flows"
-        :tab="$t('custom-approval.approval-flow.approval-flows')"
-        display-directive="show:lazy"
-      >
-        <FlowsPanel />
-      </NTabPane>
-    </NTabs>
+  <div class="w-full flex flex-col gap-y-6">
+    <RulesSection
+      v-for="source in supportedSourceList"
+      :key="source"
+      :source="source"
+    />
   </div>
 </template>
 
 <script lang="ts" setup>
-import { NTabPane, NTabs } from "naive-ui";
-import { provideRiskFilter } from "../common/RiskFilter";
-import FlowsPanel from "./FlowsPanel";
-import RulesPanel from "./RulesPanel";
-import { useCustomApprovalContext } from "./context";
+import { computed } from "vue";
+import { WorkspaceApprovalSetting_Rule_Source } from "@/types/proto-es/v1/setting_service_pb";
+import RulesSection from "./RulesPanel/RulesSection.vue";
 
-const { tab } = useCustomApprovalContext();
-provideRiskFilter();
+const supportedSourceList = computed(() => [
+  WorkspaceApprovalSetting_Rule_Source.CHANGE_DATABASE,
+  WorkspaceApprovalSetting_Rule_Source.CREATE_DATABASE,
+  WorkspaceApprovalSetting_Rule_Source.EXPORT_DATA,
+  WorkspaceApprovalSetting_Rule_Source.REQUEST_ROLE,
+  WorkspaceApprovalSetting_Rule_Source.SOURCE_UNSPECIFIED,
+]);
 </script>

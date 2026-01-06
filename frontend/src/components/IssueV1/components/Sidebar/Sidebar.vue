@@ -36,7 +36,7 @@
       v-show="
         selectedSpec && (shouldShowPreBackupSection || shouldShowGhostSection)
       "
-      class="space-y-2"
+      class="flex flex-col gap-y-2"
     >
       <div class="border-t border-gray-200 -mx-4" />
       <NTooltip v-if="selectedSpec" :showArrow="false">
@@ -73,12 +73,21 @@ import { targetsForSpec } from "@/components/Plan";
 import { GhostSection } from "@/components/Plan/components/Configuration";
 import { provideGhostSettingContext } from "@/components/Plan/components/Configuration/GhostSection/context";
 import { ApprovalFlowSection } from "@/components/Plan/components/IssueReviewView/Sidebar/ApprovalFlowSection";
-import { issueServiceClientConnect } from "@/grpcweb";
-import { pushNotification, useCurrentProjectV1 } from "@/store";
-import { UpdateIssueRequestSchema } from "@/types/proto-es/v1/issue_service_pb";
-import { IssueSchema } from "@/types/proto-es/v1/issue_service_pb";
+import { issueServiceClientConnect } from "@/connect";
+import {
+  extractUserId,
+  pushNotification,
+  useCurrentProjectV1,
+  useCurrentUserV1,
+} from "@/store";
+import {
+  IssueSchema,
+  IssueStatus,
+  UpdateIssueRequestSchema,
+} from "@/types/proto-es/v1/issue_service_pb";
 import type { Plan } from "@/types/proto-es/v1/plan_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
+import { hasProjectPermissionV2 } from "@/utils";
 import { specForTask, useIssueContext } from "../../logic";
 import IssueLabels from "./IssueLabels.vue";
 import PreBackupSection from "./PreBackupSection";
@@ -90,6 +99,7 @@ const { isCreating, selectedTask, issue, events, allowChange } =
   useIssueContext();
 const { project } = useCurrentProjectV1();
 const preBackupSectionRef = ref<InstanceType<typeof PreBackupSection>>();
+const currentUser = useCurrentUserV1();
 
 const selectedSpec = computed(() =>
   specForTask(issue.value.planEntity as Plan, selectedTask.value)
@@ -103,14 +113,36 @@ const flattenSpecCount = computed(
     ) || 0
 );
 
+const plan = computed(() => issue.value.planEntity as Plan);
+
 const { shouldShow: shouldShowGhostSection, events: ghostEvents } =
   provideGhostSettingContext({
     isCreating,
-    project,
-    plan: computed(() => issue.value.planEntity as Plan),
+    plan,
     selectedSpec,
-    selectedTask: selectedTask,
-    issue,
+    allowChange: computed(() => {
+      // Allow changes when creating
+      if (isCreating.value) {
+        return true;
+      }
+
+      // Disallow changes if the plan has started rollout.
+      if (plan.value.hasRollout) {
+        return false;
+      }
+
+      // If issue is not open, disallow
+      if (issue?.value && issue.value.status !== IssueStatus.OPEN) {
+        return false;
+      }
+
+      // Allowed to the plan/issue creator.
+      if (currentUser.value.email === extractUserId(plan.value.creator)) {
+        return true;
+      }
+
+      return hasProjectPermissionV2(project.value, "bb.plans.update");
+    }),
   });
 
 const shouldShowPreBackupSection = computed(() => {

@@ -157,8 +157,9 @@ func parseVersion(version string) (string, error) {
 // Execute executes a SQL statement.
 func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteOptions) (int64, error) {
 	// Parse transaction mode from the script
-	transactionMode, cleanedStatement := base.ParseTransactionMode(statement)
+	config, cleanedStatement := base.ParseTransactionConfig(statement)
 	statement = cleanedStatement
+	transactionMode := config.Mode
 
 	// Apply default when transaction mode is not specified
 	if transactionMode == common.TransactionModeUnspecified {
@@ -182,18 +183,16 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 	}
 	slog.Debug("connectionID", slog.String("connectionID", connectionID))
 
-	var remainingSQLsIndex, nonTransactionStmtsIndex []int
-	var nonTransactionStmts []base.SingleSQL
+	var nonTransactionStmts []base.Statement
 	var totalCommands int
-	var commands []base.SingleSQL
-	var originalIndex []int32
+	var commands []base.Statement
 	oneshot := true
 	if len(statement) <= common.MaxSheetCheckSize {
 		singleSQLs, err := tidbparser.SplitSQL(statement)
 		if err != nil {
 			return 0, errors.Wrapf(err, "failed to split sql")
 		}
-		singleSQLs, originalIndex = base.FilterEmptySQLWithIndexes(singleSQLs)
+		singleSQLs = base.FilterEmptyStatements(singleSQLs)
 		if len(singleSQLs) == 0 {
 			return 0, nil
 		}
@@ -202,38 +201,34 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 			oneshot = false
 			// Find non-transactional statements.
 			// TiDB cannot run create table and create index in a single transaction.
-			var remainingSQLs []base.SingleSQL
-			for i, singleSQL := range singleSQLs {
+			var remainingSQLs []base.Statement
+			for _, singleSQL := range singleSQLs {
 				if isNonTransactionStatement(singleSQL.Text) {
 					nonTransactionStmts = append(nonTransactionStmts, singleSQL)
-					nonTransactionStmtsIndex = append(nonTransactionStmtsIndex, i)
 					continue
 				}
 				remainingSQLs = append(remainingSQLs, singleSQL)
-				remainingSQLsIndex = append(remainingSQLsIndex, i)
 			}
 			commands = remainingSQLs
 		}
 	}
 	if oneshot {
-		commands = []base.SingleSQL{
+		commands = []base.Statement{
 			{
 				Text: statement,
 			},
 		}
-		originalIndex = []int32{0}
-		remainingSQLsIndex = []int{0}
 	}
 
 	// Execute based on transaction mode
 	if transactionMode == common.TransactionModeOff {
-		return d.executeInAutoCommitMode(ctx, conn, commands, nonTransactionStmts, remainingSQLsIndex, nonTransactionStmtsIndex, originalIndex, opts, connectionID)
+		return d.executeInAutoCommitMode(ctx, conn, commands, nonTransactionStmts, opts, connectionID)
 	}
-	return d.executeInTransactionMode(ctx, conn, commands, nonTransactionStmts, remainingSQLsIndex, nonTransactionStmtsIndex, originalIndex, opts, connectionID)
+	return d.executeInTransactionMode(ctx, conn, commands, nonTransactionStmts, opts, connectionID)
 }
 
 // executeInTransactionMode executes statements within a single transaction
-func (d *Driver) executeInTransactionMode(ctx context.Context, conn *sql.Conn, commands []base.SingleSQL, nonTransactionStmts []base.SingleSQL, remainingSQLsIndex, nonTransactionStmtsIndex []int, originalIndex []int32, opts db.ExecuteOptions, connectionID string) (int64, error) {
+func (d *Driver) executeInTransactionMode(ctx context.Context, conn *sql.Conn, commands []base.Statement, nonTransactionStmts []base.Statement, opts db.ExecuteOptions, connectionID string) (int64, error) {
 	var totalRowsAffected int64
 
 	if err := conn.Raw(func(driverConn any) error {
@@ -262,9 +257,8 @@ func (d *Driver) executeInTransactionMode(ctx context.Context, conn *sql.Conn, c
 			opts.LogTransactionControl(storepb.TaskRunLog_TransactionControl_ROLLBACK, rerr)
 		}()
 
-		for i, command := range commands {
-			indexes := []int32{originalIndex[remainingSQLsIndex[i]]}
-			opts.LogCommandExecute(indexes, command.Text)
+		for _, command := range commands {
+			opts.LogCommandExecute(command.Range, command.Text)
 
 			sqlWithBytebaseAppComment := util.MySQLPrependBytebaseAppComment(command.Text)
 			sqlResult, err := exer.ExecContext(ctx, sqlWithBytebaseAppComment, nil)
@@ -278,11 +272,7 @@ func (d *Driver) executeInTransactionMode(ctx context.Context, conn *sql.Conn, c
 
 				opts.LogCommandResponse(0, nil, err.Error())
 
-				return &db.ErrorWithPosition{
-					Err:   errors.Wrapf(err, "failed to execute context in a transaction"),
-					Start: command.Start,
-					End:   command.End,
-				}
+				return err
 			}
 
 			allRowsAffected := sqlResult.(mysql.Result).AllRowsAffected()
@@ -310,9 +300,8 @@ func (d *Driver) executeInTransactionMode(ctx context.Context, conn *sql.Conn, c
 	}
 
 	// Run non-transaction statements at the end.
-	for i, stmt := range nonTransactionStmts {
-		indexes := []int32{originalIndex[nonTransactionStmtsIndex[i]]}
-		opts.LogCommandExecute(indexes, stmt.Text)
+	for _, stmt := range nonTransactionStmts {
+		opts.LogCommandExecute(stmt.Range, stmt.Text)
 		if _, err := d.db.ExecContext(ctx, stmt.Text); err != nil {
 			opts.LogCommandResponse(0, []int64{0}, err.Error())
 			return 0, err
@@ -323,42 +312,21 @@ func (d *Driver) executeInTransactionMode(ctx context.Context, conn *sql.Conn, c
 }
 
 // executeInAutoCommitMode executes statements sequentially in auto-commit mode
-func (d *Driver) executeInAutoCommitMode(ctx context.Context, conn *sql.Conn, commands []base.SingleSQL, nonTransactionStmts []base.SingleSQL, remainingSQLsIndex, nonTransactionStmtsIndex []int, originalIndex []int32, opts db.ExecuteOptions, connectionID string) (int64, error) {
+func (d *Driver) executeInAutoCommitMode(ctx context.Context, conn *sql.Conn, commands []base.Statement, nonTransactionStmts []base.Statement, opts db.ExecuteOptions, connectionID string) (int64, error) {
 	var totalRowsAffected int64
 
-	// Execute all statements (including non-transactional ones) in order
-	allCommands := make([]base.SingleSQL, 0, len(commands)+len(nonTransactionStmts))
-	allIndexes := make([]int, 0, len(commands)+len(nonTransactionStmts))
-
-	// Merge commands and non-transactional statements while preserving original order
-	cmdIdx, nonTxIdx := 0, 0
-	for cmdIdx < len(commands) || nonTxIdx < len(nonTransactionStmts) {
-		if cmdIdx >= len(commands) {
-			allCommands = append(allCommands, nonTransactionStmts[nonTxIdx])
-			allIndexes = append(allIndexes, nonTransactionStmtsIndex[nonTxIdx])
-			nonTxIdx++
-		} else if nonTxIdx >= len(nonTransactionStmts) {
-			allCommands = append(allCommands, commands[cmdIdx])
-			allIndexes = append(allIndexes, remainingSQLsIndex[cmdIdx])
-			cmdIdx++
-		} else if remainingSQLsIndex[cmdIdx] < nonTransactionStmtsIndex[nonTxIdx] {
-			allCommands = append(allCommands, commands[cmdIdx])
-			allIndexes = append(allIndexes, remainingSQLsIndex[cmdIdx])
-			cmdIdx++
-		} else {
-			allCommands = append(allCommands, nonTransactionStmts[nonTxIdx])
-			allIndexes = append(allIndexes, nonTransactionStmtsIndex[nonTxIdx])
-			nonTxIdx++
-		}
-	}
+	// Execute all statements (including non-transactional ones)
+	// In auto-commit mode, execute commands followed by non-transactional statements
+	allCommands := make([]base.Statement, 0, len(commands)+len(nonTransactionStmts))
+	allCommands = append(allCommands, commands...)
+	allCommands = append(allCommands, nonTransactionStmts...)
 
 	if err := conn.Raw(func(driverConn any) error {
 		//nolint
 		exer := driverConn.(driver.ExecerContext)
 
-		for i, command := range allCommands {
-			indexes := []int32{originalIndex[allIndexes[i]]}
-			opts.LogCommandExecute(indexes, command.Text)
+		for _, command := range allCommands {
+			opts.LogCommandExecute(command.Range, command.Text)
 
 			sqlWithBytebaseAppComment := util.MySQLPrependBytebaseAppComment(command.Text)
 			sqlResult, err := exer.ExecContext(ctx, sqlWithBytebaseAppComment, nil)
@@ -373,11 +341,7 @@ func (d *Driver) executeInAutoCommitMode(ctx context.Context, conn *sql.Conn, co
 				opts.LogCommandResponse(0, nil, err.Error())
 				// In auto-commit mode, we stop at the first error
 				// The database is left in a partially migrated state
-				return &db.ErrorWithPosition{
-					Err:   errors.Wrapf(err, "failed to execute statement %d in auto-commit mode", i+1),
-					Start: command.Start,
-					End:   command.End,
-				}
+				return err
 			}
 
 			allRowsAffected := sqlResult.(mysql.Result).AllRowsAffected()
@@ -412,11 +376,11 @@ func isNonTransactionStatement(stmt string) bool {
 
 // QueryConn queries a SQL statement in a given connection.
 func (d *Driver) QueryConn(ctx context.Context, conn *sql.Conn, statement string, queryContext db.QueryContext) ([]*v1pb.QueryResult, error) {
-	singleSQLs, err := base.SplitMultiSQL(storepb.Engine_MYSQL, statement)
+	singleSQLs, err := base.SplitMultiSQL(storepb.Engine_TIDB, statement)
 	if err != nil {
 		return nil, err
 	}
-	singleSQLs = base.FilterEmptySQL(singleSQLs)
+	singleSQLs = base.FilterEmptyStatements(singleSQLs)
 	if len(singleSQLs) == 0 {
 		return nil, nil
 	}

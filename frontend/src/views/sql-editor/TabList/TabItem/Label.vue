@@ -29,11 +29,7 @@ import { create } from "@bufbuild/protobuf";
 import { NEllipsis } from "naive-ui";
 import { computed, nextTick, reactive, ref, watch } from "vue";
 import { useEmitteryEventListener } from "@/composables/useEmitteryEventListener";
-import {
-  useSQLEditorTabStore,
-  useWorkSheetStore,
-  useTabViewStateStore,
-} from "@/store";
+import { useSQLEditorTabStore, useWorkSheetStore } from "@/store";
 import type { SQLEditorTab } from "@/types";
 import { WorksheetSchema } from "@/types/proto-es/v1/worksheet_service_pb";
 import { useTabListContext } from "../context";
@@ -54,13 +50,13 @@ const state = reactive<LocalState>({
 
 const tabStore = useSQLEditorTabStore();
 const worksheetV1Store = useWorkSheetStore();
-const tabViewStateStore = useTabViewStateStore();
 const inputRef = ref<HTMLInputElement>();
 const { events } = useTabListContext();
 
-const readonly = computed(
-  () => tabViewStateStore.getViewState(props.tab.id).view !== "CODE"
-);
+const readonly = computed(() => {
+  const viewState = props.tab.viewState;
+  return viewState.view !== "CODE";
+});
 
 const isCurrentTab = computed(() => props.tab.id === tabStore.currentTabId);
 
@@ -78,7 +74,7 @@ const beginEdit = () => {
   state.editing = true;
   state.title = props.tab.title;
   nextTick(() => {
-    inputRef.value?.focus();
+    inputRef.value?.select();
   });
 };
 
@@ -90,20 +86,18 @@ const confirmEdit = () => {
     return cancelEdit();
   }
 
-  tab.title = title;
-  tab.status = "DIRTY";
+  tabStore.updateTab(tab.id, {
+    title,
+  });
+
   if (tab.worksheet) {
-    worksheetV1Store
-      .patchWorksheet(
-        create(WorksheetSchema, {
-          name: tab.worksheet,
-          title,
-        }),
-        ["title"]
-      )
-      .then(() => {
-        tab.status = "CLEAN";
-      });
+    worksheetV1Store.patchWorksheet(
+      create(WorksheetSchema, {
+        name: tab.worksheet,
+        title,
+      }),
+      ["title"]
+    );
   }
 
   state.editing = false;
@@ -129,17 +123,29 @@ watch(isCurrentTab, (value) => {
 
 <style scoped lang="postcss">
 .label {
-  @apply relative flex items-center whitespace-nowrap min-w-[6rem] max-w-[12rem] truncate;
+  position: relative;
+  min-width: 6rem;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .label :deep(.name) {
-  @apply h-6 w-full flex items-center text-sm;
+  width: 100%;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
 }
 .edit {
-  @apply border-0 border-b absolute inset-0 p-0 text-sm;
+  border: 0;
+  border-bottom-width: 1px;
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
 }
 
 .label.new :deep(.name) {
-  @apply italic;
+  font-style: italic;
 }
 </style>

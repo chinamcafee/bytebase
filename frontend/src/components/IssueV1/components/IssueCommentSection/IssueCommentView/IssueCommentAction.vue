@@ -24,7 +24,7 @@
             <ActionSentence
               :issue="issue"
               :issue-comment="issueComment"
-              class="text-gray-600 break-words min-w-0"
+              class="text-gray-600 wrap-break-word min-w-0"
             />
 
             <HumanizeTs
@@ -45,14 +45,6 @@
             >
               ({{ $t("common.edited") }})
             </span>
-
-            <span v-if="similar.length > 0" class="text-xs text-gray-500">
-              {{
-                $t("activity.n-similar-activities", {
-                  count: similar.length + 1,
-                })
-              }}
-            </span>
           </div>
 
           <slot name="subject-suffix"></slot>
@@ -60,7 +52,7 @@
       </div>
       <div
         v-if="$slots.comment"
-        class="px-4 py-3 border-t border-gray-200 text-sm text-gray-700 whitespace-pre-wrap break-words"
+        class="px-4 py-3 border-t border-gray-200 text-sm text-gray-700 whitespace-pre-wrap wrap-break-word"
       >
         <slot name="comment" />
       </div>
@@ -70,9 +62,13 @@
 
 <script lang="ts" setup>
 import HumanizeTs from "@/components/misc/HumanizeTs.vue";
-import { IssueCommentType, getIssueCommentType } from "@/store";
-import { useUserStore, extractUserId } from "@/store";
-import { getTimeForPbTimestampProtoEs, type ComposedIssue } from "@/types";
+import {
+  extractUserId,
+  getIssueCommentType,
+  IssueCommentType,
+  useUserStore,
+} from "@/store";
+import { type ComposedIssue, getTimeForPbTimestampProtoEs } from "@/types";
 import type { IssueComment } from "@/types/proto-es/v1/issue_service_pb";
 import type { Rollout } from "@/types/proto-es/v1/rollout_service_pb";
 import ActionCreator from "./ActionCreator.vue";
@@ -82,7 +78,6 @@ defineProps<{
   issue: ComposedIssue;
   index: number;
   issueComment: IssueComment;
-  similar: IssueComment[];
   rollout?: Rollout;
 }>();
 

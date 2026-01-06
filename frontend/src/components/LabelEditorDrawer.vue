@@ -32,9 +32,9 @@
 </template>
 
 <script lang="ts" setup>
-import { isEqual, cloneDeep } from "lodash-es";
+import { cloneDeep, isEqual } from "lodash-es";
 import { NButton } from "naive-ui";
-import { computed, reactive, watch, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { BBAttention } from "@/bbkit";
 import { LabelListEditor } from "@/components/Label";
@@ -71,8 +71,8 @@ const state = reactive<LocalState>({
 const labelListEditorRef = ref<InstanceType<typeof LabelListEditor>>();
 
 const convertKVListToLabelsList = () => {
+  const labels = convertKVListToLabels(state.kvList);
   return props.labels.map((oldLabel) => {
-    const labels = convertKVListToLabels(state.kvList);
     for (const label of state.kvList) {
       if (!label.value) {
         if (oldLabel[label.key]) {

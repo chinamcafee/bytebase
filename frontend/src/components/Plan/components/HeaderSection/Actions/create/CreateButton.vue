@@ -21,7 +21,7 @@
 
 <script setup lang="ts">
 import { create } from "@bufbuild/protobuf";
-import { NTooltip, NButton } from "naive-ui";
+import { NButton, NTooltip } from "naive-ui";
 import { computed, nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
@@ -29,44 +29,35 @@ import {
   ErrorList,
   useSpecsValidation,
 } from "@/components/Plan/components/common";
+import { getLocalSheetByName, usePlanContext } from "@/components/Plan/logic";
+import { issueServiceClientConnect, planServiceClientConnect } from "@/connect";
 import {
-  databaseEngineForSpec,
-  getLocalSheetByName,
-} from "@/components/Plan/logic";
-import { usePlanContext } from "@/components/Plan/logic";
-import {
-  planServiceClientConnect,
-  issueServiceClientConnect,
-  rolloutServiceClientConnect,
-} from "@/grpcweb";
-import {
-  PROJECT_V1_ROUTE_PLAN_DETAIL,
   PROJECT_V1_ROUTE_ISSUE_DETAIL_V1,
+  PROJECT_V1_ROUTE_PLAN_DETAIL,
 } from "@/router/dashboard/projectV1";
 import {
-  useCurrentProjectV1,
-  useSheetV1Store,
-  useCurrentUserV1,
   pushNotification,
+  useCurrentProjectV1,
+  useCurrentUserV1,
+  useSheetV1Store,
 } from "@/store";
 import {
   CreateIssueRequestSchema,
+  Issue_Type,
   IssueSchema,
   IssueStatus,
-  Issue_Type,
 } from "@/types/proto-es/v1/issue_service_pb";
-import { CreatePlanRequestSchema } from "@/types/proto-es/v1/plan_service_pb";
 import {
+  CreatePlanRequestSchema,
   type Plan_ChangeDatabaseConfig,
   type Plan_ExportDataConfig,
 } from "@/types/proto-es/v1/plan_service_pb";
-import { CreateRolloutRequestSchema } from "@/types/proto-es/v1/rollout_service_pb";
 import type { Sheet } from "@/types/proto-es/v1/sheet_service_pb";
 import {
+  extractIssueUID,
   extractPlanUID,
   extractProjectResourceName,
   extractSheetUID,
-  extractIssueUID,
   hasProjectPermissionV2,
 } from "@/utils";
 
@@ -103,6 +94,10 @@ const planCreateErrorList = computed(() => {
 });
 
 const doCreatePlan = async () => {
+  // Prevent race condition: check if already creating
+  if (loading.value) {
+    return;
+  }
   loading.value = true;
 
   try {
@@ -117,7 +112,10 @@ const doCreatePlan = async () => {
         plan: plan.value,
       });
       const createdPlan = await planServiceClientConnect.createPlan(request);
-      if (!createdPlan) return;
+      if (!createdPlan) {
+        loading.value = false;
+        return;
+      }
 
       nextTick(() => {
         router.replace({
@@ -141,7 +139,7 @@ const doCreatePlan = async () => {
   }
 };
 
-// Create data export issue (plan + issue + rollout)
+// Create data export issue (plan + issue, rollout is created later via EXPORT action)
 const doCreateDataExportIssue = async () => {
   // Create sheets first
   await createSheets();
@@ -152,7 +150,10 @@ const doCreateDataExportIssue = async () => {
     plan: plan.value,
   });
   const createdPlan = await planServiceClientConnect.createPlan(planRequest);
-  if (!createdPlan) return;
+  if (!createdPlan) {
+    loading.value = false;
+    return;
+  }
 
   // Create the issue
   const issueRequest = create(CreateIssueRequestSchema, {
@@ -163,20 +164,10 @@ const doCreateDataExportIssue = async () => {
       plan: createdPlan.name,
       status: IssueStatus.OPEN,
       type: Issue_Type.DATABASE_EXPORT,
-      rollout: "",
     }),
   });
   const createdIssue =
     await issueServiceClientConnect.createIssue(issueRequest);
-
-  // Create the rollout
-  const rolloutRequest = create(CreateRolloutRequestSchema, {
-    parent: project.value.name,
-    rollout: {
-      plan: createdPlan.name,
-    },
-  });
-  await rolloutServiceClientConnect.createRollout(rolloutRequest);
 
   // Redirect to issue detail page
   nextTick(() => {
@@ -214,9 +205,6 @@ const createSheets = async () => {
     if (uid.startsWith("-")) {
       // The sheet is pending create.
       const sheetToCreate = getLocalSheetByName(config.sheet);
-      const engine = await databaseEngineForSpec(spec);
-      sheetToCreate.engine = engine;
-      sheetToCreate.title = plan.value.title;
       const createdSheet = await sheetStore.createSheet(
         project.value.name,
         sheetToCreate

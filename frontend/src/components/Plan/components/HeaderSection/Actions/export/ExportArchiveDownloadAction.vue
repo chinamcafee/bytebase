@@ -14,7 +14,7 @@
       </NButton>
       <div
         v-else
-        class="flex flex-row items-center gap-2 text-sm textlabel !leading-8"
+        class="flex flex-row items-center gap-2 text-sm textlabel leading-8!"
       >
         <CalendarXIcon class="w-5 h-auto" />
         {{ $t("issue.data-export.file-expired") }}
@@ -30,14 +30,14 @@
 import { create } from "@bufbuild/protobuf";
 import dayjs from "dayjs";
 import { first, orderBy } from "lodash-es";
-import { DownloadIcon, CalendarXIcon } from "lucide-vue-next";
+import { CalendarXIcon, DownloadIcon } from "lucide-vue-next";
 import { NButton, NTooltip } from "naive-ui";
 import { computed, reactive } from "vue";
 import { usePlanContext } from "@/components/Plan/logic";
 import { useSQLStore } from "@/store";
 import {
-  TaskRun_ExportArchiveStatus,
   type TaskRun,
+  TaskRun_ExportArchiveStatus,
 } from "@/types/proto-es/v1/rollout_service_pb";
 import { ExportRequestSchema } from "@/types/proto-es/v1/sql_service_pb";
 import { extractTaskRunUID, extractTaskUID } from "@/utils";

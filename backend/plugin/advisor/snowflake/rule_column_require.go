@@ -6,13 +6,17 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/snowsql-parser"
 	"github.com/pkg/errors"
+
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
+	"github.com/antlr4-go/antlr/v4"
+	parser "github.com/bytebase/parser/snowflake"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	snowsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/snowflake"
 )
 
@@ -21,7 +25,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_SNOWFLAKE, advisor.SchemaRuleRequiredColumn, &ColumnRequireAdvisor{})
+	advisor.Register(storepb.Engine_SNOWFLAKE, storepb.SQLReviewRule_COLUMN_REQUIRED, &ColumnRequireAdvisor{})
 }
 
 // ColumnRequireAdvisor is the advisor checking for column requirement.
@@ -30,29 +34,35 @@ type ColumnRequireAdvisor struct {
 
 // Check checks for column requirement.
 func (*ColumnRequireAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	columnList, err := advisor.UnmarshalRequiredColumnList(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	stringArrayPayload := checkCtx.Rule.GetStringArrayPayload()
+	if stringArrayPayload == nil {
+		return nil, errors.New("string_array_payload is required for column required rule")
 	}
 
 	requireColumns := make(map[string]any)
-	for _, column := range columnList {
+	for _, column := range stringArrayPayload.List {
 		requireColumns[column] = true
 	}
 
-	rule := NewColumnRequireRule(level, string(checkCtx.Rule.Type), requireColumns)
+	rule := NewColumnRequireRule(level, checkCtx.Rule.Type.String(), requireColumns)
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList(), nil
 }
@@ -151,10 +161,10 @@ func (r *ColumnRequireRule) exitCreateTable(ctx *parser.Create_tableContext) {
 	for _, column := range columnNames {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.NoRequiredColumn.Int32(),
+			Code:          code.NoRequiredColumn.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("Table %s missing required column %q", r.currentOriginalTableName, column),
-			StartPosition: common.ConvertANTLRLineToPosition(ctx.Column_decl_item_list().GetStop().GetLine()),
+			StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.Column_decl_item_list().GetStop().GetLine()),
 		})
 	}
 	r.currentOriginalTableName = ""
@@ -193,10 +203,10 @@ func (r *ColumnRequireRule) exitAlterTable(ctx *parser.Alter_tableContext) {
 	for _, column := range columnNames {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.NoRequiredColumn.Int32(),
+			Code:          code.NoRequiredColumn.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("Table %s missing required column %q", r.currentOriginalTableName, column),
-			StartPosition: common.ConvertANTLRLineToPosition(ctx.Table_column_action().GetStart().GetLine()),
+			StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.Table_column_action().GetStart().GetLine()),
 		})
 	}
 	r.currentOriginalTableName = ""

@@ -1,7 +1,7 @@
-FROM node:23.11.1-slim AS frontend
+FROM node:24.11.1-slim AS frontend
 ARG GIT_COMMIT
 
-RUN npm i -g pnpm@10.18.0
+RUN npm i -g pnpm@10.26.1
 
 WORKDIR /frontend-build
 
@@ -10,7 +10,7 @@ COPY . .
 RUN pnpm --dir ./frontend i
 RUN pnpm --dir ./frontend release-docker
 
-FROM golang:1.25.1-alpine3.22 AS backend
+FROM golang:1.25.5-alpine3.23 AS backend
 ARG VERSION
 ARG GIT_COMMIT
 ARG RELEASE="release"
@@ -33,7 +33,7 @@ RUN CC=clang go build \
   -ldflags="-extldflags '-Wl,-z,stack-size=0x1000000' -w -s -X 'github.com/bytebase/bytebase/backend/bin/server/cmd.version=${VERSION}' -X 'github.com/bytebase/bytebase/backend/bin/server/cmd.gitcommit=${GIT_COMMIT}'" \
   -o bytebase ./backend/bin/server/main.go
 
-FROM alpine:3.22 AS monolithic
+FROM alpine:3.23 AS monolithic
 ARG VERSION
 ARG GIT_COMMIT
 

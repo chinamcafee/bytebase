@@ -13,6 +13,7 @@ import (
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 )
 
 var (
@@ -21,7 +22,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleStatementMaximumLimitValue, &StatementMaximumLimitValueAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_STATEMENT_MAXIMUM_LIMIT_VALUE, &StatementMaximumLimitValueAdvisor{})
 }
 
 // StatementMaximumLimitValueAdvisor is the advisor checking for LIMIT maximum value.
@@ -30,24 +31,25 @@ type StatementMaximumLimitValueAdvisor struct {
 
 // Check checks for LIMIT maximum value in SELECT statements.
 func (*StatementMaximumLimitValueAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalNumberTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	numberPayload := checkCtx.Rule.GetNumberPayload()
+	if numberPayload == nil {
+		return nil, errors.New("number_payload is required for maximum limit value rule")
 	}
 
 	checker := &statementMaximumLimitValueChecker{
 		level:         level,
-		title:         string(checkCtx.Rule.Type),
-		limitMaxValue: payload.Number,
+		title:         checkCtx.Rule.Type.String(),
+		limitMaxValue: int(numberPayload.Number),
 	}
 
 	for _, stmt := range stmtList {
@@ -77,7 +79,7 @@ func (checker *statementMaximumLimitValueChecker) Enter(in ast.Node) (ast.Node, 
 			if limitVal > int64(checker.limitMaxValue) {
 				checker.adviceList = append(checker.adviceList, &storepb.Advice{
 					Status:        checker.level,
-					Code:          advisor.StatementExceedMaximumLimitValue.Int32(),
+					Code:          code.StatementExceedMaximumLimitValue.Int32(),
 					Title:         checker.title,
 					Content:       fmt.Sprintf("The limit value %d exceeds the maximum allowed value %d", limitVal, checker.limitMaxValue),
 					StartPosition: common.ConvertANTLRLineToPosition(checker.line),

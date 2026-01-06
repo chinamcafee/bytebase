@@ -5,14 +5,16 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/antlr4-go/antlr/v4"
-	"github.com/pkg/errors"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/antlr4-go/antlr/v4"
+
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -21,9 +23,9 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleTableNoFK, &TableNoFKAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleTableNoFK, &TableNoFKAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleTableNoFK, &TableNoFKAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_TABLE_NO_FOREIGN_KEY, &TableNoFKAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_TABLE_NO_FOREIGN_KEY, &TableNoFKAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_TABLE_NO_FOREIGN_KEY, &TableNoFKAdvisor{})
 }
 
 // TableNoFKAdvisor is the advisor checking table disallow foreign key.
@@ -32,25 +34,28 @@ type TableNoFKAdvisor struct {
 
 // Check checks table disallow foreign key.
 func (*TableNoFKAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewTableNoFKRule(level, string(checkCtx.Rule.Type))
+	rule := NewTableNoFKRule(level, checkCtx.Rule.Type.String())
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmtNode := range root {
-		rule.SetBaseLine(stmtNode.BaseLine)
-		checker.SetBaseLine(stmtNode.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmtNode.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -137,7 +142,7 @@ func (r *TableNoFKRule) handleTableConstraintDef(tableName string, ctx mysql.ITa
 		case "FOREIGN":
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.TableHasFK.Int32(),
+				Code:          code.TableHasFK.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("Foreign key is not allowed in the table `%s`", tableName),
 				StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),

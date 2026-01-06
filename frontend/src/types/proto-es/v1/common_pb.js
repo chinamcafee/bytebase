@@ -8,7 +8,7 @@ import { enumDesc, fileDesc, messageDesc, tsEnum } from "@bufbuild/protobuf/code
  * Describes the file v1/common.proto.
  */
 export const file_v1_common = /*@__PURE__*/
-  fileDesc("Cg92MS9jb21tb24ucHJvdG8SC2J5dGViYXNlLnYxIigKCFBvc2l0aW9uEgwKBGxpbmUYASABKAUSDgoGY29sdW1uGAIgASgFIiMKBVJhbmdlEg0KBXN0YXJ0GAEgASgFEgsKA2VuZBgCIAEoBSo3CgVTdGF0ZRIVChFTVEFURV9VTlNQRUNJRklFRBAAEgoKBkFDVElWRRABEgsKB0RFTEVURUQQAirwAgoGRW5naW5lEhYKEkVOR0lORV9VTlNQRUNJRklFRBAAEg4KCkNMSUNLSE9VU0UQARIJCgVNWVNRTBACEgwKCFBPU1RHUkVTEAMSDQoJU05PV0ZMQUtFEAQSCgoGU1FMSVRFEAUSCAoEVElEQhAGEgsKB01PTkdPREIQBxIJCgVSRURJUxAIEgoKBk9SQUNMRRAJEgsKB1NQQU5ORVIQChIJCgVNU1NRTBALEgwKCFJFRFNISUZUEAwSCwoHTUFSSUFEQhANEg0KCU9DRUFOQkFTRRAOEg0KCVNUQVJST0NLUxASEgkKBURPUklTEBMSCAoESElWRRAUEhEKDUVMQVNUSUNTRUFSQ0gQFRIMCghCSUdRVUVSWRAWEgwKCERZTkFNT0RCEBcSDgoKREFUQUJSSUNLUxAYEg8KC0NPQ0tST0FDSERCEBkSDAoIQ09TTU9TREIQGhIJCgVUUklOTxAbEg0KCUNBU1NBTkRSQRAcKlwKB1ZDU1R5cGUSGAoUVkNTX1RZUEVfVU5TUEVDSUZJRUQQABIKCgZHSVRIVUIQARIKCgZHSVRMQUIQAhINCglCSVRCVUNLRVQQAxIQCgxBWlVSRV9ERVZPUFMQBCpMCgxFeHBvcnRGb3JtYXQSFgoSRk9STUFUX1VOU1BFQ0lGSUVEEAASBwoDQ1NWEAESCAoESlNPThACEgcKA1NRTBADEggKBFhMU1gQBCpQChJEYXRhYmFzZUNoYW5nZVR5cGUSJAogREFUQUJBU0VfQ0hBTkdFX1RZUEVfVU5TUEVDSUZJRUQQABILCgdNSUdSQVRFEAISBwoDU0RMEAMqTAoNTWlncmF0aW9uVHlwZRIeChpNSUdSQVRJT05fVFlQRV9VTlNQRUNJRklFRBAAEgcKA0RETBABEgcKA0RNTBACEgkKBUdIT1NUEAMqSAoJUmlza0xldmVsEhoKFlJJU0tfTEVWRUxfVU5TUEVDSUZJRUQQABIHCgNMT1cQARIMCghNT0RFUkFURRACEggKBEhJR0gQA0I2WjRnaXRodWIuY29tL2J5dGViYXNlL2J5dGViYXNlL2JhY2tlbmQvZ2VuZXJhdGVkLWdvL3YxYgZwcm90bzM");
+  fileDesc("Cg92MS9jb21tb24ucHJvdG8SC2J5dGViYXNlLnYxIigKCFBvc2l0aW9uEgwKBGxpbmUYASABKAUSDgoGY29sdW1uGAIgASgFIiMKBVJhbmdlEg0KBXN0YXJ0GAEgASgFEgsKA2VuZBgCIAEoBSJZChZQZXJtaXNzaW9uRGVuaWVkRGV0YWlsEg4KBm1ldGhvZBgBIAEoCRIcChRyZXF1aXJlZF9wZXJtaXNzaW9ucxgCIAMoCRIRCglyZXNvdXJjZXMYAyADKAkqNwoFU3RhdGUSFQoRU1RBVEVfVU5TUEVDSUZJRUQQABIKCgZBQ1RJVkUQARILCgdERUxFVEVEEAIq8AIKBkVuZ2luZRIWChJFTkdJTkVfVU5TUEVDSUZJRUQQABIOCgpDTElDS0hPVVNFEAESCQoFTVlTUUwQAhIMCghQT1NUR1JFUxADEg0KCVNOT1dGTEFLRRAEEgoKBlNRTElURRAFEggKBFRJREIQBhILCgdNT05HT0RCEAcSCQoFUkVESVMQCBIKCgZPUkFDTEUQCRILCgdTUEFOTkVSEAoSCQoFTVNTUUwQCxIMCghSRURTSElGVBAMEgsKB01BUklBREIQDRINCglPQ0VBTkJBU0UQDhINCglTVEFSUk9DS1MQDxIJCgVET1JJUxAQEggKBEhJVkUQERIRCg1FTEFTVElDU0VBUkNIEBISDAoIQklHUVVFUlkQExIMCghEWU5BTU9EQhAUEg4KCkRBVEFCUklDS1MQFRIPCgtDT0NLUk9BQ0hEQhAWEgwKCENPU01PU0RCEBcSCQoFVFJJTk8QGBINCglDQVNTQU5EUkEQGSpcCgdWQ1NUeXBlEhgKFFZDU19UWVBFX1VOU1BFQ0lGSUVEEAASCgoGR0lUSFVCEAESCgoGR0lUTEFCEAISDQoJQklUQlVDS0VUEAMSEAoMQVpVUkVfREVWT1BTEAQqTAoMRXhwb3J0Rm9ybWF0EhYKEkZPUk1BVF9VTlNQRUNJRklFRBAAEgcKA0NTVhABEggKBEpTT04QAhIHCgNTUUwQAxIICgRYTFNYEAQqSAoJUmlza0xldmVsEhoKFlJJU0tfTEVWRUxfVU5TUEVDSUZJRUQQABIHCgNMT1cQARIMCghNT0RFUkFURRACEggKBEhJR0gQAyp9CgtXZWJob29rVHlwZRIcChhXRUJIT09LX1RZUEVfVU5TUEVDSUZJRUQQABIJCgVTTEFDSxABEgsKB0RJU0NPUkQQAhIJCgVURUFNUxADEgwKCERJTkdUQUxLEAQSCgoGRkVJU0hVEAUSCQoFV0VDT00QBhIICgRMQVJLEAdCoQEKD2NvbS5ieXRlYmFzZS52MUILQ29tbW9uUHJvdG9QAVo0Z2l0aHViLmNvbS9ieXRlYmFzZS9ieXRlYmFzZS9iYWNrZW5kL2dlbmVyYXRlZC1nby92MaICA0JYWKoCC0J5dGViYXNlLlYxygILQnl0ZWJhc2VcVjHiAhdCeXRlYmFzZVxWMVxHUEJNZXRhZGF0YeoCDEJ5dGViYXNlOjpWMWIGcHJvdG8z");
 
 /**
  * Describes the message bytebase.v1.Position.
@@ -23,6 +23,13 @@ export const PositionSchema = /*@__PURE__*/
  */
 export const RangeSchema = /*@__PURE__*/
   messageDesc(file_v1_common, 1);
+
+/**
+ * Describes the message bytebase.v1.PermissionDeniedDetail.
+ * Use `create(PermissionDeniedDetailSchema)` to create a new message.
+ */
+export const PermissionDeniedDetailSchema = /*@__PURE__*/
+  messageDesc(file_v1_common, 2);
 
 /**
  * Describes the enum bytebase.v1.State.
@@ -81,38 +88,10 @@ export const ExportFormat = /*@__PURE__*/
   tsEnum(ExportFormatSchema);
 
 /**
- * Describes the enum bytebase.v1.DatabaseChangeType.
- */
-export const DatabaseChangeTypeSchema = /*@__PURE__*/
-  enumDesc(file_v1_common, 4);
-
-/**
- * DatabaseChangeType is the database change type.
- *
- * @generated from enum bytebase.v1.DatabaseChangeType
- */
-export const DatabaseChangeType = /*@__PURE__*/
-  tsEnum(DatabaseChangeTypeSchema);
-
-/**
- * Describes the enum bytebase.v1.MigrationType.
- */
-export const MigrationTypeSchema = /*@__PURE__*/
-  enumDesc(file_v1_common, 5);
-
-/**
- * MigrationType is the type for imperative schema migration.
- *
- * @generated from enum bytebase.v1.MigrationType
- */
-export const MigrationType = /*@__PURE__*/
-  tsEnum(MigrationTypeSchema);
-
-/**
  * Describes the enum bytebase.v1.RiskLevel.
  */
 export const RiskLevelSchema = /*@__PURE__*/
-  enumDesc(file_v1_common, 6);
+  enumDesc(file_v1_common, 4);
 
 /**
  * RiskLevel is the risk level.
@@ -121,4 +100,18 @@ export const RiskLevelSchema = /*@__PURE__*/
  */
 export const RiskLevel = /*@__PURE__*/
   tsEnum(RiskLevelSchema);
+
+/**
+ * Describes the enum bytebase.v1.WebhookType.
+ */
+export const WebhookTypeSchema = /*@__PURE__*/
+  enumDesc(file_v1_common, 5);
+
+/**
+ * Webhook integration type.
+ *
+ * @generated from enum bytebase.v1.WebhookType
+ */
+export const WebhookType = /*@__PURE__*/
+  tsEnum(WebhookTypeSchema);
 

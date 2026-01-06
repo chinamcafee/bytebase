@@ -1,22 +1,27 @@
 <template>
-  <div class="flex flex-col space-y-4">
-    <div class="flex items-center justify-between px-4 space-x-2">
+  <div class="flex flex-col gap-y-4">
+    <div class="flex items-center justify-between px-4 gap-x-2">
       <AdvancedSearch
         v-model:params="state.params"
         :scope-options="scopeOptions"
         :autofocus="false"
         :placeholder="$t('project.filter-projects')"
       />
-      <NButton
-        v-if="hasWorkspacePermissionV2('bb.projects.create')"
-        type="primary"
-        @click="state.showCreateDrawer = true"
+      <PermissionGuardWrapper
+        v-slot="slotProps"
+        :permissions="['bb.projects.create']"
       >
-        <template #icon>
-          <PlusIcon class="h-4 w-4" />
-        </template>
-        {{ $t("quick-action.new-project") }}
-      </NButton>
+        <NButton
+          type="primary"
+          :disabled="slotProps.disabled"
+          @click="state.showCreateDrawer = true"
+        >
+          <template #icon>
+            <PlusIcon class="h-4 w-4" />
+          </template>
+          {{ $t("quick-action.new-project") }}
+        </NButton>
+      </PermissionGuardWrapper>
     </div>
     <div>
       <ProjectOperations
@@ -57,15 +62,20 @@ import { NButton } from "naive-ui";
 import { computed, onMounted, reactive, ref } from "vue";
 import type { ComponentExposed } from "vue-component-type-helpers";
 import { useRouter } from "vue-router";
-import AdvancedSearch from "@/components/AdvancedSearch";
-import { useCommonSearchScopeOptions } from "@/components/AdvancedSearch";
+import AdvancedSearch, {
+  useCommonSearchScopeOptions,
+} from "@/components/AdvancedSearch";
+import PermissionGuardWrapper from "@/components/Permission/PermissionGuardWrapper.vue";
 import ProjectCreatePanel from "@/components/Project/ProjectCreatePanel.vue";
-import { PagedProjectTable } from "@/components/v2";
-import { Drawer } from "@/components/v2";
+import { Drawer, PagedProjectTable } from "@/components/v2";
 import ProjectOperations from "@/components/v2/Model/Project/ProjectOperations.vue";
 import { useProjectV1Store, useUIStateStore } from "@/store";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
-import { hasWorkspacePermissionV2, type SearchParams } from "@/utils";
+import {
+  getValuesFromSearchParams,
+  hasWorkspacePermissionV2,
+  type SearchParams,
+} from "@/utils";
 
 interface LocalState {
   params: SearchParams;
@@ -96,9 +106,7 @@ const scopeOptions = useCommonSearchScopeOptions(["label"]);
 
 // Extract labels from the search scopes
 const selectedLabels = computed(() => {
-  return state.params.scopes
-    .filter((scope) => scope.id === "label")
-    .map((scope) => scope.value);
+  return getValuesFromSearchParams(state.params, "label");
 });
 
 const filter = computed(() => ({

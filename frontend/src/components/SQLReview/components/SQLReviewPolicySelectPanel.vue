@@ -2,10 +2,10 @@
   <Drawer :show="show" @close="$emit('close')">
     <DrawerContent
       :title="$t('sql-review.select-review')"
-      class="w-[60rem] max-w-[100vw] relative"
+      class="w-240 max-w-[100vw] relative"
     >
       <template #default>
-        <div class="space-y-4">
+        <div class="flex flex-col gap-y-4">
           <i18n-t
             keypath="sql-review.select-review-label"
             tag="p"
@@ -45,7 +45,7 @@
 
 <script setup lang="ts">
 import { NButton } from "naive-ui";
-import { watchEffect, computed } from "vue";
+import { computed, watchEffect } from "vue";
 import { useRouter } from "vue-router";
 import { Drawer, DrawerContent } from "@/components/v2";
 import { WORKSPACE_ROUTE_SQL_REVIEW_CREATE } from "@/router/dashboard/workspaceRoutes";

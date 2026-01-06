@@ -1,13 +1,13 @@
 <template>
-  <div class="flex items-center justify-between h-10 px-4 my-1 space-x-3">
+  <div class="flex items-center justify-between h-10 px-4 my-1 gap-x-3">
     <BytebaseLogo
       v-if="showLogo"
-      class="shrink-0"
+      class="h-10"
       :redirect="WORKSPACE_ROUTE_LANDING"
     />
     <ProjectSwitchPopover />
 
-    <div class="flex-1 flex justify-end items-center space-x-3">
+    <div class="flex-1 flex justify-end items-center gap-x-3">
       <NButton
         v-if="currentPlan === PlanType.FREE"
         size="small"
@@ -62,8 +62,8 @@
 import { computedAsync, useLocalStorage, useWindowSize } from "@vueuse/core";
 import {
   CircleDotIcon,
-  SquareTerminalIcon,
   MessagesSquareIcon,
+  SquareTerminalIcon,
 } from "lucide-vue-next";
 import { NButton } from "naive-ui";
 import { storeToRefs } from "pinia";
@@ -73,8 +73,8 @@ import { useRoute, useRouter } from "vue-router";
 import ProjectSwitchPopover from "@/components/Project/ProjectSwitch/ProjectSwitchPopover.vue";
 import WeChatQRModal from "@/components/WeChatQRModal.vue";
 import {
-  WORKSPACE_ROUTE_MY_ISSUES,
   WORKSPACE_ROUTE_LANDING,
+  WORKSPACE_ROUTE_MY_ISSUES,
 } from "@/router/dashboard/workspaceRoutes";
 import {
   SQL_EDITOR_DATABASE_MODULE,
@@ -94,7 +94,6 @@ import {
   extractDatabaseResourceName,
   extractProjectResourceName,
 } from "@/utils";
-import { getComponentIdLocalStorageKey } from "@/utils/localStorage";
 import BytebaseLogo from "../components/BytebaseLogo.vue";
 import ProfileBrandingLogo from "../components/ProfileBrandingLogo.vue";
 import ProfileDropdown from "../components/ProfileDropdown.vue";
@@ -191,7 +190,7 @@ const goToMyIssues = () => {
   record(myIssueLink.value.fullPath);
   // Trigger page reload manually.
   useLocalStorage<string>(
-    getComponentIdLocalStorageKey(WORKSPACE_ROUTE_MY_ISSUES),
+    `bb.components.${WORKSPACE_ROUTE_MY_ISSUES}.id`,
     ""
   ).value = uuidv4();
 };

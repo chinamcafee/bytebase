@@ -1,29 +1,24 @@
-import { create } from "@bufbuild/protobuf";
 import { reactive } from "vue";
 import { useRoute } from "vue-router";
 import {
   buildPlan,
-  extractInitialSQLFromQuery,
-  getLocalSheetByName,
   type CreatePlanParams,
+  extractInitialSQLFromQuery,
+  generateRolloutPreview,
+  getLocalSheetByName,
 } from "@/components/Plan";
-import { rolloutServiceClientConnect } from "@/grpcweb";
 import { useCurrentUserV1, useProjectV1Store, useSheetV1Store } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
 import type { IssueType } from "@/types";
 import { emptyIssue, TaskTypeListWithStatement } from "@/types";
 import { Issue_Type, IssueStatus } from "@/types/proto-es/v1/issue_service_pb";
 import type { Plan } from "@/types/proto-es/v1/plan_service_pb";
-import type { Stage, Rollout } from "@/types/proto-es/v1/rollout_service_pb";
-import { RolloutSchema } from "@/types/proto-es/v1/rollout_service_pb";
-import { PreviewRolloutRequestSchema } from "@/types/proto-es/v1/rollout_service_pb";
+import type { Stage } from "@/types/proto-es/v1/rollout_service_pb";
 import {
-  extractProjectResourceName,
+  extractEnvironmentResourceName,
   extractSheetUID,
   getSheetStatement,
-  hasProjectPermissionV2,
   sheetNameOfTaskV1,
-  extractEnvironmentResourceName,
 } from "@/utils";
 import { nextUID } from "../base";
 
@@ -54,7 +49,6 @@ export const createIssueSkeleton = async (
   issue.planEntity = plan;
 
   const rollout = await generateRolloutFromPlan(plan, params);
-  issue.rollout = rollout.name;
   issue.rolloutEntity = rollout;
 
   const description = query.description;
@@ -92,21 +86,10 @@ const generateRolloutFromPlan = async (
   plan: Plan,
   params: CreatePlanParams
 ) => {
-  const project = await useProjectV1Store().getOrFetchProjectByName(
-    `projects/${extractProjectResourceName(plan.name)}`
-  );
-  let rollout: Rollout = create(RolloutSchema, {});
-  if (hasProjectPermissionV2(project, "bb.rollouts.preview")) {
-    const request = create(PreviewRolloutRequestSchema, {
-      project: params.project.name,
-      plan: plan,
-    });
-    // TODO(steven): Remove me after preview rollout is deprecated.
-    rollout = await rolloutServiceClientConnect.previewRollout(request);
-  }
+  const rollout = await generateRolloutPreview(plan, params.project.name);
+
   // Touch UIDs for each object for local referencing
-  rollout.plan = plan.name;
-  rollout.name = `${params.project.name}/rollouts/${nextUID()}`;
+  rollout.name = `${params.project.name}/plans/${nextUID()}/rollout`;
   rollout.stages.forEach((stage) => {
     // Use environment ID as stage ID
     const environmentID = extractEnvironmentResourceName(stage.environment);

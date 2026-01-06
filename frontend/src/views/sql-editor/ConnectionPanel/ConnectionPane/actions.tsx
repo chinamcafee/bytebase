@@ -9,27 +9,27 @@ import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { t } from "@/plugins/i18n";
 import { PROJECT_V1_ROUTE_DATABASE_DETAIL } from "@/router/dashboard/projectV1";
+import { useSQLEditorTabStore } from "@/store";
 import {
+  type BatchQueryContext,
+  type ComposedDatabase,
   DEFAULT_SQL_EDITOR_TAB_MODE,
   instanceOfSQLEditorTreeNode,
   isConnectableSQLEditorTreeNode,
-  type ComposedDatabase,
-  type CoreSQLEditorTab,
   type Position,
+  type SQLEditorConnection,
   type SQLEditorTabMode as TabMode,
   type SQLEditorTreeNode as TreeNode,
 } from "@/types";
 import {
-  emptySQLEditorConnection,
   extractInstanceResourceName,
   extractProjectResourceName,
   hasWorkspacePermissionV2,
   instanceV1HasAlterSchema,
   instanceV1HasReadonlyMode,
-  tryConnectToCoreSQLEditorTab,
+  setDefaultDataSourceForConn,
 } from "@/utils";
-import { setDefaultDataSourceForConn } from "../../EditorCommon";
-import { useSQLEditorContext, type SQLEditorContext } from "../../context";
+import { type SQLEditorContext, useSQLEditorContext } from "../../context";
 
 type DropdownOptionWithTreeNode = DropdownOption & {
   onSelect: () => void;
@@ -55,98 +55,99 @@ export const useDropdown = () => {
       return [];
     }
     const { type, target } = node.meta;
-    if (type === "project") {
+    // Don't show any context menu actions for disabled
+    // instances/databases
+    if (node.disabled) {
       return [];
-    } else {
-      // Don't show any context menu actions for disabled
-      // instances/databases
-      if (node.disabled) {
-        return [];
-      }
+    }
 
-      const items: DropdownOptionWithTreeNode[] = [];
+    const items: DropdownOptionWithTreeNode[] = [];
 
-      if (isConnectableSQLEditorTreeNode(node)) {
-        const instance = instanceOfSQLEditorTreeNode(node);
-        if (instance && instanceV1HasReadonlyMode(instance)) {
-          items.push({
-            key: "connect",
-            label: t("sql-editor.connect"),
-            icon: () => <LinkIcon class="w-4 h-4" />,
-            onSelect: () => {
-              setConnection(node, {
-                context: editorContext,
-              });
-              showConnectionPanel.value = false;
-            },
-          });
-          items.push({
-            key: "connect-in-new-tab",
-            label: t("sql-editor.connect-in-new-tab"),
-            icon: () => <LinkIcon class="w-4 h-4" />,
-            onSelect: () => {
-              setConnection(node, {
-                extra: { worksheet: "", mode: DEFAULT_SQL_EDITOR_TAB_MODE },
-                newTab: true,
-                context: editorContext,
-              });
-              showConnectionPanel.value = false;
-            },
-          });
-        }
-        if (allowAdmin.value) {
-          items.push({
-            key: "connect-in-admin-mode",
-            label: t("sql-editor.connect-in-admin-mode"),
-            icon: () => <WrenchIcon class="w-4 h-4" />,
-            onSelect: () => {
-              setConnection(node, {
-                extra: { worksheet: "", mode: "ADMIN" },
-                context: editorContext,
-              });
-              showConnectionPanel.value = false;
-            },
-          });
-        }
-      }
-      if (type === "database") {
-        const database = target as ComposedDatabase;
+    if (isConnectableSQLEditorTreeNode(node)) {
+      const database = node.meta.target as ComposedDatabase;
+      const instance = instanceOfSQLEditorTreeNode(node);
+      if (instance && instanceV1HasReadonlyMode(instance)) {
         items.push({
-          key: "view-database-detail",
-          label: t("sql-editor.view-database-detail"),
-          icon: () => <ExternalLinkIcon class="w-4 h-4" />,
+          key: "connect",
+          label: t("sql-editor.connect"),
+          icon: () => <LinkIcon class="w-4 h-4" />,
           onSelect: () => {
-            const route = router.resolve({
-              name: PROJECT_V1_ROUTE_DATABASE_DETAIL,
-              params: {
-                projectId: extractProjectResourceName(database.project),
-                instanceId: extractInstanceResourceName(database.instance),
-                databaseName: database.databaseName,
-              },
+            setConnection({
+              database,
+              context: editorContext,
+              newTab: false,
             });
-            const url = route.href;
-            window.open(url, "_blank");
+            showConnectionPanel.value = false;
           },
         });
-        if (instanceV1HasAlterSchema(database.instanceResource)) {
-          items.push({
-            key: "alter-schema",
-            label: t("database.edit-schema"),
-            icon: () => <SquarePenIcon class="w-4 h-4" />,
-            onSelect: () => {
-              const db = node.meta.target as ComposedDatabase;
-              editorEvents.emit("alter-schema", {
-                databaseName: db.name,
-                schema: "",
-                table: "",
-              });
-              showConnectionPanel.value = false;
+        items.push({
+          key: "connect-in-new-tab",
+          label: t("sql-editor.connect-in-new-tab"),
+          icon: () => <LinkIcon class="w-4 h-4" />,
+          onSelect: () => {
+            setConnection({
+              database,
+              newTab: true,
+              context: editorContext,
+            });
+            showConnectionPanel.value = false;
+          },
+        });
+      }
+      if (allowAdmin.value) {
+        items.push({
+          key: "connect-in-admin-mode",
+          label: t("sql-editor.connect-in-admin-mode"),
+          icon: () => <WrenchIcon class="w-4 h-4" />,
+          onSelect: () => {
+            setConnection({
+              database,
+              mode: "ADMIN",
+              context: editorContext,
+              newTab: false,
+            });
+            showConnectionPanel.value = false;
+          },
+        });
+      }
+    }
+    if (type === "database") {
+      const database = target as ComposedDatabase;
+      items.push({
+        key: "view-database-detail",
+        label: t("sql-editor.view-database-detail"),
+        icon: () => <ExternalLinkIcon class="w-4 h-4" />,
+        onSelect: () => {
+          const route = router.resolve({
+            name: PROJECT_V1_ROUTE_DATABASE_DETAIL,
+            params: {
+              projectId: extractProjectResourceName(database.project),
+              instanceId: extractInstanceResourceName(database.instance),
+              databaseName: database.databaseName,
             },
           });
-        }
+          const url = route.href;
+          window.open(url, "_blank");
+        },
+      });
+      if (instanceV1HasAlterSchema(database.instanceResource)) {
+        items.push({
+          key: "alter-schema",
+          label: t("database.edit-schema"),
+          icon: () => <SquarePenIcon class="w-4 h-4" />,
+          onSelect: () => {
+            const db = node.meta.target as ComposedDatabase;
+            editorEvents.emit("alter-schema", {
+              databaseName: db.name,
+              schema: "",
+              table: "",
+            });
+            showConnectionPanel.value = false;
+          },
+        });
       }
-      return items;
     }
+    return items;
   });
 
   const handleSelect = (key: string) => {
@@ -165,41 +166,58 @@ export const useDropdown = () => {
   return { show, position, context, options, handleSelect, handleClickoutside };
 };
 
-export const setConnection = (
-  node: TreeNode<"database">,
-  options: {
-    extra?: { worksheet: string; mode: TabMode };
-    newTab?: boolean;
-    context?: SQLEditorContext;
-  } = {}
-) => {
-  if (!node) {
-    return;
-  }
-  if (!isConnectableSQLEditorTreeNode(node)) {
-    // one more guard
-    return;
-  }
+// setConnection will:
+// - when newTab == false && exist current tab: connect to the current tab
+// - otherwise create a new worksheet then open the tab
+export const setConnection = (options: {
+  database?: ComposedDatabase;
+  mode?: TabMode;
+  newTab: boolean;
+  context: SQLEditorContext;
+  batchQueryContext?: BatchQueryContext;
+}) => {
   const {
-    extra = {
-      worksheet: "",
-      mode: DEFAULT_SQL_EDITOR_TAB_MODE,
-    },
+    database,
+    mode = DEFAULT_SQL_EDITOR_TAB_MODE,
     newTab = false,
     context,
   } = options;
-  const coreTab: CoreSQLEditorTab = {
-    connection: emptySQLEditorConnection(),
-    ...extra,
+  const connection: SQLEditorConnection = {
+    instance: database?.instance ?? "",
+    database: database?.name ?? "",
   };
-  const conn = coreTab.connection;
-  const database = node.meta.target;
-  conn.instance = database.instance;
-  conn.database = database.name;
-  setDefaultDataSourceForConn(conn, database);
-  tryConnectToCoreSQLEditorTab(coreTab, /* overrideTitle */ true, newTab);
-
-  if (context) {
-    context.asidePanelTab.value = "SCHEMA";
+  if (database) {
+    setDefaultDataSourceForConn(connection, database);
   }
+
+  const tabStore = useSQLEditorTabStore();
+  const batchQueryContext: BatchQueryContext = Object.assign(
+    { databases: [] },
+    tabStore.currentTab?.batchQueryContext,
+    options.batchQueryContext
+  );
+
+  const createOrUpdate = () => {
+    if (!newTab && tabStore.currentTab) {
+      return context.maybeUpdateWorksheet({
+        tabId: tabStore.currentTab.id,
+        worksheet: tabStore.currentTab.worksheet,
+        title: tabStore.currentTab.title,
+        database: connection.database,
+        statement: tabStore.currentTab.statement,
+      });
+    }
+
+    // create new worksheet and set connection
+    return context.createWorksheet({
+      database: connection.database,
+    });
+  };
+
+  createOrUpdate().then((tab) => {
+    if (tab) {
+      tabStore.updateTab(tab.id, { mode, batchQueryContext });
+      context.asidePanelTab.value = "SCHEMA";
+    }
+  });
 };

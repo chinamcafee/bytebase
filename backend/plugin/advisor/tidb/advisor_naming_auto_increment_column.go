@@ -13,6 +13,7 @@ import (
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 )
 
 var (
@@ -21,7 +22,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleAutoIncrementColumnNaming, &NamingAutoIncrementColumnAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_NAMING_COLUMN_AUTO_INCREMENT, &NamingAutoIncrementColumnAdvisor{})
 }
 
 // NamingAutoIncrementColumnAdvisor is the advisor checking for auto-increment naming convention.
@@ -30,22 +31,33 @@ type NamingAutoIncrementColumnAdvisor struct {
 
 // Check checks for auto-increment naming convention.
 func (*NamingAutoIncrementColumnAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	format, maxLength, err := advisor.UnmarshalNamingRulePayloadAsRegexp(checkCtx.Rule.Payload)
+	namingPayload := checkCtx.Rule.GetNamingPayload()
+	if namingPayload == nil {
+		return nil, errors.New("naming_payload is required for this rule")
+	}
+
+	format, err := regexp.Compile(namingPayload.Format)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to compile regex format %q", namingPayload.Format)
+	}
+
+	maxLength := int(namingPayload.MaxLength)
+	if maxLength == 0 {
+		maxLength = advisor.DefaultNameLengthLimit
 	}
 	checker := &namingAutoIncrementColumnChecker{
 		level:     level,
-		title:     string(checkCtx.Rule.Type),
+		title:     checkCtx.Rule.Type.String(),
 		format:    format,
 		maxLength: maxLength,
 	}
@@ -121,7 +133,7 @@ func (checker *namingAutoIncrementColumnChecker) Enter(in ast.Node) (ast.Node, b
 		if !checker.format.MatchString(column.name) {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.NamingAutoIncrementColumnConventionMismatch.Int32(),
+				Code:          code.NamingAutoIncrementColumnConventionMismatch.Int32(),
 				Title:         checker.title,
 				Content:       fmt.Sprintf("`%s`.`%s` mismatches auto_increment column naming convention, naming format should be %q", tableName, column.name, checker.format),
 				StartPosition: common.ConvertANTLRLineToPosition(column.line),
@@ -130,7 +142,7 @@ func (checker *namingAutoIncrementColumnChecker) Enter(in ast.Node) (ast.Node, b
 		if checker.maxLength > 0 && len(column.name) > checker.maxLength {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.NamingAutoIncrementColumnConventionMismatch.Int32(),
+				Code:          code.NamingAutoIncrementColumnConventionMismatch.Int32(),
 				Title:         checker.title,
 				Content:       fmt.Sprintf("`%s`.`%s` mismatches auto_increment column naming convention, its length should be within %d characters", tableName, column.name, checker.maxLength),
 				StartPosition: common.ConvertANTLRLineToPosition(column.line),

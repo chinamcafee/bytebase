@@ -6,12 +6,13 @@ import (
 	"fmt"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/snowsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/snowflake"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	snowsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/snowflake"
 )
 
@@ -20,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_SNOWFLAKE, advisor.SchemaRuleTableRequirePK, &TableRequirePkAdvisor{})
+	advisor.Register(storepb.Engine_SNOWFLAKE, storepb.SQLReviewRule_TABLE_REQUIRE_PK, &TableRequirePkAdvisor{})
 }
 
 // TableRequirePkAdvisor is the advisor checking for table require primary key.
@@ -29,20 +30,26 @@ type TableRequirePkAdvisor struct {
 
 // Check checks for table require primary key.
 func (*TableRequirePkAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	rule := NewTableRequirePkRule(level, string(checkCtx.Rule.Type))
+	rule := NewTableRequirePkRule(level, checkCtx.Rule.Type.String())
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList(), nil
 }
@@ -124,9 +131,12 @@ func (r *TableRequirePkRule) OnExit(_ antlr.ParserRuleContext, nodeType string) 
 func (r *TableRequirePkRule) GetAdviceList() []*storepb.Advice {
 	for tableName, has := range r.tableHasPrimaryKey {
 		if !has {
-			r.AddAdvice(&storepb.Advice{
+			// Directly append to adviceList instead of using AddAdvice because
+			// tableLine already stores absolute line numbers (baseLine + line at time of encounter).
+			// Using AddAdvice would incorrectly add the current baseLine again.
+			r.adviceList = append(r.adviceList, &storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.TableNoPK.Int32(),
+				Code:          code.TableNoPK.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("Table %s requires PRIMARY KEY.", r.tableOriginalName[tableName]),
 				StartPosition: common.ConvertANTLRLineToPosition(r.tableLine[tableName]),
@@ -142,7 +152,7 @@ func (r *TableRequirePkRule) enterCreateTable(ctx *parser.Create_tableContext) {
 
 	r.tableHasPrimaryKey[normalizedTableName] = false
 	r.tableOriginalName[normalizedTableName] = originalTableName.GetText()
-	r.tableLine[normalizedTableName] = ctx.GetStart().GetLine()
+	r.tableLine[normalizedTableName] = r.baseLine + ctx.GetStart().GetLine()
 	r.currentNormalizedTableName = normalizedTableName
 	r.currentConstraintAction = currentConstraintActionAdd
 }
@@ -177,7 +187,7 @@ func (r *TableRequirePkRule) enterOutOfLineConstraint(ctx *parser.Out_of_line_co
 		r.tableHasPrimaryKey[r.currentNormalizedTableName] = true
 	case currentConstraintActionDrop:
 		r.tableHasPrimaryKey[r.currentNormalizedTableName] = false
-		r.tableLine[r.currentNormalizedTableName] = ctx.GetStart().GetLine()
+		r.tableLine[r.currentNormalizedTableName] = r.baseLine + ctx.GetStart().GetLine()
 	default:
 		// No action for other constraint actions
 	}
@@ -190,7 +200,7 @@ func (r *TableRequirePkRule) enterConstraintAction(ctx *parser.Constraint_action
 	if ctx.DROP() != nil && ctx.PRIMARY() != nil {
 		if _, ok := r.tableHasPrimaryKey[r.currentNormalizedTableName]; ok {
 			r.tableHasPrimaryKey[r.currentNormalizedTableName] = false
-			r.tableLine[r.currentNormalizedTableName] = ctx.GetStart().GetLine()
+			r.tableLine[r.currentNormalizedTableName] = r.baseLine + ctx.GetStart().GetLine()
 		}
 		return
 	}

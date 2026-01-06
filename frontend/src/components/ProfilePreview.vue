@@ -4,8 +4,9 @@
     class="px-4 py-3 menu-item w-48"
     role="menuitem"
     v-bind="bindings"
+    @click="$emit('click')"
   >
-    <p class="text-sm flex justify-between space-x-2">
+    <p class="text-sm flex justify-between gap-x-2">
       <span class="text-main font-medium truncate text-ellipsis">
         {{ currentUserV1.title }}
       </span>
@@ -30,6 +31,10 @@ const props = withDefaults(
     link: true,
   }
 );
+
+defineEmits<{
+  (event: "click"): void;
+}>();
 
 const router = useRouter();
 const currentUserV1 = useCurrentUserV1();

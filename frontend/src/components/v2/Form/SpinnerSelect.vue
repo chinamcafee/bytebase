@@ -11,11 +11,11 @@ defineComponent({
 </script>
 
 <script lang="ts" setup>
-import { type SelectProps, NSelect } from "naive-ui";
+import { NSelect, type SelectProps } from "naive-ui";
 import { ref } from "vue";
 
 export interface SpinnerSelectProps extends /* @vue-ignore */ SelectProps {
-  onUpdate: (value: string | undefined) => Promise<any>;
+  onUpdate: (value: string | undefined) => Promise<void>;
 }
 const props = defineProps<SpinnerSelectProps>();
 

@@ -6,12 +6,13 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
-	"github.com/pkg/errors"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -20,9 +21,9 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleCollationAllowlist, &CollationAllowlistAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleCollationAllowlist, &CollationAllowlistAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleCollationAllowlist, &CollationAllowlistAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_SYSTEM_COLLATION_ALLOWLIST, &CollationAllowlistAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_SYSTEM_COLLATION_ALLOWLIST, &CollationAllowlistAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_SYSTEM_COLLATION_ALLOWLIST, &CollationAllowlistAdvisor{})
 }
 
 // CollationAllowlistAdvisor is the advisor checking for collation allowlist.
@@ -31,31 +32,30 @@ type CollationAllowlistAdvisor struct {
 
 // Check checks for collation allowlist.
 func (*CollationAllowlistAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalStringArrayTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
+	stringArrayPayload := checkCtx.Rule.GetStringArrayPayload()
 
 	// Create the rule
-	rule := NewCollationAllowlistRule(level, string(checkCtx.Rule.Type), payload.List)
+	rule := NewCollationAllowlistRule(level, checkCtx.Rule.Type.String(), stringArrayPayload.List)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
 		// Set text will be handled in the Query node
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -160,7 +160,7 @@ func (r *CollationAllowlistRule) checkCreateTable(ctx *mysql.CreateTableContext)
 			for _, attr := range columnDef.FieldDefinition().AllColumnAttribute() {
 				if attr != nil && attr.Collate() != nil && attr.Collate().CollationName() != nil {
 					collation := mysqlparser.NormalizeMySQLCollationName(attr.Collate().CollationName())
-					r.checkCollation(collation, tableElement.GetStart().GetLine())
+					r.checkCollation(collation, columnDef.GetStart().GetLine())
 				}
 			}
 		}
@@ -229,7 +229,7 @@ func (r *CollationAllowlistRule) checkCollation(collation string, lineNumber int
 	if _, exists := r.allowList[collation]; collation != "" && !exists {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.DisabledCollation.Int32(),
+			Code:          code.DisabledCollation.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("\"%s\" used disabled collation '%s'", r.text, collation),
 			StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + lineNumber),

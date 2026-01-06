@@ -30,15 +30,15 @@ defineComponent({
 import { omit } from "lodash-es";
 import {
   type ButtonProps,
-  type PopconfirmProps,
   NButton,
   NPopconfirm,
+  type PopconfirmProps,
 } from "naive-ui";
 import { computed, ref, useAttrs } from "vue";
 import type { VueClass } from "@/utils";
 
 export interface SpinnerButtonProps extends /* @vue-ignore */ ButtonProps {
-  onConfirm: () => Promise<any>;
+  onConfirm: () => Promise<void>;
   tooltip?: string;
   tooltipClass?: VueClass;
   popconfirmProps?: PopconfirmProps;

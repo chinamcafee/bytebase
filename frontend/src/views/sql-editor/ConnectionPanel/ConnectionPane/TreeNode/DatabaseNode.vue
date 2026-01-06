@@ -1,13 +1,8 @@
 <template>
   <div class="flex items-center max-w-full overflow-hidden gap-x-1">
-    <NTooltip v-if="tabStore.supportBatchMode" :disabled="!checkTooltip">
+    <NTooltip v-if="tabStore.supportBatchMode" :disabled="!checkTooltip" :placement="'bottom-start'">
       <template #trigger>
-        <LinkIcon
-          v-if="tabStore.currentTab?.connection.database === database.name"
-          class="w-4 textinfolabel"
-        />
         <NCheckbox
-          v-else
           :checked="checked"
           :disabled="checkDisabled || !canQuery"
           @click.stop.prevent=""
@@ -31,16 +26,17 @@
     </span>
     <RequestQueryButton
       v-if="showRequestQueryButton"
-      :database-resource="{
-        databaseFullName: database.name,
-      }"
+      :database-resources="[
+        {
+          databaseFullName: database.name,
+        },
+      ]"
       :size="'tiny'"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { LinkIcon } from "lucide-vue-next";
 import { NCheckbox, NTooltip } from "naive-ui";
 import { computed } from "vue";
 import { RichDatabaseName } from "@/components/v2";

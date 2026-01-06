@@ -2,17 +2,17 @@
   <BBModal
     :title="$t('two-factor.your-two-factor-secret.self')"
     :subtitle="$t('two-factor.your-two-factor-secret.description')"
-    class="outline outline-gray-200"
+    class="outline-solid outline-gray-200"
     @close="dismissModal"
   >
     <div class="w-auto mb-4 py-2">
       <code class="pr-4">{{ props.secret }}</code>
     </div>
-    <div class="w-full flex items-center justify-end space-x-3 pr-1 pb-1">
+    <div class="w-full flex items-center justify-end gap-x-3 pr-1 pb-1">
       <NButton @click="dismissModal">
         {{ $t("common.close") }}
       </NButton>
-      <NButton type="primary" @click="copySecret">
+      <NButton v-if="isSupported" type="primary" @click="copySecret">
         {{ $t("common.copy") }}
       </NButton>
     </div>
@@ -20,11 +20,11 @@
 </template>
 
 <script lang="ts" setup>
+import { useClipboard } from "@vueuse/core";
 import { NButton } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import { BBModal } from "@/bbkit";
 import { pushNotification } from "@/store";
-import { toClipboard } from "@/utils";
 
 const props = defineProps({
   secret: {
@@ -43,8 +43,12 @@ const dismissModal = () => {
   emit("close");
 };
 
+const { copy: copyTextToClipboard, isSupported } = useClipboard({
+  legacy: true,
+});
+
 const copySecret = () => {
-  toClipboard(props.secret).then(() => {
+  copyTextToClipboard(props.secret).then(() => {
     pushNotification({
       module: "bytebase",
       style: "INFO",

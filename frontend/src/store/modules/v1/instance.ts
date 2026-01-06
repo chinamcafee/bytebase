@@ -2,39 +2,40 @@ import { create } from "@bufbuild/protobuf";
 import { createContextValues } from "@connectrpc/connect";
 import { defineStore } from "pinia";
 import { reactive } from "vue";
-import { instanceServiceClientConnect } from "@/grpcweb";
+import { instanceServiceClientConnect } from "@/connect";
 // Removed conversion imports - using proto-es types directly
-import { silentContextKey } from "@/grpcweb/context-key";
+import { silentContextKey } from "@/connect/context-key";
 import {
-  unknownInstance,
-  isValidProjectName,
-  isValidInstanceName,
   isValidEnvironmentName,
+  isValidInstanceName,
+  isValidProjectName,
+  unknownEnvironment,
+  unknownInstance,
 } from "@/types";
-import { Engine } from "@/types/proto-es/v1/common_pb";
-import { State } from "@/types/proto-es/v1/common_pb";
-import {
-  CreateInstanceRequestSchema,
-  UpdateInstanceRequestSchema,
-  DeleteInstanceRequestSchema,
-  UndeleteInstanceRequestSchema,
-  SyncInstanceRequestSchema,
-  ListInstanceDatabaseRequestSchema,
-  BatchSyncInstancesRequestSchema,
-  BatchUpdateInstancesRequestSchema,
-  GetInstanceRequestSchema,
-  AddDataSourceRequestSchema,
-  UpdateDataSourceRequestSchema,
-  RemoveDataSourceRequestSchema,
-  ListInstancesRequestSchema,
-} from "@/types/proto-es/v1/instance_service_pb";
+import { Engine, State } from "@/types/proto-es/v1/common_pb";
 // Using proto-es types directly, no conversions needed for internal operations
 import type {
   DataSource,
   Instance,
   UpdateInstanceRequest,
 } from "@/types/proto-es/v1/instance_service_pb";
+import {
+  AddDataSourceRequestSchema,
+  BatchSyncInstancesRequestSchema,
+  BatchUpdateInstancesRequestSchema,
+  CreateInstanceRequestSchema,
+  DeleteInstanceRequestSchema,
+  GetInstanceRequestSchema,
+  ListInstanceDatabaseRequestSchema,
+  ListInstancesRequestSchema,
+  RemoveDataSourceRequestSchema,
+  SyncInstanceRequestSchema,
+  UndeleteInstanceRequestSchema,
+  UpdateDataSourceRequestSchema,
+  UpdateInstanceRequestSchema,
+} from "@/types/proto-es/v1/instance_service_pb";
 import { extractInstanceResourceName, hasWorkspacePermissionV2 } from "@/utils";
+import { getLabelFilter } from "./database";
 
 export interface InstanceFilter {
   environment?: string;
@@ -44,7 +45,7 @@ export interface InstanceFilter {
   query?: string;
   engines?: Engine[];
   state?: State;
-  labels?: { key: string; value: string }[];
+  labels?: string[];
 }
 
 const getListInstanceFilter = (params: InstanceFilter) => {
@@ -58,10 +59,10 @@ const getListInstanceFilter = (params: InstanceFilter) => {
   if (isValidProjectName(params.project)) {
     list.push(`project == "${params.project}"`);
   }
-  if (params.environment !== undefined) {
-    list.push(
-      `environment == "${isValidEnvironmentName(params.environment) ? params.environment : ""}"`
-    );
+  if (params.environment === unknownEnvironment().name) {
+    list.push(`environment == ""`);
+  } else if (isValidEnvironmentName(params.environment)) {
+    list.push(`environment == "${params.environment}"`);
   }
   if (params.host) {
     list.push(`host.matches("${params.host}")`);
@@ -79,10 +80,8 @@ const getListInstanceFilter = (params: InstanceFilter) => {
   if (params.state === State.DELETED) {
     list.push(`state == "${State[params.state]}"`);
   }
-  if (params.labels && params.labels.length > 0) {
-    params.labels.forEach(({ key, value }) => {
-      list.push(`labels.${key} == "${value}"`);
-    });
+  if (params.labels) {
+    list.push(...getLabelFilter(params.labels));
   }
   return list.join(" && ");
 };
@@ -97,21 +96,34 @@ export const useInstanceV1Store = defineStore("instance_v1", () => {
   };
 
   // Actions
-  const upsertInstances = async (list: Instance[]): Promise<Instance[]> => {
+  const upsertInstances = (list: Instance[]): Instance[] => {
     list.forEach((instance) => {
       instanceMapByName.set(instance.name, instance);
     });
     return list;
   };
-  const createInstance = async (instance: Instance) => {
+  const createInstance = async (
+    instance: Instance,
+    validateOnly: boolean = false
+  ) => {
     const request = create(CreateInstanceRequestSchema, {
       instance: instance,
       instanceId: extractInstanceResourceName(instance.name),
+      validateOnly: validateOnly,
     });
-    const response = await instanceServiceClientConnect.createInstance(request);
-    const instances = await upsertInstances([response]);
-
-    return instances[0];
+    const response = await instanceServiceClientConnect.createInstance(
+      request,
+      {
+        contextValues: createContextValues().set(
+          silentContextKey,
+          validateOnly
+        ),
+      }
+    );
+    if (!validateOnly) {
+      upsertInstances([response]);
+    }
+    return response;
   };
   const updateInstance = async (instance: Instance, updateMask: string[]) => {
     const request = create(UpdateInstanceRequestSchema, {
@@ -119,7 +131,7 @@ export const useInstanceV1Store = defineStore("instance_v1", () => {
       updateMask: { paths: updateMask },
     });
     const response = await instanceServiceClientConnect.updateInstance(request);
-    const instances = await upsertInstances([response]);
+    const instances = upsertInstances([response]);
     return instances[0];
   };
   const archiveInstance = async (instance: Instance, force = false) => {
@@ -129,7 +141,7 @@ export const useInstanceV1Store = defineStore("instance_v1", () => {
     });
     await instanceServiceClientConnect.deleteInstance(request);
     instance.state = State.DELETED;
-    const instances = await upsertInstances([instance]);
+    const instances = upsertInstances([instance]);
     return instances[0];
   };
   const deleteInstance = async (instance: string) => {
@@ -146,7 +158,7 @@ export const useInstanceV1Store = defineStore("instance_v1", () => {
     });
     await instanceServiceClientConnect.undeleteInstance(request);
     instance.state = State.ACTIVE;
-    const instances = await upsertInstances([instance]);
+    const instances = upsertInstances([instance]);
     return instances[0];
   };
   const syncInstance = async (instance: string, enableFullSync: boolean) => {
@@ -179,7 +191,7 @@ export const useInstanceV1Store = defineStore("instance_v1", () => {
     });
     const response =
       await instanceServiceClientConnect.batchUpdateInstances(request);
-    const instances = await upsertInstances(response.instances);
+    const instances = upsertInstances(response.instances);
     return instances;
   };
 
@@ -193,7 +205,7 @@ export const useInstanceV1Store = defineStore("instance_v1", () => {
     const response = await instanceServiceClientConnect.getInstance(request, {
       contextValues: createContextValues().set(silentContextKey, silent),
     });
-    const instances = await upsertInstances([response]);
+    const instances = upsertInstances([response]);
     return instances[0];
   };
   const getInstanceByName = (name: string): Instance => {
@@ -220,32 +232,58 @@ export const useInstanceV1Store = defineStore("instance_v1", () => {
     instanceRequestCache.set(name, request);
     return request;
   };
-  const createDataSource = async (
-    instance: Instance,
-    dataSource: DataSource
-  ) => {
+  const createDataSource = async ({
+    instance,
+    dataSource,
+    validateOnly,
+  }: {
+    instance: string;
+    dataSource: DataSource;
+    validateOnly?: boolean;
+  }) => {
     const request = create(AddDataSourceRequestSchema, {
-      name: instance.name,
+      name: instance,
       dataSource: dataSource,
+      validateOnly,
     });
-    const response = await instanceServiceClientConnect.addDataSource(request);
-    const [updatedInstance] = await upsertInstances([response]);
-    return updatedInstance;
+    const response = await instanceServiceClientConnect.addDataSource(request, {
+      contextValues: createContextValues().set(silentContextKey, validateOnly),
+    });
+    if (!validateOnly) {
+      upsertInstances([response]);
+    }
+    return response;
   };
-  const updateDataSource = async (
-    instance: Instance,
-    dataSource: DataSource,
-    updateMask: string[]
-  ) => {
+  const updateDataSource = async ({
+    instance,
+    dataSource,
+    updateMask,
+    validateOnly,
+  }: {
+    instance: string;
+    dataSource: DataSource;
+    updateMask: string[];
+    validateOnly?: boolean;
+  }) => {
     const request = create(UpdateDataSourceRequestSchema, {
-      name: instance.name,
+      name: instance,
       dataSource: dataSource,
       updateMask: { paths: updateMask },
+      validateOnly,
     });
-    const response =
-      await instanceServiceClientConnect.updateDataSource(request);
-    const [updatedInstance] = await upsertInstances([response]);
-    return updatedInstance;
+    const response = await instanceServiceClientConnect.updateDataSource(
+      request,
+      {
+        contextValues: createContextValues().set(
+          silentContextKey,
+          validateOnly
+        ),
+      }
+    );
+    if (!validateOnly) {
+      upsertInstances([response]);
+    }
+    return response;
   };
   const deleteDataSource = async (
     instance: Instance,
@@ -257,13 +295,14 @@ export const useInstanceV1Store = defineStore("instance_v1", () => {
     });
     const response =
       await instanceServiceClientConnect.removeDataSource(request);
-    const [updatedInstance] = await upsertInstances([response]);
+    const [updatedInstance] = upsertInstances([response]);
     return updatedInstance;
   };
 
   const fetchInstanceList = async (params: {
     pageSize?: number;
     pageToken?: string;
+    orderBy?: string;
     filter?: InstanceFilter;
   }) => {
     if (!hasWorkspacePermissionV2("bb.instances.list")) {
@@ -275,13 +314,14 @@ export const useInstanceV1Store = defineStore("instance_v1", () => {
     const request = create(ListInstancesRequestSchema, {
       pageSize: params.pageSize,
       pageToken: params.pageToken,
+      orderBy: params.orderBy,
       filter: getListInstanceFilter(params.filter ?? {}),
       showDeleted: params.filter?.state === State.DELETED ? true : false,
     });
     const response = await instanceServiceClientConnect.listInstances(request);
     const nextPageToken = response.nextPageToken;
 
-    const instances = await upsertInstances(response.instances);
+    const instances = upsertInstances(response.instances);
     return {
       instances: instances,
       nextPageToken,
@@ -290,7 +330,6 @@ export const useInstanceV1Store = defineStore("instance_v1", () => {
 
   return {
     reset,
-    upsertInstances,
     createInstance,
     updateInstance,
     archiveInstance,

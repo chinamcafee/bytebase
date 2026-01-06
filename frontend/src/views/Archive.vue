@@ -1,5 +1,5 @@
 <template>
-  <div class="flex flex-col space-y-4">
+  <div class="flex flex-col gap-y-4">
     <div class="flex justify-between items-end">
       <TabFilter
         :value="state.selectedTab"
@@ -41,19 +41,19 @@
 <script lang="ts" setup>
 import { computed, reactive, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter, useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import {
+  PagedInstanceTable,
+  PagedProjectTable,
   SearchBox,
   TabFilter,
-  PagedProjectTable,
-  PagedInstanceTable,
 } from "@/components/v2";
 import { State } from "@/types/proto-es/v1/common_pb";
 import { hasWorkspacePermissionV2 } from "@/utils";
 
 const hashList = ["PROJECT", "INSTANCE"] as const;
 export type TabHash = (typeof hashList)[number];
-const isTabHash = (x: any): x is TabHash => hashList.includes(x);
+const isTabHash = (x: unknown): x is TabHash => hashList.includes(x as TabHash);
 
 type LocalTabType = "PROJECT" | "INSTANCE";
 

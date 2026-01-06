@@ -19,14 +19,14 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import {
   GrantRequestIssueDetailPage,
+  IssueDetailPage,
   provideIssueContext,
   useBaseIssueContext,
   useInitializeIssue,
-  IssueDetailPage,
 } from "@/components/IssueV1";
 import {
-  providePlanCheckRunContext,
   type PlanCheckRunEvents,
+  providePlanCheckRunContext,
 } from "@/components/PlanCheckRun/context";
 import { useIssueLayoutVersion } from "@/composables/useIssueLayoutVersion";
 import { useBodyLayoutContext } from "@/layouts/common";
@@ -99,7 +99,7 @@ providePlanCheckRunContext(
 
 const { overrideMainContainerClass } = useBodyLayoutContext();
 
-overrideMainContainerClass("!py-0 !px-0");
+overrideMainContainerClass("py-0! px-0!");
 
 onMounted(() => {
   if (!uiStateStore.getIntroStateByKey("issue.visit")) {

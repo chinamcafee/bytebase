@@ -7,11 +7,9 @@
           : $t('settings.sensitive-data.algorithms.add')
       "
     >
-      <div
-        class="w-[40rem] max-w-[calc(100vw-5rem)] space-y-6 divide-y divide-block-border"
-      >
-        <div class="space-y-6">
-          <div class="w-full mb-6 space-y-1">
+      <div class="w-[40rem] max-w-[calc(100vw-5rem)]">
+        <div class="flex flex-col gap-y-6 pb-6">
+          <div class="w-full mb-6 flex flex-col gap-y-1">
             <label for="masking-type" class="textlabel">
               {{ $t("settings.sensitive-data.algorithms.table.masking-type") }}
               <RequiredStar />
@@ -23,13 +21,13 @@
               class="grid-cols-3 gap-2"
               @update:value="onMaskingTypeChange($event as MaskingType)"
             >
-              <template #item="{ option }: RadioGridItem<MaskingType>">
+              <template #item="{ option }">
                 {{ option.label }}
               </template>
             </RadioGrid>
           </div>
         </div>
-        <div class="space-y-6 pt-6">
+        <div class="flex flex-col gap-y-6 border-t border-block-border pt-6">
           <template v-if="state.maskingType === 'full-mask'">
             <div class="sm:col-span-2 sm:col-start-1">
               <label for="substitution" class="textlabel">
@@ -64,7 +62,7 @@
             <div
               v-for="(slice, i) in state.rangeMask.slices"
               :key="i"
-              class="flex space-x-2 items-center"
+              class="flex gap-x-2 items-center"
             >
               <div class="flex-none flex flex-col gap-y-1">
                 <label for="slice-start" class="textlabel flex">
@@ -204,7 +202,7 @@
                 }}
               </NRadio>
             </NRadioGroup>
-            <div class="flex space-x-2 items-center">
+            <div class="flex gap-x-2 items-center">
               <div class="flex-none flex flex-col gap-y-1">
                 <label for="slice-start" class="textlabel flex">
                   {{
@@ -307,31 +305,31 @@ import {
   NRadioGroup,
   NTooltip,
 } from "naive-ui";
-import { computed, watch, reactive } from "vue";
+import { computed, reactive, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import RequiredStar from "@/components/RequiredStar.vue";
-import type { RadioGridOption, RadioGridItem } from "@/components/v2";
+import type { RadioGridOption } from "@/components/v2";
 import {
   Drawer,
   DrawerContent,
-  RadioGrid,
   MiniActionButton,
+  RadioGrid,
 } from "@/components/v2";
 import type {
   Algorithm,
-  Algorithm_FullMask as FullMask,
-  Algorithm_RangeMask as RangeMask,
-  Algorithm_MD5Mask as MD5Mask,
   Algorithm_InnerOuterMask,
+  Algorithm_FullMask as FullMask,
+  Algorithm_MD5Mask as MD5Mask,
+  Algorithm_RangeMask as RangeMask,
 } from "@/types/proto-es/v1/setting_service_pb";
 import {
-  AlgorithmSchema,
-  Algorithm_FullMaskSchema as FullMaskSchema,
-  Algorithm_RangeMaskSchema as RangeMaskSchema,
-  Algorithm_MD5MaskSchema as MD5MaskSchema,
+  Algorithm_InnerOuterMask_MaskType,
   Algorithm_InnerOuterMaskSchema,
   Algorithm_RangeMask_SliceSchema,
-  Algorithm_InnerOuterMask_MaskType,
+  AlgorithmSchema,
+  Algorithm_FullMaskSchema as FullMaskSchema,
+  Algorithm_MD5MaskSchema as MD5MaskSchema,
+  Algorithm_RangeMaskSchema as RangeMaskSchema,
 } from "@/types/proto-es/v1/setting_service_pb";
 import type { MaskingType } from "./utils";
 import { getMaskingType } from "./utils";

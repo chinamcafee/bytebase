@@ -6,12 +6,13 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/plsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -19,7 +20,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_ORACLE, advisor.SchemaRuleStatementNoLeadingWildcardLike, &WhereNoLeadingWildcardLikeAdvisor{})
+	advisor.Register(storepb.Engine_ORACLE, storepb.SQLReviewRule_STATEMENT_WHERE_NO_LEADING_WILDCARD_LIKE, &WhereNoLeadingWildcardLikeAdvisor{})
 }
 
 // WhereNoLeadingWildcardLikeAdvisor is the advisor checking for no leading wildcard LIKE.
@@ -28,20 +29,26 @@ type WhereNoLeadingWildcardLikeAdvisor struct {
 
 // Check checks for no leading wildcard LIKE.
 func (*WhereNoLeadingWildcardLikeAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	rule := NewWhereNoLeadingWildcardLikeRule(level, string(checkCtx.Rule.Type), checkCtx.CurrentDatabase)
+	rule := NewWhereNoLeadingWildcardLikeRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase)
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList()
 }
@@ -92,9 +99,9 @@ func (r *WhereNoLeadingWildcardLikeRule) handleCompoundExpression(ctx *parser.Co
 	if strings.HasPrefix(text, "'%") && strings.HasSuffix(text, "'") {
 		r.AddAdvice(
 			r.level,
-			advisor.StatementLeadingWildcardLike.Int32(),
+			code.StatementLeadingWildcardLike.Int32(),
 			"Avoid using leading wildcard LIKE.",
-			common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),
+			common.ConvertANTLRLineToPosition(r.baseLine+ctx.GetStart().GetLine()),
 		)
 	}
 }

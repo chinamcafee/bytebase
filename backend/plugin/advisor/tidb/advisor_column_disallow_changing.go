@@ -6,8 +6,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -20,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleColumnDisallowChange, &ColumnDisallowChangingAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_COLUMN_DISALLOW_CHANGE, &ColumnDisallowChangingAdvisor{})
 }
 
 // ColumnDisallowChangingAdvisor is the advisor checking for disallow CHANGE COLUMN statement.
@@ -29,9 +30,10 @@ type ColumnDisallowChangingAdvisor struct {
 
 // Check checks for disallow CHANGE COLUMN statement.
 func (*ColumnDisallowChangingAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -40,7 +42,7 @@ func (*ColumnDisallowChangingAdvisor) Check(_ context.Context, checkCtx advisor.
 	}
 	checker := &columnDisallowChangingChecker{
 		level: level,
-		title: string(checkCtx.Rule.Type),
+		title: checkCtx.Rule.Type.String(),
 	}
 
 	for _, stmt := range stmtList {
@@ -67,7 +69,7 @@ func (checker *columnDisallowChangingChecker) Enter(in ast.Node) (ast.Node, bool
 			if spec.Tp == ast.AlterTableChangeColumn {
 				checker.adviceList = append(checker.adviceList, &storepb.Advice{
 					Status:        checker.level,
-					Code:          advisor.UseChangeColumnStatement.Int32(),
+					Code:          code.UseChangeColumnStatement.Int32(),
 					Title:         checker.title,
 					Content:       fmt.Sprintf("\"%s\" contains CHANGE COLUMN statement", checker.text),
 					StartPosition: common.ConvertANTLRLineToPosition(checker.line),

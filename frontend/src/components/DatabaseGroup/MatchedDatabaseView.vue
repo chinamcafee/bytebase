@@ -22,8 +22,8 @@
       :disabled="item.databaseList.length === 0"
       :name="item.name"
     >
-      <template #header-extra>{{ item.databaseList.length }}</template>
-      <div class="space-y-2 w-full max-h-[12rem] overflow-y-auto">
+      <template #header-extra>{{ item.getTotal ? item.getTotal() : undefined }}</template>
+      <div class="flex flex-col gap-y-2 w-full max-h-48 overflow-y-auto">
         <div class="">
           <div
             v-for="database in item.databaseList"
@@ -45,11 +45,11 @@
           </div>
         </div>
         <NButton
-          v-if="item.hasNext(item.token)"
+          v-if="checkHasNext(item)"
           size="small"
           quaternary
           :loading="item.loading"
-          @click="() => loadMoreDatabase(item)"
+          @click="loadMore(item)"
         >
           {{ $t("common.load-more") }}
         </NButton>
@@ -62,24 +62,28 @@
 import type { ConnectError } from "@connectrpc/connect";
 import { useDebounceFn } from "@vueuse/core";
 import { NButton, NCollapse, NCollapseItem } from "naive-ui";
-import { watch, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { BBSpin } from "@/bbkit";
-import { DatabaseV1Name, InstanceV1Name } from "@/components/v2";
-import { EnvironmentV1Name } from "@/components/v2";
+import {
+  DatabaseV1Name,
+  EnvironmentV1Name,
+  InstanceV1Name,
+} from "@/components/v2";
 import type { ConditionGroupExpr } from "@/plugins/cel";
 import { validateSimpleExpr } from "@/plugins/cel";
 import { useDatabaseV1Store, useDBGroupStore } from "@/store";
 import {
+  type ComposedDatabase,
   DEBOUNCE_SEARCH_DELAY,
   isValidDatabaseName,
-  type ComposedDatabase,
 } from "@/types";
 import { getDefaultPagination } from "@/utils";
 
 interface DatabaseMatchList<T> {
   token: T;
   loading: boolean;
+  getTotal?: () => number;
   databaseList: ComposedDatabase[];
   name: "matched" | "unmatched";
   title: string;
@@ -87,10 +91,18 @@ interface DatabaseMatchList<T> {
   loadMore: (token: T) => Promise<{ databases: ComposedDatabase[]; token: T }>;
 }
 
+type AnyDatabaseMatchList =
+  | DatabaseMatchList<number>
+  | DatabaseMatchList<string>;
+
+const checkHasNext = (item: AnyDatabaseMatchList): boolean => {
+  return (item.hasNext as (token: number | string) => boolean)(item.token);
+};
+
 interface LocalState {
   loading: boolean;
   matchingError?: string;
-  databaseMatchLists: DatabaseMatchList<any>[];
+  databaseMatchLists: AnyDatabaseMatchList[];
   collapseExpandedNames: string[];
 }
 
@@ -101,19 +113,18 @@ const props = defineProps<{
 
 const { t } = useI18n();
 const matchedDatabaseNameList = ref<string[]>([]);
+const pageSize = computed(() => getDefaultPagination());
+const dbGroupStore = useDBGroupStore();
+const databaseStore = useDatabaseV1Store();
 
 const loadMoreMatched = async (index: number) => {
   const previous = index;
-  const next = previous + 20;
-
-  const databases = await Promise.all(
-    matchedDatabaseNameList.value
-      .slice(previous, next)
-      .map((name) => databaseStore.getOrFetchDatabaseByName(name))
-  );
+  const next = previous + pageSize.value;
+  const databaseNames = matchedDatabaseNameList.value.slice(previous, next);
+  await databaseStore.batchGetOrFetchDatabases(databaseNames);
 
   return {
-    databases,
+    databases: databaseNames.map(databaseStore.getDatabaseByName),
     token: next,
   };
 };
@@ -124,7 +135,7 @@ const loadMoreUnmatched = async (token: string) => {
   while (true) {
     const { databases, nextPageToken } = await databaseStore.fetchDatabases({
       pageToken,
-      pageSize: getDefaultPagination(),
+      pageSize: pageSize.value,
       parent: props.project,
     });
     pageToken = nextPageToken;
@@ -141,27 +152,31 @@ const loadMoreUnmatched = async (token: string) => {
   };
 };
 
-const getMatched = (): DatabaseMatchList<number> => ({
+const getMatched = (title: string): DatabaseMatchList<number> => ({
   token: 0,
   loading: false,
   databaseList: [],
-  title: t("database-group.matched-database"),
+  title,
+  getTotal: () => matchedDatabaseNameList.value.length,
   name: "matched",
   hasNext: (token: number) => token < matchedDatabaseNameList.value.length,
   loadMore: loadMoreMatched,
 });
 
-const getUnMatched = (): DatabaseMatchList<string> => ({
+const getUnMatched = (title: string): DatabaseMatchList<string> => ({
   token: "",
   loading: false,
   databaseList: [],
-  title: t("database-group.unmatched-database"),
+  title,
   name: "unmatched",
   hasNext: (token: string) => !!token,
   loadMore: loadMoreUnmatched,
 });
 
-const getInitialState = () => [getMatched(), getUnMatched()];
+const getInitialState = () => [
+  getMatched(t("database-group.matched-database")),
+  getUnMatched(t("database-group.unmatched-database")),
+];
 
 const state = reactive<LocalState>({
   loading: false,
@@ -169,20 +184,25 @@ const state = reactive<LocalState>({
   collapseExpandedNames: [],
 });
 
-const dbGroupStore = useDBGroupStore();
-const databaseStore = useDatabaseV1Store();
-
-const loadMoreDatabase = async <T,>(state: DatabaseMatchList<T>) => {
-  state.loading = true;
+// biome-ignore format: ESLint requires trailing comma for generic type parameter
+const loadMoreDatabase = async <T,>(item: DatabaseMatchList<T>) => {
+  item.loading = true;
   try {
-    const { databases, token } = await state.loadMore(state.token);
-    state.token = token;
-    state.databaseList.push(
+    const { databases, token } = await item.loadMore(item.token);
+    item.token = token;
+    item.databaseList.push(
       ...databases.filter((database) => isValidDatabaseName(database.name))
     );
   } finally {
-    state.loading = false;
+    item.loading = false;
   }
+};
+
+const loadMore = (item: AnyDatabaseMatchList) => {
+  if (item.name === "matched") {
+    return loadMoreDatabase(item as DatabaseMatchList<number>);
+  }
+  return loadMoreDatabase(item as DatabaseMatchList<string>);
 };
 
 watch(
@@ -221,9 +241,7 @@ const updateDatabaseMatchingState = useDebounceFn(async () => {
     state.matchingError = undefined;
     state.databaseMatchLists = getInitialState();
     matchedDatabaseNameList.value = matchedDatabaseList;
-    await Promise.all(
-      state.databaseMatchLists.map((item) => loadMoreDatabase(item))
-    );
+    await Promise.all(state.databaseMatchLists.map((item) => loadMore(item)));
   } catch (error) {
     state.matchingError = (error as ConnectError).message;
   } finally {

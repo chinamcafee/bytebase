@@ -1,7 +1,7 @@
 package plsql
 
 import (
-	plsql "github.com/bytebase/plsql-parser"
+	"github.com/bytebase/parser/plsql"
 	"github.com/pkg/errors"
 )
 
@@ -63,20 +63,4 @@ func NormalizeQuotedString(ctx plsql.IQuoted_stringContext) string {
 
 	raw := ctx.GetText()
 	return raw[1 : len(raw)-1]
-}
-
-func normalizeClusterName(ctx plsql.ICluster_nameContext) (string, string) {
-	var list []string
-	for _, idExpression := range ctx.AllId_expression() {
-		list = append(list, NormalizeIDExpression(idExpression))
-	}
-
-	switch len(list) {
-	case 1:
-		return "", list[0]
-	case 2:
-		return list[0], list[1]
-	default:
-		return "", ""
-	}
 }

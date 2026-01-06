@@ -19,12 +19,12 @@
           <template #trigger>
             <NButton
               quaternary
-              size="tiny"
+              size="small"
               style="--n-padding: 0 4px"
               @click="$router.push({ name: INSTANCE_ROUTE_DASHBOARD })"
             >
               <template #icon>
-                <SettingsIcon class="w-4 h-4" />
+                <SettingsIcon class="w-4" />
               </template>
             </NButton>
           </template>
@@ -33,7 +33,7 @@
           </template>
         </NTooltip>
       </template>
-      <ConnectionPane />
+      <ConnectionPane :show="show" />
     </DrawerContent>
   </Drawer>
 </template>
@@ -71,6 +71,9 @@ const allowManageInstance = computed(() => {
 
 <style scoped lang="postcss">
 .connection-panel-content :deep(.n-drawer-header__main) {
-  @apply flex-1 flex items-center justify-between;
+  flex: 1 1 0%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 </style>

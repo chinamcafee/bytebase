@@ -12,7 +12,6 @@ import (
 
 	"github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
-	"github.com/bytebase/bytebase/backend/plugin/parser/pg/legacy/ast"
 )
 
 const (
@@ -20,8 +19,6 @@ const (
 )
 
 var (
-	beginRuneList     = []rune{'B', 'E', 'G', 'I', 'N'}
-	atomicRuneList    = []rune{'A', 'T', 'O', 'M', 'I', 'C'}
 	delimiterRuneList = []rune{'D', 'E', 'L', 'I', 'M', 'I', 'T', 'E', 'R'}
 )
 
@@ -202,139 +199,6 @@ func matchMySQLTableConstraint(text string, cons *tidbast.Constraint) bool {
 	}
 }
 
-// SetLineForPGCreateTableStmt sets the line for columns and table constraints in CREATE TABLE statements.
-func (t *Tokenizer) SetLineForPGCreateTableStmt(node *ast.CreateTableStmt, firstLine int) error {
-	// Some statement are recognized as create table statement, but without columns and constraints like:
-	// CREATE TABLE t AS SELECT * FROM old_t;
-	if len(node.ColumnList) == 0 && len(node.ConstraintList) == 0 {
-		return nil
-	}
-	// We assume that the parser will parse the columns and table constraints according to the order of the raw SQL statements
-	// and the identifiers don't equal any keywords in CREATE TABLE statements.
-	// If it breaks our assumption, we set the line for columns and table constraints to the first line of the CREATE TABLE statement.
-	for _, col := range node.ColumnList {
-		col.SetLastLine(node.LastLine())
-		for _, inlineCons := range col.ConstraintList {
-			inlineCons.SetLastLine(node.LastLine())
-		}
-	}
-	for _, cons := range node.ConstraintList {
-		cons.SetLastLine(node.LastLine())
-	}
-
-	columnPos := 0
-	constraintPos := 0
-	// find the '(' for CREATE TABLE ... ( ... )
-	if err := t.scanTo([]rune{'('}); err != nil {
-		return err
-	}
-
-	// parentheses is the flag for matching parentheses.
-	parentheses := 1
-	t.skipBlank()
-	startPos := t.pos()
-	for {
-		switch {
-		case t.char(0) == '\n':
-			t.line++
-			t.skip(1)
-		case t.char(0) == '/' && t.char(1) == '*':
-			if err := t.scanComment(); err != nil {
-				return err
-			}
-		case t.char(0) == '-' && t.char(1) == '-':
-			if err := t.scanComment(); err != nil {
-				return err
-			}
-		case t.char(0) == '\'':
-			if err := t.scanString('\''); err != nil {
-				return err
-			}
-		case t.char(0) == '$':
-			if err := t.scanDoubleDollarQuotedString(); err != nil {
-				return err
-			}
-		case t.char(0) == '"':
-			if err := t.scanIdentifier('"'); err != nil {
-				return err
-			}
-		case t.char(0) == '(':
-			parentheses++
-			t.skip(1)
-		case t.char(0) == ')':
-			parentheses--
-			if parentheses == 0 {
-				// This means we find the corresponding ')' for the first '(' in CREATE TABLE statements.
-				// We need to check the definition and return.
-				def := strings.ToLower(t.getString(startPos, t.pos()-startPos))
-				if columnPos < len(node.ColumnList) &&
-					strings.Contains(def, strings.ToLower(node.ColumnList[columnPos].ColumnName)) {
-					// Consider this text:
-					// CREATE TABLE t(
-					//   a int
-					// )
-					//
-					// Our current location is ')'.
-					// The line (t.line + firstLine - 1) is the line of ')',
-					// but we want to get the line of 'a int'.
-					// So we need minus the aboveNonBlankLineDistance.
-					node.ColumnList[columnPos].SetLastLine(t.line + firstLine - 1 - t.aboveNonBlankLineDistance())
-					for _, inlineConstraint := range node.ColumnList[columnPos].ConstraintList {
-						inlineConstraint.SetLastLine(node.ColumnList[columnPos].LastLine())
-					}
-				} else if constraintPos < len(node.ConstraintList) &&
-					matchTableConstraint(def, node.ConstraintList[constraintPos]) {
-					// Consider this text:
-					// CREATE TABLE t(
-					//   a int,
-					//   UNIQUE (a)
-					// )
-					//
-					// Our current location is ')'.
-					// The line (t.line + firstLine - 1) is the line of ')',
-					// but we want to get the line of 'UNIQUE (a)'.
-					// So we need minus the aboveNonBlankLineDistance.
-					node.ConstraintList[constraintPos].SetLastLine(t.line + firstLine - 1 - t.aboveNonBlankLineDistance())
-				}
-				return nil
-			}
-			t.skip(1)
-		case t.char(0) == ',':
-			// e.g. CREATE TABLE t(
-			//   a int,
-			//   b int,
-			//   UNIQUE(a, b),
-			//   UNIQUE(b)
-			// )
-			// We don't need to consider the ',' in UNIQUE(a, b)
-			if parentheses > 1 {
-				t.skip(1)
-				continue
-			}
-			def := strings.ToLower(t.getString(startPos, t.pos()-startPos))
-			if columnPos < len(node.ColumnList) &&
-				strings.Contains(def, strings.ToLower(node.ColumnList[columnPos].ColumnName)) {
-				node.ColumnList[columnPos].SetLastLine(t.line + firstLine - 1)
-				for _, inlineConstraint := range node.ColumnList[columnPos].ConstraintList {
-					inlineConstraint.SetLastLine(node.ColumnList[columnPos].LastLine())
-				}
-				columnPos++
-			} else if constraintPos < len(node.ConstraintList) &&
-				matchTableConstraint(def, node.ConstraintList[constraintPos]) {
-				node.ConstraintList[constraintPos].SetLastLine(t.line + firstLine - 1)
-				constraintPos++
-			}
-			t.skip(1)
-			t.skipBlank()
-			startPos = t.pos()
-		case t.char(0) == eofRune:
-			return nil
-		default:
-			t.skip(1)
-		}
-	}
-}
-
 func (t *Tokenizer) aboveNonBlankLineDistance() int {
 	pos := uint(1)
 	dis := 0
@@ -349,46 +213,29 @@ func (t *Tokenizer) aboveNonBlankLineDistance() int {
 	}
 }
 
-// matchTableConstraint matches text as lowercase.
-func matchTableConstraint(text string, cons *ast.ConstraintDef) bool {
-	text = strings.ToLower(text)
-	if cons.Name != "" {
-		return strings.Contains(text, strings.ToLower(cons.Name))
-	}
-	switch cons.Type {
-	case ast.ConstraintTypeCheck:
-		return strings.Contains(text, "check")
-	case ast.ConstraintTypeUnique:
-		return strings.Contains(text, "unique")
-	case ast.ConstraintTypePrimary:
-		return strings.Contains(text, "primary key")
-	case ast.ConstraintTypeForeign:
-		return strings.Contains(text, "foreign key")
-	default:
-		// Unknown constraint type
-		return false
-	}
-}
-
 // SplitTiDBMultiSQL splits the statement to a string slice.
-func (t *Tokenizer) SplitTiDBMultiSQL() ([]base.SingleSQL, error) {
-	var res []base.SingleSQL
+func (t *Tokenizer) SplitTiDBMultiSQL() ([]base.Statement, error) {
+	var res []base.Statement
 	delimiter := []rune{';'}
 
-	t.skipBlank()
 	t.emptyStatement = true
+	// Record position BEFORE skipping whitespace to include leading whitespace in Text
 	startPos := t.cursor
-	startLine := t.line // Track the starting line number (1-based)
+	startLine := t.line          // Track the starting line number (1-based)
+	startColumn := t.getColumn() // Track the starting column (1-based)
+	t.skipBlank()
 	for {
 		switch {
 		case t.char(0) == eofRune:
 			s := t.getString(startPos, t.pos()-startPos)
 			if !emptyString(s) {
 				if t.f == nil {
-					res = append(res, base.SingleSQL{
+					res = append(res, base.Statement{
 						Text: s,
-						// BaseLine is 0-based line number, so subtract 1 from 1-based startLine
-						BaseLine: startLine - 1,
+						Start: &store.Position{
+							Line:   int32(startLine),
+							Column: int32(startColumn),
+						},
 						// Consider this text:
 						// CREATE TABLE t(
 						//   a int
@@ -401,10 +248,15 @@ func (t *Tokenizer) SplitTiDBMultiSQL() ([]base.SingleSQL, error) {
 						// but we want to get the line of last line of the SQL
 						// which means the line of ')'.
 						// So we need minus the aboveNonBlankLineDistance.
-						End:             &store.Position{Line: int32(t.line - t.aboveNonBlankLineDistance())},
-						Empty:           t.emptyStatement,
-						ByteOffsetStart: t.getByteOffset(int(startPos)),
-						ByteOffsetEnd:   t.getByteOffset(int(t.pos())),
+						End: &store.Position{
+							Line:   int32(t.line - t.aboveNonBlankLineDistance()),
+							Column: int32(t.getLastContentColumn()),
+						},
+						Empty: t.emptyStatement,
+						Range: &store.Range{
+							Start: int32(t.getByteOffset(int(startPos))),
+							End:   int32(t.getByteOffset(int(t.pos()))),
+						},
 					})
 				}
 				if err := t.processStreaming(s); err != nil {
@@ -417,22 +269,31 @@ func (t *Tokenizer) SplitTiDBMultiSQL() ([]base.SingleSQL, error) {
 			t.skip(uint(len(delimiter)))
 			text := t.getString(startPos, t.pos()-startPos)
 			if t.f == nil {
-				res = append(res, base.SingleSQL{
+				res = append(res, base.Statement{
 					Text: text,
-					// BaseLine is 0-based line number, so subtract 1 from 1-based startLine
-					BaseLine:        startLine - 1,
-					End:             &store.Position{Line: int32(t.line)},
-					Empty:           t.emptyStatement,
-					ByteOffsetStart: t.getByteOffset(int(startPos)),
-					ByteOffsetEnd:   t.getByteOffset(int(t.pos())),
+					Start: &store.Position{
+						Line:   int32(startLine),
+						Column: int32(startColumn),
+					},
+					End: &store.Position{
+						Line:   int32(t.line),
+						Column: int32(t.getColumn()),
+					},
+					Empty: t.emptyStatement,
+					Range: &store.Range{
+						Start: int32(t.getByteOffset(int(startPos))),
+						End:   int32(t.getByteOffset(int(t.pos()))),
+					},
 				})
 			}
-			t.skipBlank()
 			if err := t.processStreaming(text); err != nil {
 				return nil, err
 			}
+			// Record position BEFORE skipping whitespace to include leading whitespace in Text
 			startPos = t.pos()
-			startLine = t.line // Update startLine for next statement
+			startLine = t.line          // Update startLine for next statement
+			startColumn = t.getColumn() // Update startColumn for next statement
+			t.skipBlank()
 			t.emptyStatement = true
 		// deal with the DELIMITER statement, see https://dev.mysql.com/doc/refman/8.0/en/stored-programs-defining.html
 		case t.equalWordCaseInsensitive(delimiterRuneList):
@@ -443,22 +304,31 @@ func (t *Tokenizer) SplitTiDBMultiSQL() ([]base.SingleSQL, error) {
 			delimiter = t.runeList(delimiterStart, t.pos()-delimiterStart)
 			text := t.getString(startPos, t.pos()-startPos)
 			if t.f == nil {
-				res = append(res, base.SingleSQL{
+				res = append(res, base.Statement{
 					Text: text,
-					// BaseLine is 0-based line number, so subtract 1 from 1-based startLine
-					BaseLine:        startLine - 1,
-					End:             &store.Position{Line: int32(t.line)},
-					Empty:           false,
-					ByteOffsetStart: t.getByteOffset(int(startPos)),
-					ByteOffsetEnd:   t.getByteOffset(int(t.pos())),
+					Start: &store.Position{
+						Line:   int32(startLine),
+						Column: int32(startColumn),
+					},
+					End: &store.Position{
+						Line:   int32(t.line),
+						Column: int32(t.getColumn()),
+					},
+					Empty: false,
+					Range: &store.Range{
+						Start: int32(t.getByteOffset(int(startPos))),
+						End:   int32(t.getByteOffset(int(t.pos()))),
+					},
 				})
 			}
-			t.skipBlank()
 			if err := t.processStreaming(text); err != nil {
 				return nil, err
 			}
+			// Record position BEFORE skipping whitespace to include leading whitespace in Text
 			startPos = t.pos()
-			startLine = t.line // Update startLine for next statement
+			startLine = t.line          // Update startLine for next statement
+			startColumn = t.getColumn() // Update startColumn for next statement
+			t.skipBlank()
 			t.emptyStatement = true
 		case t.char(0) == '/' && t.char(1) == '*':
 			if err := t.scanComment(); err != nil {
@@ -508,14 +378,15 @@ func (t *Tokenizer) SplitTiDBMultiSQL() ([]base.SingleSQL, error) {
 //
 // The difference between PostgreSQL and Oracle is that PostgreSQL supports
 // dollar-quoted string, but Oracle does not.
-func (t *Tokenizer) SplitStandardMultiSQL() ([]base.SingleSQL, error) {
-	var res []base.SingleSQL
+func (t *Tokenizer) SplitStandardMultiSQL() ([]base.Statement, error) {
+	var res []base.Statement
 
-	t.skipBlank()
 	t.emptyStatement = true
+	// Record position BEFORE skipping whitespace to include leading whitespace in Text
 	startPos := t.cursor
 	firstStatementLine := t.line
 	firstStatementColumn := t.getColumn()
+	t.skipBlank()
 	for {
 		switch {
 		case t.char(0) == '/' && t.char(1) == '*':
@@ -542,162 +413,54 @@ func (t *Tokenizer) SplitStandardMultiSQL() ([]base.SingleSQL, error) {
 			t.skip(1)
 			text := t.getString(startPos, t.pos()-startPos)
 			if t.f == nil {
-				res = append(res, base.SingleSQL{
+				res = append(res, base.Statement{
 					Text: text,
-					End: &store.Position{
-						Line: int32(t.line - 1), // Convert to 0-based.
-					},
-					// TODO(zp/position): fix column, use bytes instead of rune.
 					Start: &store.Position{
-						Line:   int32(firstStatementLine - 1), // Convert to 0-based.
+						Line:   int32(firstStatementLine), // 1-based per proto spec
 						Column: int32(firstStatementColumn),
 					},
+					End: &store.Position{
+						Line:   int32(t.line),        // 1-based per proto spec
+						Column: int32(t.getColumn()), // 1-based exclusive (after semicolon)
+					},
 					Empty: t.emptyStatement,
+					Range: &store.Range{
+						Start: int32(t.getByteOffset(int(startPos))),
+						End:   int32(t.getByteOffset(int(t.pos()))),
+					},
 				})
 			}
-			t.skipBlank()
 			if err := t.processStreaming(text); err != nil {
 				return nil, err
 			}
+			// Record position BEFORE skipping whitespace to include leading whitespace in Text
 			startPos = t.pos()
 			firstStatementLine = t.line
 			firstStatementColumn = t.getColumn()
+			t.skipBlank()
 			t.emptyStatement = true
 		case t.char(0) == eofRune:
 			s := t.getString(startPos, t.pos())
 			if !emptyString(s) {
 				if t.f == nil {
-					res = append(res, base.SingleSQL{
+					// For EOF case, we need to find the position of the last content character.
+					// The cursor might be past all content (on blank lines or at EOF).
+					endLine := t.line - t.aboveNonBlankLineDistance()
+					res = append(res, base.Statement{
 						Text: s,
-						// Consider this text:
-						// CREATE TABLE t(
-						//   a int
-						// )
-						//
-						// EOF line
-						//
-						// Our current location is the EOF line.
-						// The line t.line is the line of ')',
-						// but we want to get the line of last line of the SQL
-						// which means the line of ')'.
-						// So we need minus the aboveNonBlankLineDistance.
-						End: &store.Position{Line: int32(t.line - t.aboveNonBlankLineDistance() - 1)},
-						// TODO(zp/position): fix column, use bytes instead of rune.
 						Start: &store.Position{
-							Line:   int32(firstStatementLine - 1), // Convert to 0-based.
+							Line:   int32(firstStatementLine), // 1-based per proto spec
 							Column: int32(firstStatementColumn),
 						},
-						Empty: t.emptyStatement,
-					})
-				}
-				if err := t.processStreaming(s); err != nil {
-					return nil, err
-				}
-			}
-			return res, t.readErr
-		case t.char(0) == '\n':
-			t.line++
-			t.skip(1)
-		default:
-			t.skip(1)
-			t.emptyStatement = false
-		}
-	}
-}
-
-// SplitPostgreSQLMultiSQL splits the statement to a string slice.
-// We mainly considered:
-//
-//	comments
-//	- style /* comments */
-//	- style -- comments
-//	string
-//	- style 'string'
-//	- style $$ string $$
-//	identifier
-//	- style "indentifier"
-//
-// Notice:
-//   - We support PostgreSQL CREATE PROCEDURE statement with $$ $$ style,
-//     but do not support BEGIN ATOMIC ... END; style.
-//     See https://www.postgresql.org/docs/14/sql-createprocedure.html.
-func (t *Tokenizer) SplitPostgreSQLMultiSQL() ([]base.SingleSQL, error) {
-	var res []base.SingleSQL
-
-	t.skipBlank()
-	t.emptyStatement = true
-	startPos := t.cursor
-	startLine := t.line // Track the starting line number (1-based)
-	for {
-		switch {
-		case t.char(0) == '/' && t.char(1) == '*':
-			if err := t.scanComment(); err != nil {
-				return nil, err
-			}
-			t.skipBlank()
-		case t.char(0) == '-' && t.char(1) == '-':
-			if err := t.scanComment(); err != nil {
-				return nil, err
-			}
-			t.skipBlank()
-		case t.char(0) == '\'':
-			if err := t.scanString('\''); err != nil {
-				return nil, err
-			}
-			t.emptyStatement = false
-		case t.char(0) == '$':
-			if err := t.scanDoubleDollarQuotedString(); err != nil {
-				return nil, err
-			}
-			t.emptyStatement = false
-		case t.char(0) == '"':
-			if err := t.scanIdentifier('"'); err != nil {
-				return nil, err
-			}
-			t.emptyStatement = false
-		case t.char(0) == ';':
-			t.skip(1)
-			text := t.getString(startPos, t.pos()-startPos)
-			if t.f == nil {
-				res = append(res, base.SingleSQL{
-					Text: text,
-					// BaseLine is 0-based line number, so subtract 1 from 1-based startLine
-					BaseLine: startLine - 1,
-					End:      &store.Position{Line: int32(t.line)},
-					Empty:    t.emptyStatement,
-				})
-			}
-			t.skipBlank()
-			if err := t.processStreaming(text); err != nil {
-				return nil, err
-			}
-			startPos = t.pos()
-			startLine = t.line // Update startLine for next statement
-			t.emptyStatement = true
-		case t.char(0) == eofRune:
-			s := t.getString(startPos, t.pos())
-			if !emptyString(s) {
-				if t.f == nil {
-					res = append(res, base.SingleSQL{
-						Text: s,
-						// BaseLine is 0-based line number, so subtract 1 from 1-based startLine
-						BaseLine: startLine - 1,
-						// Consider this text:
-						// CREATE TABLE t(
-						//   a int
-						// )
-						//
-						// EOF line
-						//
-						// Our current location is the EOF line.
-						// The line t.line is the line after ')',
-						// but we want to get the line of last line of the SQL
-						// which means the line of ')'.
-						// So we need minus the aboveNonBlankLineDistance.
 						End: &store.Position{
-							Line: int32(t.line - t.aboveNonBlankLineDistance()),
+							Line:   int32(endLine),                  // 1-based per proto spec
+							Column: int32(t.getLastContentColumn()), // 1-based exclusive
 						},
 						Empty: t.emptyStatement,
+						Range: &store.Range{
+							Start: int32(t.getByteOffset(int(startPos))),
+							End:   int32(t.getByteOffset(int(t.pos()))),
+						},
 					})
 				}
 				if err := t.processStreaming(s); err != nil {
@@ -705,14 +468,6 @@ func (t *Tokenizer) SplitPostgreSQLMultiSQL() ([]base.SingleSQL, error) {
 				}
 			}
 			return res, t.readErr
-		// return error when meeting BEGIN ATOMIC.
-		case t.equalWordCaseInsensitive(beginRuneList):
-			t.skip(uint(len(beginRuneList)))
-			t.skipBlank()
-			if t.equalWordCaseInsensitive(atomicRuneList) {
-				return nil, errors.Errorf("not support BEGIN ATOMIC ... END in PostgreSQL CREATE PROCEDURE statement, please use double doller style($$ or $tag$) instead of it")
-			}
-			t.emptyStatement = false
 		case t.char(0) == '\n':
 			t.line++
 			t.skip(1)
@@ -771,22 +526,6 @@ func (t *Tokenizer) scanString(delimiter rune) error {
 			t.skip(1)
 		}
 	}
-}
-
-// Double dollar quoted string is a PostgreSQL-specific syntax.
-// There are two syntax styles, tag and no tag:
-// - $$ string $$
-// - $tag$ string $tag$
-// See https://www.postgresql.org/docs/current/sql-syntax-lexical.html.
-func (t *Tokenizer) scanDoubleDollarQuotedString() error {
-	startPos := t.pos()
-	// scan the tag string quoted by the dollar sign($)
-	if err := t.scanString('$'); err != nil {
-		return err
-	}
-	// here tag means $$ or $tag_string$ which means include the dollar sign($).
-	tag := t.runeList(startPos, t.pos()-startPos)
-	return t.scanTo(tag)
 }
 
 func (t *Tokenizer) scanComment() error {
@@ -996,13 +735,31 @@ func (t *Tokenizer) skipToNewLine() {
 	t.skip(1)
 }
 
+// getColumn returns the 1-based column position of the current cursor.
+// Per the proto spec, the first character of a line is column 1.
 func (t *Tokenizer) getColumn() int {
-	for i := int(t.cursor) - 1; i >= 0; i-- {
+	return t.getColumnAt(t.cursor)
+}
+
+// getColumnAt returns the 1-based column position at a specific rune position.
+func (t *Tokenizer) getColumnAt(pos uint) int {
+	for i := int(pos) - 1; i >= 0; i-- {
 		if t.buffer[i] == '\n' {
-			return int(t.cursor) - i - 1
+			return int(pos) - i // 1-based: first char after newline is column 1
 		}
 	}
-	return int(t.cursor)
+	return int(pos) + 1 // 1-based: first char of first line is column 1
+}
+
+// getLastContentColumn returns the 1-based column after the last non-blank character.
+// Used for EOF case where we need exclusive end position.
+func (t *Tokenizer) getLastContentColumn() int {
+	for i := int(t.cursor) - 1; i >= 0; i-- {
+		if !emptyRune(t.buffer[i]) && t.buffer[i] != eofRune {
+			return t.getColumnAt(uint(i)) + 1 // Exclusive: position after last content char
+		}
+	}
+	return 1
 }
 
 func (t *Tokenizer) pos() uint {

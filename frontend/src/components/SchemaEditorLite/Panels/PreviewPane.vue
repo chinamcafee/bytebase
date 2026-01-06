@@ -45,26 +45,25 @@
 <script setup lang="ts">
 import { create } from "@bufbuild/protobuf";
 import {
+  useDebounceFn,
   useElementSize,
   useLocalStorage,
   useParentElement,
-  useDebounceFn,
 } from "@vueuse/core";
 import { ChevronDownIcon } from "lucide-vue-next";
-import { computed, toRef, ref, watch } from "vue";
+import { computed, ref, toRef, watch } from "vue";
 import { MonacoEditor } from "@/components/MonacoEditor";
 import MaskSpinner from "@/components/misc/MaskSpinner.vue";
 import { useEmitteryEventListener } from "@/composables/useEmitteryEventListener";
-import { databaseServiceClientConnect } from "@/grpcweb";
+import { databaseServiceClientConnect } from "@/connect";
 import type { ComposedDatabase } from "@/types";
-import type { DatabaseCatalog } from "@/types/proto-es/v1/database_catalog_service_pb";
 import type {
   DatabaseMetadata,
   SchemaMetadata,
 } from "@/types/proto-es/v1/database_service_pb";
 import { GetSchemaStringRequestSchema } from "@/types/proto-es/v1/database_service_pb";
 import { minmax } from "@/utils";
-import { extractGrpcErrorMessage } from "@/utils/grpcweb";
+import { extractGrpcErrorMessage } from "@/utils/connect";
 import { useSchemaEditorContext } from "../context";
 
 const props = defineProps<{
@@ -72,7 +71,7 @@ const props = defineProps<{
   database: DatabaseMetadata;
   schema: SchemaMetadata;
   title: string;
-  mocked: { metadata: DatabaseMetadata; catalog: DatabaseCatalog } | undefined;
+  mocked: { metadata: DatabaseMetadata } | undefined;
 }>();
 
 const { hidePreview, events } = useSchemaEditorContext();
@@ -89,7 +88,6 @@ const panelHeight = computed(() => {
 
 const mocked = toRef(props, "mocked");
 
-// Simple replacement for useQuery to avoid @tanstack/vue-query dependency
 const status = ref<"pending" | "success" | "error">("success");
 const data = ref<string>("");
 const error = ref<Error | null>(null);

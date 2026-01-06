@@ -1,19 +1,32 @@
 <template>
-  <NSelect
+  <RemoteResourceSelector
+    v-if="optionConfig.search"
+    size="small"
+    max-tag-count="responsive"
+    style="min-width: 12rem; width: auto; max-width: 20rem; overflow-x: hidden"
+    :multiple="true"
+    :disabled="readonly"
     :value="value"
-    :remote="optionConfig.remote"
-    :options="state.rawOptionList"
-    :loading="state.loading"
+    :search="optionConfig.search"
+    :additional-options="additionalOptions"
+    :consistent-menu-width="false"
+    :fallback-option="optionConfig.fallback"
+    @update:value="$emit('update:value', $event as string[])"
+    @open="initial"
+  />
+  <NSelect
+    v-else
+    :value="value"
+    :options="optionConfig.options"
     :multiple="true"
     :filterable="true"
     :consistent-menu-width="false"
     :clear-filter-after-select="false"
     :placeholder="$t('cel.condition.select-value')"
-    :disabled="!allowAdmin"
+    :disabled="readonly"
     max-tag-count="responsive"
     size="small"
     style="min-width: 12rem; width: auto; max-width: 20rem; overflow-x: hidden"
-    @search="handleSearch"
     @update:value="$emit('update:value', $event)"
   >
     <template #action>
@@ -27,43 +40,50 @@
 </template>
 
 <script lang="ts" setup>
-import { useDebounceFn } from "@vueuse/core";
 import { NCheckbox, NSelect } from "naive-ui";
-import type { SelectOption } from "naive-ui";
-import { toRef, watch, reactive, computed } from "vue";
+import { computed, onMounted, ref, toRef } from "vue";
+import RemoteResourceSelector from "@/components/v2/Select/RemoteResourceSelector/index.vue";
+import type { ResourceSelectOption } from "@/components/v2/Select/RemoteResourceSelector/types";
 import { type ConditionExpr } from "@/plugins/cel";
-import { DEBOUNCE_SEARCH_DELAY } from "@/types";
 import { useExprEditorContext } from "../context";
-import { useSelectOptionConfig } from "./common";
-
-interface LocalState {
-  loading: boolean;
-  rawOptionList: SelectOption[];
-}
+import { initOptions, useSelectOptionConfig } from "./common";
 
 const props = defineProps<{
-  value: string[] | number[];
+  value: string[];
   expr: ConditionExpr;
 }>();
 
 const emit = defineEmits<{
-  (event: "update:value", value: string[] | number[]): void;
+  (event: "update:value", value: string[]): void;
 }>();
 
 const context = useExprEditorContext();
-const { allowAdmin } = context;
-const state = reactive<LocalState>({
-  loading: false,
-  rawOptionList: [],
+const { readonly } = context;
+const { optionConfig } = useSelectOptionConfig(toRef(props, "expr"));
+const additionalOptions = ref<ResourceSelectOption<unknown>[]>([]);
+
+const initial = async () => {
+  if (props.value.length === 0) {
+    return;
+  }
+  const options = await initOptions(
+    props.value.filter(
+      (v) => !additionalOptions.value.find((option) => option.value === v)
+    ),
+    optionConfig.value
+  );
+  additionalOptions.value = options;
+};
+
+onMounted(async () => {
+  await initial();
 });
 
-const { optionConfig, factor } = useSelectOptionConfig(toRef(props, "expr"));
-
 const checkAllState = computed(() => {
-  const selected = new Set<any>(props.value);
+  const selected = new Set<string>(props.value);
   const checked =
     selected.size > 0 &&
-    state.rawOptionList.every((opt) => {
+    optionConfig.value.options.every((opt) => {
       return selected.has(opt.value);
     });
   const indeterminate = props.value.length > 0 && !checked;
@@ -77,49 +97,10 @@ const toggleCheckAll = (on: boolean) => {
   if (on) {
     emit(
       "update:value",
-      state.rawOptionList.map((opt) => opt.value as string)
+      optionConfig.value.options.map((opt) => opt.value as string)
     );
   } else {
     emit("update:value", []);
   }
 };
-
-const handleSearch = useDebounceFn(async (search: string) => {
-  if (!optionConfig.value.search) {
-    state.rawOptionList = [...optionConfig.value.options];
-    return;
-  }
-
-  state.loading = true;
-  try {
-    const options = await optionConfig.value.search(search);
-    state.rawOptionList = [...options];
-  } finally {
-    state.loading = false;
-  }
-}, DEBOUNCE_SEARCH_DELAY);
-
-watch(
-  () => factor.value,
-  async () => {
-    await handleSearch("");
-    // valid initial value.
-    const search = optionConfig.value.search;
-    if (!search) {
-      return;
-    }
-    const existed = new Set(state.rawOptionList.map((opt) => opt.value));
-    const pendingInit = props.value.filter((val) => !existed.has(val));
-    for (const pending of pendingInit) {
-      const options = await search(pending as string);
-      for (const option of options) {
-        if (!existed.has(option.value)) {
-          state.rawOptionList.push(option);
-          existed.add(option.value);
-        }
-      }
-    }
-  },
-  { immediate: true }
-);
 </script>

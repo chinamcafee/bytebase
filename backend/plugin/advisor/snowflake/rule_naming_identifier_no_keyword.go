@@ -5,13 +5,15 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/snowsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/snowflake"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	snowsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/snowflake"
 )
 
@@ -20,7 +22,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_SNOWFLAKE, advisor.SchemaRuleIdentifierNoKeyword, &NamingIdentifierNoKeywordAdvisor{})
+	advisor.Register(storepb.Engine_SNOWFLAKE, storepb.SQLReviewRule_NAMING_IDENTIFIER_NO_KEYWORD, &NamingIdentifierNoKeywordAdvisor{})
 }
 
 // NamingIdentifierNoKeywordAdvisor is the advisor checking for identifier naming convention without keyword.
@@ -29,20 +31,26 @@ type NamingIdentifierNoKeywordAdvisor struct {
 
 // Check checks for identifier naming convention without keyword.
 func (*NamingIdentifierNoKeywordAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	rule := NewNamingIdentifierNoKeywordRule(level, string(checkCtx.Rule.Type))
+	rule := NewNamingIdentifierNoKeywordRule(level, checkCtx.Rule.Type.String())
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList(), nil
 }
@@ -114,10 +122,10 @@ func (r *NamingIdentifierNoKeywordRule) enterColumnDeclItemList(ctx *parser.Colu
 			if snowsqlparser.IsSnowflakeKeyword(originalColName, false) {
 				r.AddAdvice(&storepb.Advice{
 					Status:        r.level,
-					Code:          advisor.NameIsKeywordIdentifier.Int32(),
+					Code:          code.NameIsKeywordIdentifier.Int32(),
 					Title:         r.title,
 					Content:       fmt.Sprintf("Identifier %s is a keyword and should be avoided", originalID.GetText()),
-					StartPosition: common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),
+					StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),
 				})
 			}
 		}
@@ -134,10 +142,10 @@ func (r *NamingIdentifierNoKeywordRule) enterAlterTable(ctx *parser.Alter_tableC
 	if snowsqlparser.IsSnowflakeKeyword(renameToColName, false) {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.NameIsKeywordIdentifier.Int32(),
+			Code:          code.NameIsKeywordIdentifier.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("Identifier %s is a keyword and should be avoided", renameToID.GetText()),
-			StartPosition: common.ConvertANTLRLineToPosition(renameToID.GetStart().GetLine()),
+			StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + renameToID.GetStart().GetLine()),
 		})
 	}
 }

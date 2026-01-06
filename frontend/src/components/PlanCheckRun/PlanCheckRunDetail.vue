@@ -13,16 +13,16 @@
       v-for="(row, i) in highlightTableRows"
       :key="i"
       :class="[
-        'py-2 px-2 space-y-2',
+        'py-2 px-2 flex flex-col gap-y-2',
         row.checkResult.status === Advice_Level.ERROR &&
-          'border-error border rounded',
+          'border-error border rounded-sm',
         row.checkResult.status === Advice_Level.WARNING &&
-          'border-warning border rounded',
+          'border-warning border rounded-sm',
       ]"
     >
-      <div class="flex items-center space-x-3">
+      <div class="flex items-center gap-x-3">
         <div
-          class="relative w-5 h-5 flex flex-shrink-0 items-center justify-center rounded-full select-none"
+          class="relative w-5 h-5 flex shrink-0 items-center justify-center rounded-full select-none"
           :class="statusIconClass(row.checkResult.status)"
         >
           <template v-if="row.checkResult.status === Advice_Level.SUCCESS">
@@ -54,7 +54,7 @@
         />
 
         <div
-          class="flex items-center justify-start space-x-2 divide-x divide-block-border"
+          class="flex items-center justify-start divide-x divide-block-border"
         >
           <div
             v-if="
@@ -121,11 +121,11 @@
     <div
       v-for="(row, i) in standardTableRows"
       :key="i"
-      class="py-3 px-2 first:pt-2 space-y-2"
+      class="py-3 px-2 first:pt-2 flex flex-col gap-y-2"
     >
-      <div class="flex items-center space-x-3">
+      <div class="flex items-center gap-x-3">
         <div
-          class="relative w-5 h-5 flex flex-shrink-0 items-center justify-center rounded-full select-none"
+          class="relative w-5 h-5 flex shrink-0 items-center justify-center rounded-full select-none"
           :class="statusIconClass(row.checkResult.status)"
         >
           <template v-if="row.checkResult.status === Advice_Level.SUCCESS">
@@ -203,10 +203,13 @@
       </div>
     </div>
 
-    <div v-if="showSuccessPlaceholder" class="py-3 px-2 first:pt-2 space-y-2">
-      <div class="flex items-center space-x-3">
+    <div
+      v-if="showSuccessPlaceholder"
+      class="py-3 px-2 first:pt-2 flex flex-col gap-y-2"
+    >
+      <div class="flex items-center gap-x-3">
         <div
-          class="relative w-5 h-5 flex flex-shrink-0 items-center justify-center rounded-full select-none"
+          class="relative w-5 h-5 flex shrink-0 items-center justify-center rounded-full select-none"
           :class="statusIconClass(Advice_Level.SUCCESS)"
         >
           <heroicons-solid:check class="w-4 h-4" />
@@ -237,32 +240,31 @@ import { computed, reactive } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { SQLRuleEditDialog } from "@/components/SQLReview/components";
-import { planServiceClientConnect } from "@/grpcweb";
+import { planServiceClientConnect } from "@/connect";
 import { WORKSPACE_ROUTE_SQL_REVIEW } from "@/router/dashboard/workspaceRoutes";
 import { useReviewPolicyForDatabase } from "@/store";
+import type { ComposedDatabase, RuleTemplateV2 } from "@/types";
 import {
-  getProjectNamePlanIdPlanCheckRunId,
-  planNamePrefix,
-  projectNamePrefix,
-} from "@/store/modules/v1/common";
-import type { RuleTemplateV2, ComposedDatabase } from "@/types";
-import {
+  convertPolicyRuleToRuleTemplate,
   GeneralErrorCode,
-  SQLReviewPolicyErrorCode,
   getRuleLocalization,
   ruleTemplateMapV2,
-  convertPolicyRuleToRuleTemplate,
+  ruleTypeToString,
+  SQLReviewPolicyErrorCode,
 } from "@/types";
-import { SQLReviewRuleLevel } from "@/types/proto-es/v1/org_policy_service_pb";
-import { BatchCancelPlanCheckRunsRequestSchema } from "@/types/proto-es/v1/plan_service_pb";
 import type {
   PlanCheckRun,
   PlanCheckRun_Result,
 } from "@/types/proto-es/v1/plan_service_pb";
 import {
-  PlanCheckRun_Status,
+  CancelPlanCheckRunRequestSchema,
   PlanCheckRun_ResultSchema,
+  PlanCheckRun_Status,
 } from "@/types/proto-es/v1/plan_service_pb";
+import {
+  SQLReviewRule_Level,
+  SQLReviewRule_Type,
+} from "@/types/proto-es/v1/review_config_service_pb";
 import { Advice_Level } from "@/types/proto-es/v1/sql_service_pb";
 import { convertPositionLineToMonacoLine } from "@/utils/v1/position";
 import { usePlanCheckRunContext } from "./context";
@@ -338,16 +340,23 @@ const showCancelButton = computed(
 );
 
 const getRuleTemplateByType = (type: string) => {
+  // Convert string to enum
+  const typeKey = type as keyof typeof SQLReviewRule_Type;
+  const typeEnum = SQLReviewRule_Type[typeKey];
+  if (typeEnum === undefined) {
+    return;
+  }
+
   if (props.database) {
     return ruleTemplateMapV2
       .get(props.database.instanceResource.engine)
-      ?.get(type);
+      ?.get(typeEnum);
   }
 
   // fallback
   for (const mapByType of ruleTemplateMapV2.values()) {
-    if (mapByType.has(type)) {
-      return mapByType.get(type);
+    if (mapByType.has(typeEnum)) {
+      return mapByType.get(typeEnum);
     }
   }
   return;
@@ -357,12 +366,21 @@ const isBuiltinRule = (type: string) => {
   return type.startsWith("builtin.");
 };
 
-const builtinRuleLevel = (type: string): SQLReviewRuleLevel => {
+const builtinRuleType = (type: string): SQLReviewRule_Type | undefined => {
+  // Convert dot-separated to SCREAMING_SNAKE_CASE
+  const typeKey = type
+    .toUpperCase()
+    .replace(/\./g, "_")
+    .replace(/-/g, "_") as keyof typeof SQLReviewRule_Type;
+  return SQLReviewRule_Type[typeKey];
+};
+
+const builtinRuleLevel = (type: string): SQLReviewRule_Level => {
   switch (type) {
     case "builtin.prior-backup-check":
-      return SQLReviewRuleLevel.ERROR;
+      return SQLReviewRule_Level.ERROR;
     default:
-      return SQLReviewRuleLevel.ERROR;
+      return SQLReviewRule_Level.ERROR;
   }
 };
 
@@ -380,7 +398,10 @@ const categoryAndTitle = (
     }
     const rule = getRuleTemplateByType(checkResult.title);
     if (rule) {
-      const ruleLocalization = getRuleLocalization(rule.type, rule.engine);
+      const ruleLocalization = getRuleLocalization(
+        ruleTypeToString(rule.type),
+        rule.engine
+      );
       const key = `sql-review.category.${rule.category.toLowerCase()}`;
       const category = t(key);
       const title = messageWithCode(ruleLocalization.title, code);
@@ -489,19 +510,27 @@ const reviewPolicy = useReviewPolicyForDatabase(
 const getActiveRule = (type: string): RuleTemplateV2 | undefined => {
   const engine = props.database?.instanceResource.engine;
   if (isBuiltinRule(type) && engine) {
+    const typeEnum = builtinRuleType(type);
+    if (!typeEnum) {
+      return undefined;
+    }
     return {
-      type,
+      type: typeEnum,
       category: "BUILTIN",
       engine: engine,
       level: builtinRuleLevel(type),
       componentList: [],
     };
   }
+  // Convert string to enum for comparison
+  const typeKey = type as keyof typeof SQLReviewRule_Type;
+  const typeEnum = SQLReviewRule_Type[typeKey];
+
   const rule = reviewPolicy.value?.ruleList.find((rule) => {
     if (engine && rule.engine !== engine) {
       return false;
     }
-    return rule.type === type;
+    return rule.type === typeEnum;
   });
   if (!rule) {
     return undefined;
@@ -524,14 +553,10 @@ const handleClickPlanCheckDetailLine = (line: number) => {
 };
 
 const cancelPlanCheckRun = async () => {
-  const planCheckRunName = props.planCheckRun.name;
-  const [projectName, planId] =
-    getProjectNamePlanIdPlanCheckRunId(planCheckRunName);
-  const request = create(BatchCancelPlanCheckRunsRequestSchema, {
-    parent: `${projectNamePrefix}${projectName}/${planNamePrefix}${planId}`,
-    planCheckRuns: [planCheckRunName],
+  const request = create(CancelPlanCheckRunRequestSchema, {
+    name: props.planCheckRun.name,
   });
-  await planServiceClientConnect.batchCancelPlanCheckRuns(request);
+  await planServiceClientConnect.cancelPlanCheckRun(request);
   if (usePlanCheckRunContext()) {
     usePlanCheckRunContext().events.emit("status-changed");
   }

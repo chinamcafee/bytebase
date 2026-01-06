@@ -1,18 +1,19 @@
 <template>
-  <div v-if="allowEdit" class="flex justify-end">
+  <div v-if="allowEdit" class="flex justify-end gap-x-2">
     <NPopconfirm
       v-if="
         allowRevoke &&
         (scope === 'workspace' || binding.projectRoleBindings.length > 0)
       "
+      :positive-button-props="{
+        type: 'error',
+      }"
       @positive-click="$emit('revoke-binding')"
     >
       <template #trigger>
-        <NButton quaternary circle @click.stop>
-          <template #icon>
-            <Trash2Icon class="w-4 h-auto" />
-          </template>
-        </NButton>
+        <MiniActionButton @click.stop type="error">
+          <Trash2Icon />
+        </MiniActionButton>
       </template>
 
       <template #default>
@@ -22,24 +23,21 @@
       </template>
     </NPopconfirm>
 
-    <NButton
+    <MiniActionButton
       v-if="allowUpdate"
-      quaternary
-      circle
       @click="$emit('update-binding')"
     >
-      <template #icon>
-        <PencilIcon class="w-4 h-auto" />
-      </template>
-    </NButton>
+      <PencilIcon />
+    </MiniActionButton>
   </div>
 </template>
 
 <script lang="ts" setup>
 import { PencilIcon, Trash2Icon } from "lucide-vue-next";
-import { NButton, NPopconfirm } from "naive-ui";
+import { NPopconfirm } from "naive-ui";
 import { computed } from "vue";
-import { unknownUser, SYSTEM_BOT_USER_NAME } from "@/types";
+import { MiniActionButton } from "@/components/v2";
+import { SYSTEM_BOT_USER_NAME, unknownUser } from "@/types";
 import { State } from "@/types/proto-es/v1/common_pb";
 import type { MemberBinding } from "../../types";
 

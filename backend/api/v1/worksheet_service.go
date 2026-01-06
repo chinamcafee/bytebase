@@ -12,7 +12,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/bytebase/bytebase/backend/common"
-	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/component/iam"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
@@ -52,7 +51,7 @@ func (s *WorksheetService) CreateWorksheet(
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	project, err := s.store.GetProjectV2(ctx, &store.FindProjectMessage{
+	project, err := s.store.GetProject(ctx, &store.FindProjectMessage{
 		ResourceID: &projectResourceID,
 	})
 	if err != nil {
@@ -67,20 +66,27 @@ func (s *WorksheetService) CreateWorksheet(
 
 	var database *store.DatabaseMessage
 	if request.Worksheet.Database != "" {
-		db, err := getDatabaseMessage(ctx, s.store, request.Worksheet.Database)
+		instanceID, databaseName, err := common.GetInstanceDatabaseID(request.Worksheet.Database)
 		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
+			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "failed to parse %q", request.Worksheet.Database))
+		}
+		db, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+			InstanceID:   &instanceID,
+			DatabaseName: &databaseName,
+		})
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get database"))
+		}
+		if db == nil {
+			return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("database %q not found", request.Worksheet.Database))
 		}
 		// Verify the database belongs to the specified project
 		if db.ProjectID != projectResourceID {
 			return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("database %q not found in project %q", request.Worksheet.Database, projectResourceID))
 		}
-		if db == nil {
-			return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("database %q not found", request.Worksheet.Database))
-		}
 		database = db
 	}
-	storeWorksheetCreate, err := convertToStoreWorksheetMessage(project, database, user.ID, request.Worksheet)
+	storeWorksheetCreate, err := convertToStoreWorksheetMessage(project, database, user.Email, request.Worksheet)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("failed to convert worksheet: %v", err))
 	}
@@ -88,10 +94,7 @@ func (s *WorksheetService) CreateWorksheet(
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to create worksheet: %v", err))
 	}
-	v1pbWorksheet, err := s.convertToAPIWorksheetMessage(ctx, worksheet)
-	if err != nil {
-		return nil, err
-	}
+	v1pbWorksheet := convertToAPIWorksheetMessage(worksheet)
 	return connect.NewResponse(v1pbWorksheet), nil
 }
 
@@ -126,10 +129,7 @@ func (s *WorksheetService) GetWorksheet(
 		return nil, connect.NewError(connect.CodePermissionDenied, errors.Errorf("cannot access worksheet %s", worksheet.Title))
 	}
 
-	v1pbWorksheet, err := s.convertToAPIWorksheetMessage(ctx, worksheet)
-	if err != nil {
-		return nil, err
-	}
+	v1pbWorksheet := convertToAPIWorksheetMessage(worksheet)
 	return connect.NewResponse(v1pbWorksheet), nil
 }
 
@@ -154,13 +154,13 @@ func (s *WorksheetService) SearchWorksheets(
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("filter should not be empty"))
 	}
 
-	filterQ, err := store.GetListSheetFilter(ctx, s.store, user.ID, request.Filter)
+	filterQ, err := store.GetListSheetFilter(ctx, s.store, user.Email, request.Filter)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	worksheetFind.FilterQ = filterQ
 
-	worksheetList, err := s.store.ListWorkSheets(ctx, worksheetFind, user.ID)
+	worksheetList, err := s.store.ListWorkSheets(ctx, worksheetFind, user.Email)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to list worksheets: %v", err))
 	}
@@ -175,15 +175,7 @@ func (s *WorksheetService) SearchWorksheets(
 			slog.Warn("cannot access worksheet", slog.String("name", worksheet.Title))
 			continue
 		}
-		v1pbWorksheet, err := s.convertToAPIWorksheetMessage(ctx, worksheet)
-		if err != nil {
-			var connectErr *connect.Error
-			if errors.As(err, &connectErr) && connectErr.Code() == connect.CodeNotFound {
-				slog.Debug("failed to found resource for worksheet", log.BBError(err), slog.Int("id", worksheet.UID), slog.String("project", worksheet.ProjectID))
-				continue
-			}
-			return nil, err
-		}
+		v1pbWorksheet := convertToAPIWorksheetMessage(worksheet)
 		v1pbWorksheets = append(v1pbWorksheets, v1pbWorksheet)
 	}
 	return connect.NewResponse(&v1pb.SearchWorksheetsResponse{
@@ -221,7 +213,7 @@ func (s *WorksheetService) UpdateWorksheet(
 	}
 	worksheet, err := s.store.GetWorkSheet(ctx, &store.FindWorkSheetMessage{
 		UID: &worksheetUID,
-	}, user.ID)
+	}, user.Email)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to get worksheet: %v", err))
 	}
@@ -254,14 +246,27 @@ func (s *WorksheetService) UpdateWorksheet(
 			stringVisibility := string(visibility)
 			worksheetPatch.Visibility = &stringVisibility
 		case "database":
-			database, err := getDatabaseMessage(ctx, s.store, request.Worksheet.Database)
-			if err != nil {
-				return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to found database %v", request.Worksheet.Database))
+			if request.Worksheet.Database != "" {
+				instanceID, databaseName, err := common.GetInstanceDatabaseID(request.Worksheet.Database)
+				if err != nil {
+					return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "failed to parse %q", request.Worksheet.Database))
+				}
+				database, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+					InstanceID:   &instanceID,
+					DatabaseName: &databaseName,
+				})
+				if err != nil {
+					return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get database"))
+				}
+				if database == nil {
+					return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("database %v not found", request.Worksheet.Database))
+				}
+				worksheetPatch.InstanceID, worksheetPatch.DatabaseName = &database.InstanceID, &database.DatabaseName
+			} else {
+				emptyStr := ""
+				worksheetPatch.InstanceID = &emptyStr
+				worksheetPatch.DatabaseName = &emptyStr
 			}
-			if database == nil || database.Deleted {
-				return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("database %v not found", request.Worksheet.Database))
-			}
-			worksheetPatch.InstanceID, worksheetPatch.DatabaseName = &database.InstanceID, &database.DatabaseName
 		default:
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid update mask path %q", path))
 		}
@@ -272,18 +277,14 @@ func (s *WorksheetService) UpdateWorksheet(
 
 	worksheet, err = s.store.GetWorkSheet(ctx, &store.FindWorkSheetMessage{
 		UID: &worksheetUID,
-	}, user.ID)
+	}, user.Email)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to get worksheet: %v", err))
 	}
 	if worksheet == nil {
 		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("worksheet %q not found", request.Worksheet.Name))
 	}
-	v1pbWorksheet, err := s.convertToAPIWorksheetMessage(ctx, worksheet)
-	if err != nil {
-		return nil, err
-	}
-
+	v1pbWorksheet := convertToAPIWorksheetMessage(worksheet)
 	return connect.NewResponse(v1pbWorksheet), nil
 }
 
@@ -304,7 +305,7 @@ func (s *WorksheetService) DeleteWorksheet(
 	}
 	worksheet, err := s.store.GetWorkSheet(ctx, &store.FindWorkSheetMessage{
 		UID: &worksheetUID,
-	}, user.ID)
+	}, user.Email)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to get worksheet: %v", err))
 	}
@@ -359,14 +360,19 @@ func (s *WorksheetService) UpdateWorksheetOrganizer(
 	if !ok {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("user not found"))
 	}
-	worksheetOrganizerUpsert := &store.WorksheetOrganizerMessage{
-		WorksheetUID: worksheetUID,
-		PrincipalUID: user.ID,
+	worksheetOrganizerUpsert, err := s.store.GetWorksheetOrganizer(ctx, worksheetUID, user.Email)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to found worksheet organizer with error: %v", err))
 	}
 
 	for _, path := range request.UpdateMask.Paths {
-		if path == "starred" {
-			worksheetOrganizerUpsert.Starred = request.Organizer.Starred
+		switch path {
+		case "starred":
+			worksheetOrganizerUpsert.Payload.Starred = request.Organizer.Starred
+		case "folders":
+			worksheetOrganizerUpsert.Payload.Folders = request.Organizer.Folders
+		default:
+			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("invalid update mask path %q", path))
 		}
 	}
 
@@ -377,8 +383,24 @@ func (s *WorksheetService) UpdateWorksheetOrganizer(
 
 	return connect.NewResponse(&v1pb.WorksheetOrganizer{
 		Worksheet: request.Organizer.Worksheet,
-		Starred:   organizer.Starred,
+		Starred:   organizer.Payload.Starred,
+		Folders:   organizer.Payload.Folders,
 	}), nil
+}
+
+func (s *WorksheetService) BatchUpdateWorksheetOrganizer(
+	ctx context.Context,
+	req *connect.Request[v1pb.BatchUpdateWorksheetOrganizerRequest],
+) (*connect.Response[v1pb.BatchUpdateWorksheetOrganizerResponse], error) {
+	response := &v1pb.BatchUpdateWorksheetOrganizerResponse{}
+	for _, updateReq := range req.Msg.GetRequests() {
+		updated, err := s.UpdateWorksheetOrganizer(ctx, connect.NewRequest(updateReq))
+		if err != nil {
+			return nil, err
+		}
+		response.WorksheetOrganizers = append(response.WorksheetOrganizers, updated.Msg)
+	}
+	return connect.NewResponse(response), nil
 }
 
 func (s *WorksheetService) findWorksheet(ctx context.Context, find *store.FindWorkSheetMessage) (*store.WorkSheetMessage, error) {
@@ -386,7 +408,7 @@ func (s *WorksheetService) findWorksheet(ctx context.Context, find *store.FindWo
 	if !ok {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("user not found"))
 	}
-	worksheet, err := s.store.GetWorkSheet(ctx, find, user.ID)
+	worksheet, err := s.store.GetWorkSheet(ctx, find, user.Email)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to get worksheet: %v", err))
 	}
@@ -407,7 +429,7 @@ func (s *WorksheetService) canWriteWorksheet(ctx context.Context, worksheet *sto
 	}
 
 	// Worksheet creator and workspace "bb.worksheets.manage" can always write.
-	if worksheet.CreatorID == user.ID {
+	if worksheet.Creator == user.Email {
 		return true, nil
 	}
 	ok, err := s.iamManager.CheckPermission(ctx, iam.PermissionWorksheetsManage, user)
@@ -444,7 +466,7 @@ func (s *WorksheetService) canReadWorksheet(ctx context.Context, worksheet *stor
 	}
 
 	// Worksheet creator and workspace bb.worksheets.get can always read.
-	if worksheet.CreatorID == user.ID {
+	if worksheet.Creator == user.Email {
 		return true, nil
 	}
 	ok, err := s.iamManager.CheckPermission(ctx, iam.PermissionWorksheetsManage, user)
@@ -472,7 +494,7 @@ func (s *WorksheetService) checkWorksheetPermission(
 	user *store.UserMessage,
 	permission iam.Permission,
 ) (bool, error) {
-	project, err := s.store.GetProjectV2(ctx, &store.FindProjectMessage{
+	project, err := s.store.GetProject(ctx, &store.FindProjectMessage{
 		ResourceID: &projectID,
 	})
 	if err != nil {
@@ -485,20 +507,10 @@ func (s *WorksheetService) checkWorksheetPermission(
 	return ok, nil
 }
 
-func (s *WorksheetService) convertToAPIWorksheetMessage(ctx context.Context, worksheet *store.WorkSheetMessage) (*v1pb.Worksheet, error) {
+func convertToAPIWorksheetMessage(worksheet *store.WorkSheetMessage) *v1pb.Worksheet {
 	databaseParent := ""
 	if worksheet.InstanceID != nil && worksheet.DatabaseName != nil {
-		database, err := s.store.GetDatabaseV2(ctx, &store.FindDatabaseMessage{
-			ProjectID:    &worksheet.ProjectID,
-			InstanceID:   worksheet.InstanceID,
-			DatabaseName: worksheet.DatabaseName,
-		})
-		if err != nil {
-			slog.Debug("failed to found database for worksheet", log.BBError(err), slog.Int("id", worksheet.UID), slog.String("instance", *worksheet.InstanceID), slog.String("database", *worksheet.DatabaseName))
-		}
-		if database != nil {
-			databaseParent = common.FormatDatabase(database.InstanceID, database.DatabaseName)
-		}
+		databaseParent = common.FormatDatabase(*worksheet.InstanceID, *worksheet.DatabaseName)
 	}
 
 	visibility := v1pb.Worksheet_VISIBILITY_UNSPECIFIED
@@ -512,50 +524,38 @@ func (s *WorksheetService) convertToAPIWorksheetMessage(ctx context.Context, wor
 	default:
 		// Keep VISIBILITY_UNSPECIFIED
 	}
-
-	creator, err := s.store.GetUserByID(ctx, worksheet.CreatorID)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to get creator: %v", err))
-	}
-
-	project, err := s.store.GetProjectV2(ctx, &store.FindProjectMessage{
-		ResourceID: &worksheet.ProjectID,
-	})
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to get project: %v", err))
-	}
-	if project == nil {
-		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("project with id %s not found", worksheet.ProjectID))
-	}
 	return &v1pb.Worksheet{
 		Name:        fmt.Sprintf("%s%d", common.WorksheetIDPrefix, worksheet.UID),
-		Project:     common.FormatProject(project.ResourceID),
+		Project:     common.FormatProject(worksheet.ProjectID),
 		Database:    databaseParent,
 		Title:       worksheet.Title,
-		Creator:     fmt.Sprintf("users/%s", creator.Email),
+		Creator:     fmt.Sprintf("users/%s", worksheet.Creator),
 		CreateTime:  timestamppb.New(worksheet.CreatedAt),
 		UpdateTime:  timestamppb.New(worksheet.UpdatedAt),
 		Content:     []byte(worksheet.Statement),
 		ContentSize: worksheet.Size,
 		Visibility:  visibility,
 		Starred:     worksheet.Starred,
-	}, nil
+		Folders:     worksheet.Folders,
+	}
 }
 
-func convertToStoreWorksheetMessage(project *store.ProjectMessage, database *store.DatabaseMessage, creatorID int, worksheet *v1pb.Worksheet) (*store.WorkSheetMessage, error) {
+func convertToStoreWorksheetMessage(project *store.ProjectMessage, database *store.DatabaseMessage, creator string, worksheet *v1pb.Worksheet) (*store.WorkSheetMessage, error) {
 	visibility, err := convertToStoreWorksheetVisibility(worksheet.Visibility)
 	if err != nil {
 		return nil, err
 	}
 
 	worksheetMessage := &store.WorkSheetMessage{
-		ProjectID:    project.ResourceID,
-		InstanceID:   &database.InstanceID,
-		DatabaseName: &database.DatabaseName,
-		CreatorID:    creatorID,
-		Title:        worksheet.Title,
-		Statement:    string(worksheet.Content),
-		Visibility:   visibility,
+		ProjectID:  project.ResourceID,
+		Creator:    creator,
+		Title:      worksheet.Title,
+		Statement:  string(worksheet.Content),
+		Visibility: visibility,
+	}
+	if database != nil {
+		worksheetMessage.InstanceID = &database.InstanceID
+		worksheetMessage.DatabaseName = &database.DatabaseName
 	}
 
 	return worksheetMessage, nil

@@ -8,7 +8,7 @@ import (
 	"github.com/antlr4-go/antlr/v4"
 	"github.com/pkg/errors"
 
-	parser "github.com/bytebase/plsql-parser"
+	parser "github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -30,20 +30,26 @@ func GenerateRestoreSQL(ctx context.Context, rCtx base.RestoreContext, statement
 		return "", errors.Errorf("failed to extract single SQL: %v", err)
 	}
 
-	tree, _, err := ParsePLSQL(originalSQL)
+	results, err := ParsePLSQL(originalSQL)
 	if err != nil {
 		return "", err
 	}
+	if len(results) == 0 {
+		return "", errors.New("no parse results")
+	}
 
+	// For restore SQL generation, we only examine the first statement to determine
+	// the table structure and operation type, even if extractSQL returns multiple statements.
+	// This is because:
+	// 1. All statements modify the same table (validated during backup creation)
+	// 2. All statements are the same operation type (UPDATE or DELETE)
+	// 3. The restore SQL is generated based on the backup table contents, not by
+	//    reversing individual statements - we just need to know the table structure
+	tree := results[0].Tree
 	if tree == nil {
 		return "", errors.Errorf("no parse result")
 	}
 
-	// We only need the first parse result.
-	// There are two cases:
-	// 1. The statement is a single SQL statement.
-	// 2. The statement is a multi SQL statement, but all SQL statements' backup is in the same table.
-	//    So we only need to restore the first SQL statement.
 	sqlForComment, truncated := common.TruncateString(originalSQL, maxCommentLength)
 	if truncated {
 		sqlForComment += "..."
@@ -70,7 +76,7 @@ func doGenerate(ctx context.Context, rCtx base.RestoreContext, sqlForComment str
 		return "", errors.Wrapf(err, "failed to get database metadata for %s", sourceDatabase)
 	}
 
-	schemaMetadata := metadata.GetSchema("")
+	schemaMetadata := metadata.GetSchemaMetadata("")
 	if schemaMetadata == nil {
 		return "", errors.Errorf("no schema metadata for %s", sourceDatabase)
 	}
@@ -218,7 +224,7 @@ func (g *generator) EnterUpdate_statement(ctx *parser.Update_statementContext) {
 		g.err = err
 		return
 	}
-	for i, column := range g.table.GetColumns() {
+	for i, column := range g.table.GetProto().GetColumns() {
 		if i > 0 {
 			if _, err := fmt.Fprint(&buf, ", "); err != nil {
 				g.err = err
@@ -234,7 +240,7 @@ func (g *generator) EnterUpdate_statement(ctx *parser.Update_statementContext) {
 		g.err = err
 		return
 	}
-	for i, column := range g.table.GetColumns() {
+	for i, column := range g.table.GetProto().GetColumns() {
 		if i > 0 {
 			if _, err := fmt.Fprint(&buf, ", "); err != nil {
 				g.err = err
@@ -331,7 +337,8 @@ func extractSQL(statement string, backupItem *storepb.PriorBackupDetail_Item) (s
 			result = append(result, list[i].Text)
 		}
 	}
-	return strings.Join(result, ";\n"), nil
+	// Statements include their leading whitespace and trailing semicolons.
+	return strings.Join(result, ""), nil
 }
 
 func equalOrLess(a, b *storepb.Position) bool {

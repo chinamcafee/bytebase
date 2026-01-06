@@ -9,7 +9,7 @@ import (
 type ChangedResources struct {
 	databases map[string]*ChangedDatabase
 
-	dbSchema *DatabaseSchema
+	dbMetadata *DatabaseMetadata
 }
 
 type ChangedDatabase struct {
@@ -17,10 +17,7 @@ type ChangedDatabase struct {
 }
 
 type ChangedSchema struct {
-	tables     map[string]*ChangedTable
-	views      map[string]*storepb.ChangedResourceView
-	functions  map[string]*storepb.ChangedResourceFunction
-	procedures map[string]*storepb.ChangedResourceProcedure
+	tables map[string]*ChangedTable
 }
 
 type ChangedTable struct {
@@ -28,10 +25,10 @@ type ChangedTable struct {
 	affectedTable bool
 }
 
-func NewChangedResources(dbSchema *DatabaseSchema) *ChangedResources {
+func NewChangedResources(dbMetadata *DatabaseMetadata) *ChangedResources {
 	return &ChangedResources{
-		databases: make(map[string]*ChangedDatabase),
-		dbSchema:  dbSchema,
+		databases:  make(map[string]*ChangedDatabase),
+		dbMetadata: dbMetadata,
 	}
 }
 
@@ -42,19 +39,16 @@ func (r *ChangedResources) Build() *storepb.ChangedResources {
 		d.Name = name
 		for _, schema := range d.Schemas {
 			for _, table := range schema.Tables {
-				if r.dbSchema == nil {
+				if r.dbMetadata == nil {
 					continue
 				}
-				if r.dbSchema.GetDatabaseMetadata() == nil {
-					continue
-				}
-				schemaMetadata := r.dbSchema.GetDatabaseMetadata().GetSchema(schema.GetName())
+				schemaMetadata := r.dbMetadata.GetSchemaMetadata(schema.GetName())
 				if schemaMetadata == nil {
 					continue
 				}
 				tableMetadata := schemaMetadata.GetTable(table.GetName())
 				if tableMetadata != nil {
-					table.TableRows = tableMetadata.GetRowCount()
+					table.TableRows = tableMetadata.GetProto().GetRowCount()
 				}
 			}
 		}
@@ -95,42 +89,6 @@ func (s *ChangedSchema) build() *storepb.ChangedResourceSchema {
 		return 0
 	})
 
-	for _, view := range s.views {
-		changedResourceSchema.Views = append(changedResourceSchema.Views, view)
-	}
-	slices.SortFunc(changedResourceSchema.Views, func(a, b *storepb.ChangedResourceView) int {
-		if a.GetName() < b.GetName() {
-			return -1
-		} else if a.GetName() > b.GetName() {
-			return 1
-		}
-		return 0
-	})
-
-	for _, function := range s.functions {
-		changedResourceSchema.Functions = append(changedResourceSchema.Functions, function)
-	}
-	slices.SortFunc(changedResourceSchema.Functions, func(a, b *storepb.ChangedResourceFunction) int {
-		if a.GetName() < b.GetName() {
-			return -1
-		} else if a.GetName() > b.GetName() {
-			return 1
-		}
-		return 0
-	})
-
-	for _, procedure := range s.procedures {
-		changedResourceSchema.Procedures = append(changedResourceSchema.Procedures, procedure)
-	}
-	slices.SortFunc(changedResourceSchema.Procedures, func(a, b *storepb.ChangedResourceProcedure) int {
-		if a.GetName() < b.GetName() {
-			return -1
-		} else if a.GetName() > b.GetName() {
-			return 1
-		}
-		return 0
-	})
-
 	return changedResourceSchema
 }
 
@@ -159,77 +117,10 @@ func (r *ChangedResources) AddTable(database string, schema string, change *stor
 	if affectedTable {
 		v.affectedTable = true
 	}
-	v.table.Ranges = append(v.table.Ranges, change.GetRanges()...)
-}
-
-func (r *ChangedResources) AddView(database string, schema string, change *storepb.ChangedResourceView) {
-	if _, ok := r.databases[database]; !ok {
-		r.databases[database] = &ChangedDatabase{
-			schemas: make(map[string]*ChangedSchema),
-		}
-	}
-	if _, ok := r.databases[database].schemas[schema]; !ok {
-		r.databases[database].schemas[schema] = &ChangedSchema{
-			tables: make(map[string]*ChangedTable),
-		}
-	}
-	if r.databases[database].schemas[schema].views == nil {
-		r.databases[database].schemas[schema].views = make(map[string]*storepb.ChangedResourceView)
-	}
-	v, ok := r.databases[database].schemas[schema].views[change.GetName()]
-	if !ok {
-		r.databases[database].schemas[schema].views[change.GetName()] = change
-		return
-	}
-	v.Ranges = append(v.Ranges, change.GetRanges()...)
-}
-
-func (r *ChangedResources) AddFunction(database string, schema string, change *storepb.ChangedResourceFunction) {
-	if _, ok := r.databases[database]; !ok {
-		r.databases[database] = &ChangedDatabase{
-			schemas: make(map[string]*ChangedSchema),
-		}
-	}
-	if _, ok := r.databases[database].schemas[schema]; !ok {
-		r.databases[database].schemas[schema] = &ChangedSchema{
-			tables: make(map[string]*ChangedTable),
-		}
-	}
-	if r.databases[database].schemas[schema].functions == nil {
-		r.databases[database].schemas[schema].functions = make(map[string]*storepb.ChangedResourceFunction)
-	}
-	v, ok := r.databases[database].schemas[schema].functions[change.GetName()]
-	if !ok {
-		r.databases[database].schemas[schema].functions[change.GetName()] = change
-		return
-	}
-	v.Ranges = append(v.Ranges, change.GetRanges()...)
-}
-
-func (r *ChangedResources) AddProcedure(database string, schema string, change *storepb.ChangedResourceProcedure) {
-	if _, ok := r.databases[database]; !ok {
-		r.databases[database] = &ChangedDatabase{
-			schemas: make(map[string]*ChangedSchema),
-		}
-	}
-	if _, ok := r.databases[database].schemas[schema]; !ok {
-		r.databases[database].schemas[schema] = &ChangedSchema{
-			tables: make(map[string]*ChangedTable),
-		}
-	}
-	if r.databases[database].schemas[schema].procedures == nil {
-		r.databases[database].schemas[schema].procedures = make(map[string]*storepb.ChangedResourceProcedure)
-	}
-	v, ok := r.databases[database].schemas[schema].procedures[change.GetName()]
-	if !ok {
-		r.databases[database].schemas[schema].procedures[change.GetName()] = change
-		return
-	}
-	v.Ranges = append(v.Ranges, change.GetRanges()...)
 }
 
 func (r *ChangedResources) CountAffectedTableRows() int64 {
-	if r.dbSchema == nil {
+	if r.dbMetadata == nil {
 		return 0
 	}
 
@@ -240,11 +131,10 @@ func (r *ChangedResources) CountAffectedTableRows() int64 {
 				if !table.affectedTable {
 					continue
 				}
-				dbMeta := r.dbSchema.GetDatabaseMetadata()
-				if dbMeta == nil {
+				if r.dbMetadata == nil {
 					continue
 				}
-				schemaMeta := dbMeta.GetSchema(schemaName)
+				schemaMeta := r.dbMetadata.GetSchemaMetadata(schemaName)
 				if schemaMeta == nil {
 					continue
 				}
@@ -252,7 +142,7 @@ func (r *ChangedResources) CountAffectedTableRows() int64 {
 				if tableMeta == nil {
 					continue
 				}
-				totalAffectedRows += tableMeta.GetRowCount()
+				totalAffectedRows += tableMeta.GetProto().GetRowCount()
 			}
 		}
 	}

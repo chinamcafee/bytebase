@@ -1,5 +1,10 @@
 version: v2
 clean: true
+managed:
+  enabled: true
+  disable:
+    - file_option: go_package
+      module: buf.build/bufbuild/protovalidate
 plugins:
   - local: protoc-gen-go-equal
     out: ../backend/generated-go
@@ -31,3 +36,12 @@ plugins:
   - remote: buf.build/community/google-gnostic-openapi:v0.7.0
     out: gen/grpc-doc
     opt: paths=source_relative,enum_type=string
+    types:
+      - bytebase.v1
+  - remote: buf.build/community/sudorandom-connect-openapi
+    out: ../backend/api/mcp/gen
+    opt:
+      - features=connectrpc;gnostic;protovalidate
+      - path=openapi.yaml
+    types:
+      - bytebase.v1

@@ -36,8 +36,8 @@ type FindProjectWebhookMessage struct {
 	EventType *storepb.Activity_Type
 }
 
-// CreateProjectWebhookV2 creates an instance of ProjectWebhook.
-func (s *Store) CreateProjectWebhookV2(ctx context.Context, projectID string, create *ProjectWebhookMessage) (*ProjectWebhookMessage, error) {
+// CreateProjectWebhook creates an instance of ProjectWebhook.
+func (s *Store) CreateProjectWebhook(ctx context.Context, projectID string, create *ProjectWebhookMessage) (*ProjectWebhookMessage, error) {
 	payload := []byte("{}")
 	if create.Payload != nil {
 		p, err := protojson.Marshal(create.Payload)
@@ -87,17 +87,81 @@ func (s *Store) CreateProjectWebhookV2(ctx context.Context, projectID string, cr
 	return &projectWebhook, nil
 }
 
-// FindProjectWebhookV2 finds a list of ProjectWebhook instances.
-func (s *Store) FindProjectWebhookV2(ctx context.Context, find *FindProjectWebhookMessage) ([]*ProjectWebhookMessage, error) {
+// ListProjectWebhooks lists a list of ProjectWebhook instances.
+func (s *Store) ListProjectWebhooks(ctx context.Context, find *FindProjectWebhookMessage) ([]*ProjectWebhookMessage, error) {
 	tx, err := s.GetDB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to begin transaction")
 	}
 
-	webhooks, err := s.findProjectWebhookImplV2(ctx, tx, find)
+	q := qb.Q().Space(`
+		SELECT
+			id,
+			project,
+			payload
+		FROM project_webhook
+		WHERE TRUE
+	`)
+
+	if v := find.ID; v != nil {
+		q.And("id = ?", *v)
+	}
+	if v := find.ProjectID; v != nil {
+		q.And("project = ?", *v)
+	}
+	if v := find.URL; v != nil {
+		q.And("payload->>'url' = ?", *v)
+	}
+
+	query, args, err := q.ToSQL()
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to build sql")
+	}
+
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
+
+	var projectWebhooks []*ProjectWebhookMessage // Declare it here
+	for rows.Next() {
+		projectWebhook := ProjectWebhookMessage{
+			Payload: &storepb.ProjectWebhook{},
+		}
+		var payload []byte
+
+		if err := rows.Scan(
+			&projectWebhook.ID,
+			&projectWebhook.ProjectID,
+			&payload,
+		); err != nil {
+			return nil, err
+		}
+
+		if err := common.ProtojsonUnmarshaler.Unmarshal(payload, projectWebhook.Payload); err != nil {
+			return nil, errors.Wrapf(err, "failed to unmarshal")
+		}
+
+		if v := find.EventType; v != nil {
+			found := false
+			for _, activity := range projectWebhook.Payload.Activities {
+				if activity == *v {
+					found = true
+					break
+				}
+			}
+			if found {
+				projectWebhooks = append(projectWebhooks, &projectWebhook)
+			}
+		} else {
+			projectWebhooks = append(projectWebhooks, &projectWebhook)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	webhooks := projectWebhooks
 
 	if err := tx.Commit(); err != nil {
 		return nil, errors.Wrapf(err, "failed to commit transaction")
@@ -105,14 +169,14 @@ func (s *Store) FindProjectWebhookV2(ctx context.Context, find *FindProjectWebho
 	return webhooks, nil
 }
 
-// GetProjectWebhookV2 gets an instance of ProjectWebhook.
-func (s *Store) GetProjectWebhookV2(ctx context.Context, find *FindProjectWebhookMessage) (*ProjectWebhookMessage, error) {
+// GetProjectWebhook gets an instance of ProjectWebhook.
+func (s *Store) GetProjectWebhook(ctx context.Context, find *FindProjectWebhookMessage) (*ProjectWebhookMessage, error) {
 	tx, err := s.GetDB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to begin transaction")
 	}
 
-	webhooks, err := s.findProjectWebhookImplV2(ctx, tx, find)
+	webhooks, err := s.ListProjectWebhooks(ctx, find)
 	if err != nil {
 		return nil, err
 	}
@@ -131,8 +195,8 @@ func (s *Store) GetProjectWebhookV2(ctx context.Context, find *FindProjectWebhoo
 	return webhooks[0], nil
 }
 
-// UpdateProjectWebhookV2 updates an instance of ProjectWebhook.
-func (s *Store) UpdateProjectWebhookV2(ctx context.Context, projectResourceID string, projectWebhookID int, update *UpdateProjectWebhookMessage) (*ProjectWebhookMessage, error) {
+// UpdateProjectWebhook updates an instance of ProjectWebhook.
+func (s *Store) UpdateProjectWebhook(ctx context.Context, projectResourceID string, projectWebhookID int, update *UpdateProjectWebhookMessage) (*ProjectWebhookMessage, error) {
 	tx, err := s.GetDB().BeginTx(ctx, nil)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to begin transaction")
@@ -187,8 +251,8 @@ func (s *Store) UpdateProjectWebhookV2(ctx context.Context, projectResourceID st
 	return &projectWebhook, nil
 }
 
-// DeleteProjectWebhookV2 deletes an existing projectWebhook by projectUID and url.
-func (s *Store) DeleteProjectWebhookV2(ctx context.Context, projectResourceID string, projectWebhookUID int) error {
+// DeleteProjectWebhook deletes an existing projectWebhook by projectUID and url.
+func (s *Store) DeleteProjectWebhook(ctx context.Context, projectResourceID string, projectWebhookUID int) error {
 	q := qb.Q().Space("DELETE FROM project_webhook WHERE id = ?", projectWebhookUID)
 
 	query, args, err := q.ToSQL()
@@ -211,76 +275,4 @@ func (s *Store) DeleteProjectWebhookV2(ctx context.Context, projectResourceID st
 
 	s.removeProjectCache(projectResourceID)
 	return nil
-}
-
-func (*Store) findProjectWebhookImplV2(ctx context.Context, txn *sql.Tx, find *FindProjectWebhookMessage) ([]*ProjectWebhookMessage, error) {
-	q := qb.Q().Space(`
-		SELECT
-			id,
-			project,
-			payload
-		FROM project_webhook
-		WHERE TRUE
-	`)
-
-	if v := find.ID; v != nil {
-		q.And("id = ?", *v)
-	}
-	if v := find.ProjectID; v != nil {
-		q.And("project = ?", *v)
-	}
-	if v := find.URL; v != nil {
-		q.And("payload->>'url' = ?", *v)
-	}
-
-	query, args, err := q.ToSQL()
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to build sql")
-	}
-
-	rows, err := txn.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var projectWebhooks []*ProjectWebhookMessage
-	for rows.Next() {
-		projectWebhook := ProjectWebhookMessage{
-			Payload: &storepb.ProjectWebhook{},
-		}
-		var payload []byte
-
-		if err := rows.Scan(
-			&projectWebhook.ID,
-			&projectWebhook.ProjectID,
-			&payload,
-		); err != nil {
-			return nil, err
-		}
-
-		if err := common.ProtojsonUnmarshaler.Unmarshal(payload, projectWebhook.Payload); err != nil {
-			return nil, errors.Wrapf(err, "failed to unmarshal")
-		}
-
-		if v := find.EventType; v != nil {
-			found := false
-			for _, activity := range projectWebhook.Payload.Activities {
-				if activity == *v {
-					found = true
-					break
-				}
-			}
-			if found {
-				projectWebhooks = append(projectWebhooks, &projectWebhook)
-			}
-		} else {
-			projectWebhooks = append(projectWebhooks, &projectWebhook)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return projectWebhooks, nil
 }

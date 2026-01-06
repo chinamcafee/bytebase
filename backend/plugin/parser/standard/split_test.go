@@ -8,7 +8,15 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
+
+func TestStandardSplitSQL(t *testing.T) {
+	base.RunSplitTests(t, "test-data/test_split.yaml", base.SplitTestOptions{
+		SplitFunc: SplitSQL,
+	})
+}
 
 func generateOneMBInsert() string {
 	var rand = rand.New(rand.NewSource(time.Now().UnixNano()))

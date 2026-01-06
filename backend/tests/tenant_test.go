@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/genproto/googleapis/type/expr"
-	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 )
@@ -94,11 +93,11 @@ func TestDatabaseGroup(t *testing.T) {
 	// Create issues that create databases.
 	databaseName := "testTenantSchemaUpdate"
 	for _, testInstance := range testInstances {
-		err := ctl.createDatabaseV2(ctx, project, testInstance, nil, databaseName, "")
+		err := ctl.createDatabase(ctx, project, testInstance, nil, databaseName, "")
 		a.NoError(err)
 	}
 	for _, prodInstance := range prodInstances {
-		err := ctl.createDatabaseV2(ctx, project, prodInstance, nil, databaseName, "")
+		err := ctl.createDatabase(ctx, project, prodInstance, nil, databaseName, "")
 		a.NoError(err)
 	}
 
@@ -143,7 +142,6 @@ func TestDatabaseGroup(t *testing.T) {
 	sheetResp, err := ctl.sheetServiceClient.CreateSheet(ctx, connect.NewRequest(&v1pb.CreateSheetRequest{
 		Parent: project.Name,
 		Sheet: &v1pb.Sheet{
-			Title:   "migration statement sheet",
 			Content: []byte(migrationStatement1),
 		},
 	}))
@@ -155,21 +153,14 @@ func TestDatabaseGroup(t *testing.T) {
 		Id: uuid.NewString(),
 		Config: &v1pb.Plan_Spec_ChangeDatabaseConfig{
 			ChangeDatabaseConfig: &v1pb.Plan_ChangeDatabaseConfig{
-				Targets:       []string{databaseGroup.Name},
-				Sheet:         sheet.Name,
-				Type:          v1pb.DatabaseChangeType_MIGRATE,
-				MigrationType: v1pb.MigrationType_DDL,
+				Targets:     []string{databaseGroup.Name},
+				Sheet:       sheet.Name,
+				EnableGhost: false,
 			},
 		},
 	}
 	plan, rollout, issue, err := ctl.changeDatabaseWithConfig(ctx, project, spec)
 	a.NoError(err)
-
-	// Assert the plan deployment.
-	a.Len(plan.Deployment.DatabaseGroupMappings, 1)
-	a.Equal(databaseGroup.Name, plan.Deployment.DatabaseGroupMappings[0].DatabaseGroup)
-	a.Len(plan.Deployment.DatabaseGroupMappings[0].Databases, 2)
-	a.ElementsMatch([]string{testDatabases[0].Name, prodDatabases[0].Name}, plan.Deployment.DatabaseGroupMappings[0].Databases)
 
 	// Query schema.
 	for _, testInstance := range testInstances {
@@ -185,7 +176,7 @@ func TestDatabaseGroup(t *testing.T) {
 
 	// Create another database in the prod environment.
 	databaseName2 := "testTenantSchemaUpdate2"
-	err = ctl.createDatabaseV2(ctx, project, prodInstances[0], nil, databaseName2, "")
+	err = ctl.createDatabase(ctx, project, prodInstances[0], nil, databaseName2, "")
 	a.NoError(err)
 
 	resp, err = ctl.databaseServiceClient.ListDatabases(ctx, connect.NewRequest(&v1pb.ListDatabasesRequest{
@@ -203,29 +194,9 @@ func TestDatabaseGroup(t *testing.T) {
 	}
 	a.Len(prodDatabases, 2)
 
-	// Update the plan deployment.
-	planResp, err := ctl.planServiceClient.UpdatePlan(ctx, connect.NewRequest(&v1pb.UpdatePlanRequest{
-		Plan: &v1pb.Plan{
-			Name: plan.Name,
-		},
-		UpdateMask: &fieldmaskpb.FieldMask{
-			Paths: []string{"deployment"},
-		},
-	}))
-	a.NoError(err)
-	plan = planResp.Msg
-
-	a.Len(plan.Deployment.DatabaseGroupMappings, 1)
-	a.Equal(databaseGroup.Name, plan.Deployment.DatabaseGroupMappings[0].DatabaseGroup)
-	a.Len(plan.Deployment.DatabaseGroupMappings[0].Databases, 3)
-	a.ElementsMatch([]string{testDatabases[0].Name, prodDatabases[0].Name, prodDatabases[1].Name}, plan.Deployment.DatabaseGroupMappings[0].Databases)
-
-	// Create the new task.
+	// CreateRollout is now idempotent and will automatically pick up the new database.
 	rollout2Resp, err := ctl.rolloutServiceClient.CreateRollout(ctx, connect.NewRequest(&v1pb.CreateRolloutRequest{
-		Parent: project.Name,
-		Rollout: &v1pb.Rollout{
-			Plan: plan.Name,
-		},
+		Parent: plan.Name,
 		Target: nil, // set to nil to create all stages and tasks.
 	}))
 	a.NoError(err)

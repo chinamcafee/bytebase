@@ -7,12 +7,13 @@ import (
 	"slices"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/plsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -20,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_ORACLE, advisor.SchemaRuleColumnNotNull, &ColumnNoNullAdvisor{})
+	advisor.Register(storepb.Engine_ORACLE, storepb.SQLReviewRule_COLUMN_NO_NULL, &ColumnNoNullAdvisor{})
 }
 
 type columnMap map[string]int
@@ -31,20 +32,26 @@ type ColumnNoNullAdvisor struct {
 
 // Check checks for column no NULL value.
 func (*ColumnNoNullAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	rule := NewColumnNoNullRule(level, string(checkCtx.Rule.Type), checkCtx.CurrentDatabase)
+	rule := NewColumnNoNullRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase)
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList()
 }
@@ -120,7 +127,7 @@ func (r *ColumnNoNullRule) GetAdviceList() ([]*storepb.Advice, error) {
 		line := r.nullableColumns[columnID]
 		r.AddAdvice(
 			r.level,
-			advisor.ColumnCannotNull.Int32(),
+			code.ColumnCannotNull.Int32(),
 			fmt.Sprintf("Column %q is nullable, which is not allowed.", lastIdentifier(columnID)),
 			common.ConvertANTLRLineToPosition(line),
 		)
@@ -142,7 +149,7 @@ func (r *ColumnNoNullRule) handleColumnDefinition(ctx *parser.Column_definitionC
 	}
 	columnName := normalizeIdentifier(ctx.Column_name(), r.currentDatabase)
 	r.columnID = fmt.Sprintf(`%s.%s`, r.tableName, columnName)
-	r.nullableColumns[r.columnID] = ctx.GetStart().GetLine()
+	r.nullableColumns[r.columnID] = r.baseLine + ctx.GetStart().GetLine()
 }
 
 func (r *ColumnNoNullRule) handleInlineConstraint(ctx *parser.Inline_constraintContext) {
@@ -150,7 +157,7 @@ func (r *ColumnNoNullRule) handleInlineConstraint(ctx *parser.Inline_constraintC
 		return
 	}
 	if ctx.NULL_() != nil {
-		r.nullableColumns[r.columnID] = ctx.GetStart().GetLine()
+		r.nullableColumns[r.columnID] = r.baseLine + ctx.GetStart().GetLine()
 	}
 	if ctx.NOT() != nil || ctx.PRIMARY() != nil {
 		delete(r.nullableColumns, r.columnID)

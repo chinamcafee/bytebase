@@ -9,13 +9,14 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	"github.com/pkg/errors"
 
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -24,7 +25,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleStatementDisallowOfflineDDL, &DisallowOfflineDdlAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_STATEMENT_DISALLOW_OFFLINE_DDL, &DisallowOfflineDdlAdvisor{})
 }
 
 // DisallowOfflineDdlAdvisor is the advisor checking for disallow Offline DDL.
@@ -33,11 +34,6 @@ type DisallowOfflineDdlAdvisor struct {
 
 // Check checks for disallow Offline DDL.
 func (*DisallowOfflineDdlAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parser result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
@@ -45,14 +41,21 @@ func (*DisallowOfflineDdlAdvisor) Check(_ context.Context, checkCtx advisor.Cont
 
 	checker := &disallowOfflineDdlChecker{
 		level:     level,
-		title:     checkCtx.Rule.Type,
+		title:     checkCtx.Rule.Type.String(),
 		driver:    checkCtx.Driver,
 		currentDB: checkCtx.CurrentDatabase,
 	}
 
-	for _, stmtNode := range stmtList {
-		checker.baseLine = stmtNode.BaseLine
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmtNode.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		checker.baseLine = stmt.BaseLine()
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.adviceList, nil
@@ -252,7 +255,7 @@ func (*disallowOfflineDdlChecker) isPrimaryKeyColumn(ctx mysql.IFieldDefinitionC
 func (checker *disallowOfflineDdlChecker) advice(ctx antlr.ParserRuleContext, operation string) {
 	checker.adviceList = append(checker.adviceList, &storepb.Advice{
 		Status:        checker.level,
-		Code:          advisor.StatementOfflineDDL.Int32(),
+		Code:          code.StatementOfflineDDL.Int32(),
 		Title:         checker.title,
 		Content:       fmt.Sprintf("%s is an offline DDL operation.", operation),
 		StartPosition: common.ConvertANTLRLineToPosition(checker.baseLine + ctx.GetStart().GetLine()),

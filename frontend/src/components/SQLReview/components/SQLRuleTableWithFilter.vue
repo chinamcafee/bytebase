@@ -27,7 +27,7 @@
         @rule-remove="$emit('rule-remove', $event)"
         @update:selected-rule-keys="$emit('update:selectedRuleKeys', $event)"
       />
-      <NEmpty v-else class="py-12 border rounded" />
+      <NEmpty v-else class="py-12 border rounded-sm" />
     </template>
   </SQLRuleFilter>
 </template>
@@ -37,8 +37,8 @@ import { NEmpty } from "naive-ui";
 import { watch } from "vue";
 import {
   SQLRuleFilter,
-  useSQLRuleFilter,
   SQLRuleTable,
+  useSQLRuleFilter,
 } from "@/components/SQLReview/components";
 import type { RuleTemplateV2 } from "@/types";
 import type { Engine } from "@/types/proto-es/v1/common_pb";

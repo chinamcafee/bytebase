@@ -2,7 +2,7 @@
   <Drawer :show="show" @close="$emit('close')">
     <DrawerContent
       :title="$t('sql-review.select-review-rules')"
-      class="w-[70rem] max-w-[100vw] relative"
+      class="w-280 max-w-[100vw] relative"
     >
       <template #default>
         <SQLReviewTabsByEngine :rule-map-by-engine="ruleTemplateMapV2">
@@ -46,15 +46,16 @@
 import { NButton } from "naive-ui";
 import { Drawer, DrawerContent } from "@/components/v2";
 import { type Engine } from "@/types/proto-es/v1/common_pb";
-import { ruleTemplateMapV2 } from "@/types/sqlReview";
+import type { SQLReviewRule_Type } from "@/types/proto-es/v1/review_config_service_pb";
 import type { RuleTemplateV2 } from "@/types/sqlReview";
+import { ruleTemplateMapV2 } from "@/types/sqlReview";
 import SQLReviewTabsByEngine from "./SQLReviewTabsByEngine.vue";
 import SQLRuleTableWithFilter from "./SQLRuleTableWithFilter.vue";
 import { getRuleKey } from "./utils";
 
 const props = defineProps<{
   show: boolean;
-  selectedRuleMap: Map<Engine, Map<string, RuleTemplateV2>>;
+  selectedRuleMap: Map<Engine, Map<SQLReviewRule_Type, RuleTemplateV2>>;
 }>();
 
 const emit = defineEmits<{
@@ -86,7 +87,8 @@ const onSelectedRuleKeysUpdateForEngine = (engine: Engine, keys: string[]) => {
     }
     const [engineStr, ruleKey] = key.split(":");
     const engineNum = parseInt(engineStr) as Engine;
-    const rule = ruleTemplateMapV2.get(engineNum)?.get(ruleKey);
+    const ruleType = parseInt(ruleKey) as SQLReviewRule_Type;
+    const rule = ruleTemplateMapV2.get(engineNum)?.get(ruleType);
     if (rule) {
       emit("rule-select", rule);
     }
@@ -96,7 +98,8 @@ const onSelectedRuleKeysUpdateForEngine = (engine: Engine, keys: string[]) => {
   for (const oldKey of oldSelectedKeys) {
     const [engineStr, ruleKey] = oldKey.split(":");
     const engineNum = parseInt(engineStr) as Engine;
-    const rule = props.selectedRuleMap.get(engineNum)?.get(ruleKey);
+    const ruleType = parseInt(ruleKey) as SQLReviewRule_Type;
+    const rule = props.selectedRuleMap.get(engineNum)?.get(ruleType);
     if (rule) {
       emit("rule-remove", rule);
     }

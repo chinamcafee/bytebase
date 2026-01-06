@@ -1,61 +1,71 @@
 <template>
-  <div>
-    <div class="w-full">
-      <p class="font-medium text-main mb-2">{{ $t("common.name") }}</p>
-      <NInput v-model:value="state.placeholder" :disabled="readonly" />
-      <div class="mt-2">
-        <ResourceIdField
-          ref="resourceIdField"
-          editing-class="mt-4"
-          resource-type="database-group"
-          :readonly="!isCreating"
-          :value="state.resourceId"
-          :resource-title="state.placeholder"
-          :fetch-resource="
-            (id) =>
-              dbGroupStore.getOrFetchDBGroupByName(
-                `${props.project.name}/${databaseGroupNamePrefix}${id}`,
-                { silent: true, view: DatabaseGroupView.FULL }
-              )
-          "
+  <div class="flex-1 flex flex-col">
+    <div class="flex-1 mb-6">
+      <div class="w-full">
+        <p class="font-medium text-main mb-2">{{ $t("common.name") }}</p>
+        <NInput
+          v-model:value="state.placeholder"
+          :disabled="readonly"
+          :maxlength="200"
         />
+        <div class="mt-2">
+          <ResourceIdField
+            ref="resourceIdField"
+            editing-class="mt-4"
+            resource-type="database-group"
+            :readonly="!isCreating"
+            :value="state.resourceId"
+            :resource-title="state.placeholder"
+            :fetch-resource="
+              (id) =>
+                dbGroupStore.getOrFetchDBGroupByName(
+                  `${props.project.name}/${databaseGroupNamePrefix}${id}`,
+                  { silent: true, view: DatabaseGroupView.FULL }
+                )
+            "
+          />
+        </div>
       </div>
-    </div>
-    <NDivider />
-    <div class="w-full grid grid-cols-5 gap-x-6">
-      <div class="col-span-3">
-        <p class="pl-1 font-medium text-main mb-2">
-          {{ $t("database-group.condition.self") }}
-        </p>
-        <ExprEditor
-          :expr="state.expr"
-          :allow-admin="!readonly"
-          :enable-raw-expression="true"
-          :factor-list="FactorList"
-          :option-config-map="getDatabaseGroupOptionConfigMap(project.name)"
-        />
-      </div>
-      <div class="col-span-2">
-        <MatchedDatabaseView :project="project.name" :expr="state.expr" />
+      <NDivider />
+      <div class="w-full grid grid-cols-5 gap-x-6">
+        <div class="col-span-3">
+          <p class="pl-1 font-medium text-main mb-2">
+            {{ $t("database-group.condition.self") }}
+          </p>
+          <ExprEditor
+            :expr="state.expr"
+            :readonly="readonly"
+            :factor-list="FactorList"
+            :option-config-map="getDatabaseGroupOptionConfigMap(project.name)"
+          />
+        </div>
+        <div class="col-span-2">
+          <MatchedDatabaseView :project="project.name" :expr="state.expr" />
+        </div>
       </div>
     </div>
 
-    <div v-if="!readonly" class="sticky bottom-0 z-10 mt-4">
+    <div v-if="!isCreating && allowDelete" class="py-6 border-t">
+      <BBButtonConfirm
+        :type="'DELETE'"
+        :button-text="$t('database-group.delete-group')"
+        :ok-text="$t('common.delete')"
+        :confirm-title="
+          $t('database-group.delete-group', { name: databaseGroup?.title })
+        "
+        :require-confirm="true"
+        @confirm="doDelete"
+      />
+    </div>
+
+    <div v-if="!readonly" class="sticky bottom-0 z-10">
       <div
-        class="flex justify-between w-full pt-4 border-t border-block-border bg-white"
+        class="flex justify-end w-full py-4 border-t border-block-border bg-white gap-x-3"
       >
-        <NButton v-if="!isCreating" type="error" text @click="doDelete">
-          <template #icon>
-            <Trash2Icon class="w-4 h-auto" />
-          </template>
-          {{ $t("common.delete") }}
+        <NButton @click="$emit('dismiss')">{{ $t("common.cancel") }}</NButton>
+        <NButton type="primary" :disabled="!allowConfirm" @click="doConfirm">
+          {{ isCreating ? $t("common.save") : $t("common.confirm") }}
         </NButton>
-        <div class="flex-1 flex flex-row justify-end items-center gap-x-2">
-          <NButton @click="$emit('dismiss')">{{ $t("common.cancel") }}</NButton>
-          <NButton type="primary" :disabled="!allowConfirm" @click="doConfirm">
-            {{ isCreating ? $t("common.save") : $t("common.confirm") }}
-          </NButton>
-        </div>
       </div>
     </div>
   </div>
@@ -64,11 +74,11 @@
 <script lang="ts" setup>
 import { create } from "@bufbuild/protobuf";
 import { cloneDeep, head, isEqual } from "lodash-es";
-import { Trash2Icon } from "lucide-vue-next";
-import { NButton, NDivider, NInput, useDialog } from "naive-ui";
-import { computed, onMounted, reactive, ref } from "vue";
+import { NButton, NDivider, NInput } from "naive-ui";
+import { computed, reactive, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
+import { BBButtonConfirm } from "@/bbkit";
 import ExprEditor from "@/components/ExprEditor";
 import type { ConditionGroupExpr } from "@/plugins/cel";
 import {
@@ -79,25 +89,27 @@ import {
   wrapAsGroup,
 } from "@/plugins/cel";
 import {
-  PROJECT_V1_ROUTE_DATABASE_GROUPS,
   PROJECT_V1_ROUTE_DATABASE_GROUP_DETAIL,
+  PROJECT_V1_ROUTE_DATABASE_GROUPS,
 } from "@/router/dashboard/projectV1";
 import { pushNotification, useDBGroupStore } from "@/store";
 import {
   databaseGroupNamePrefix,
   getProjectNameAndDatabaseGroupName,
 } from "@/store/modules/v1/common";
+import { isValidDatabaseGroupName } from "@/types";
 import type { Expr as CELExpr } from "@/types/proto-es/google/api/expr/v1alpha1/syntax_pb";
 import { ExprSchema } from "@/types/proto-es/google/type/expr_pb";
 import {
+  type DatabaseGroup,
   DatabaseGroupSchema,
   DatabaseGroupView,
-  type DatabaseGroup,
 } from "@/types/proto-es/v1/database_group_service_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import {
   batchConvertCELStringToParsedExpr,
   batchConvertParsedExprToCELString,
+  hasProjectPermissionV2,
 } from "@/utils";
 import { ResourceIdField } from "../v2";
 import MatchedDatabaseView from "./MatchedDatabaseView.vue";
@@ -130,13 +142,16 @@ const state = reactive<LocalState>({
 });
 const resourceIdField = ref<InstanceType<typeof ResourceIdField>>();
 const router = useRouter();
-const dialog = useDialog();
 
 const isCreating = computed(() => props.databaseGroup === undefined);
 
-onMounted(async () => {
+const allowDelete = computed(() => {
+  return hasProjectPermissionV2(props.project, "bb.databaseGroups.delete");
+});
+
+watchEffect(async () => {
   const databaseGroup = props.databaseGroup;
-  if (!databaseGroup) {
+  if (!databaseGroup || !isValidDatabaseGroupName(databaseGroup.name)) {
     return;
   }
 
@@ -146,13 +161,10 @@ onMounted(async () => {
   );
   state.resourceId = databaseGroupName;
   state.placeholder = databaseGroupEntity.title;
-  const fetchedDatabaseGroup = await dbGroupStore.getOrFetchDBGroupByName(
-    databaseGroup.name,
-    { silent: true, view: DatabaseGroupView.FULL }
-  );
-  if (fetchedDatabaseGroup?.databaseExpr?.expression) {
+
+  if (databaseGroup.databaseExpr?.expression) {
     // Convert CEL expression to simple expression
-    const expressions = [fetchedDatabaseGroup.databaseExpr.expression];
+    const expressions = [databaseGroup.databaseExpr.expression];
     const exprList = await batchConvertCELStringToParsedExpr(expressions);
     if (exprList.length > 0) {
       const simpleExpr = resolveCELExpr(exprList[0]);
@@ -161,25 +173,17 @@ onMounted(async () => {
   }
 });
 
-const doDelete = () => {
-  dialog.error({
-    title: "Confirm to delete",
-    positiveText: t("common.confirm"),
-    negativeText: t("common.cancel"),
-    onPositiveClick: async () => {
-      const databaseGroup = props.databaseGroup as DatabaseGroup;
-      await dbGroupStore.deleteDatabaseGroup(databaseGroup.name);
-      if (
-        router.currentRoute.value.name ===
-        PROJECT_V1_ROUTE_DATABASE_GROUP_DETAIL
-      ) {
-        router.replace({
-          name: PROJECT_V1_ROUTE_DATABASE_GROUPS,
-        });
-      }
-      emit("dismiss");
-    },
-  });
+const doDelete = async () => {
+  const databaseGroup = props.databaseGroup as DatabaseGroup;
+  await dbGroupStore.deleteDatabaseGroup(databaseGroup.name);
+  if (
+    router.currentRoute.value.name === PROJECT_V1_ROUTE_DATABASE_GROUP_DETAIL
+  ) {
+    router.replace({
+      name: PROJECT_V1_ROUTE_DATABASE_GROUPS,
+    });
+  }
+  emit("dismiss");
 };
 
 const allowConfirm = computed(() => {

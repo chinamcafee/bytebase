@@ -95,13 +95,13 @@ import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { IssueStatusAction } from "@/components/IssueV1/logic";
 import {
-  useIssueContext,
+  IssueStatusActionToIssueStatusMap,
   issueStatusActionButtonProps,
   issueStatusActionDisplayName,
-  IssueStatusActionToIssueStatusMap,
+  useIssueContext,
 } from "@/components/IssueV1/logic";
 import ErrorList from "@/components/misc/ErrorList.vue";
-import { issueServiceClientConnect } from "@/grpcweb";
+import { issueServiceClientConnect } from "@/connect";
 import { pushNotification } from "@/store";
 import { BatchUpdateIssuesStatusRequestSchema } from "@/types/proto-es/v1/issue_service_pb";
 import { Task_Status } from "@/types/proto-es/v1/rollout_service_pb";

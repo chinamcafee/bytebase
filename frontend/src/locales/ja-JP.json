@@ -57,6 +57,9 @@
     "skip": "飛び越える",
     "skipped": "スキップ",
     "dismiss": "閉じる",
+    "allow": "許可",
+    "deny": "拒否",
+    "go-back": "戻る",
     "back": "戻る",
     "next": "次のステップ",
     "edit": "編集",
@@ -79,18 +82,16 @@
     "created-at": "作成日時",
     "updated-at": "更新日時",
     "statement": "ステートメント",
-    "statement-size": "ステートメントサイズ",
     "snapshot": "スナップショット",
     "status": "州",
     "stage": "ステージ",
     "task": "タスク",
-    "blocking-task": "タスクをブロック中",
     "sql": "SQL",
     "unassigned": "割り当てられていない",
     "new": "作成する",
     "add": "追加",
-    "confirm-and-add": "確認して追加",
     "confirm-and-update": "確認して更新する",
+    "confirm-and-add": "確認して追加する",
     "query": "お問い合わせ",
     "transfer": "移行",
     "schema": "スキーマ",
@@ -106,7 +107,6 @@
     "learn-more": "もっと詳しく知る",
     "troubleshoot": "トラブルシューティング",
     "schema-version": "スキーマのバージョン",
-    "time": "時間",
     "Default": "デフォルト",
     "definition": "意味",
     "empty": "空欄",
@@ -133,11 +133,12 @@
     "n-seconds-ago": "{count} 秒前",
     "copy": "コピー",
     "copied": "コピーされました",
-    "click-to-copy": "クリックしてコピー",
     "manage": "管理",
     "table": "テーブル",
     "search": "検索",
+    "search-for-more": "さらに検索",
     "warning": "警告する",
+    "notices": "注意事項",
     "edited": "編集日時",
     "preview": "プレビュー",
     "file-selector": {
@@ -147,11 +148,11 @@
     "no-data": "データなし",
     "visibility": "可視性",
     "duplicate": "コピー",
+    "fork": "フォーク",
     "enable": "オンにする",
     "disable": "無効にする",
     "view-doc": "ドキュメントを見る",
     "write-only": "書き込み専用",
-    "sync": "同期する",
     "succeed": "成功する",
     "success": "成功",
     "failed": "失敗",
@@ -169,11 +170,10 @@
     "verify": "確認する",
     "regenerate": "再生する",
     "download": "ダウンロード",
-    "will-lose-unsaved-data": "これにより、現在保存されていないデータはすべて失われます。",
     "deleted": "削除されました",
     "active": "アクティブ",
     "reopen": "再開",
-    "will-override-current-data": "現在のデータは上書きされます。",
+    "plan": "プラン",
     "rollout": "リリース",
     "upload": "アップロード",
     "clear": "クリア",
@@ -208,6 +208,8 @@
     "force-verb": "フォース{verb}",
     "untitled": "名前のない",
     "missing-required-permission": "必要な権限がありません",
+    "missing-required-permission-for-resource": "リソース {resource} に必要な権限がありません",
+    "required-permission": "必要な権限",
     "resource-not-found": "リソースが見つかりません",
     "continue-anyway": "まだ続けたい",
     "permissions": "権限",
@@ -219,13 +221,13 @@
     "resources": "リソース",
     "closed": "閉まっている",
     "refresh": "リフレッシュ",
+    "reject": "拒否する",
     "rollback": "ロールバック",
     "rows": {
       "self": "行",
       "n-rows": "{n} 行"
     },
     "back-to-workspace": "ワークスペースに戻る",
-    "encoding": "エンコーディング",
     "finish": "仕上げる",
     "title": "タイトル",
     "text-wrap": "テキストの折り返し",
@@ -234,7 +236,6 @@
     "errors": "エラー",
     "removed": "削除されました",
     "submit": "提出する",
-    "start": "始める",
     "draft": "下書き",
     "import": "輸入",
     "hard-delete": {
@@ -245,8 +246,13 @@
       "notification": "リソース '{name}' を正常に削除しました。"
     },
     "collapse": "閉じる",
+    "show-more": "もっと見る",
+    "n-more": "+{n} もっと",
+    "remaining": "残り",
     "line": "行",
-    "column": "列"
+    "column": "列",
+    "apply-to-database": "データベースに適用",
+    "unlimited": "無制限"
   },
   "error-page": {
     "go-back-home": "ホームページに戻る"
@@ -262,8 +268,6 @@
       "title-general": "テスト結果"
     },
     "check-type": {
-      "fake": "偽物",
-      "connection": "接続する",
       "sql-review": {
         "self": "SQLレビュー",
         "description": "SQL文を分析し、潜在的な問題点を特定し、推奨事項を提示します。組み込みルールとカスタムルールが含まれます。"
@@ -277,9 +281,9 @@
     },
     "comment": "コメント",
     "started": "から始まりました",
-    "view-change": "変更を表示する",
     "status": {
       "running": "ランニング",
+      "available": "利用可能",
       "failed": "失敗",
       "canceled": "キャンセル",
       "skipped": "スキップ",
@@ -307,14 +311,17 @@
       "description": "タスクを自動的に実行開始する日時を指定します。メンテナンス期間やオフピーク時に便利です。"
     },
     "select-task": "タスクを選択 | タスクを選択",
-    "selected-n-tasks": "{n} 個のタスクが選択されました | {n} 個のタスクが選択されました",
     "no-tasks-selected": "タスクが選択されていません",
     "no-runnable-tasks": "実行可能なタスクはありません",
     "no-skippable-tasks": "スキップ可能なタスクはありません",
     "no-cancellable-tasks": "キャンセル可能なタスクはありません",
+    "no-selectable-tasks": "タスクを選択できません",
     "no-permission": "この操作を実行する権限がありません",
     "data-export-creator-only": "問題作成者のみがデータエクスポートタスクを実行できます",
     "scheduled-time": "予定時刻",
+    "scheduled-at": "予定日時",
+    "run-history": "実行履歴",
+    "only-showing-latest-n-runs": "最新の {n} 実行のみを表示",
     "select-scheduled-time": "予定時刻を選択してください",
     "error": {
       "scheduled-time-must-be-in-the-future": "スケジュール時間は将来の時間である必要があります"
@@ -332,21 +339,28 @@
       },
       "advice-split-statement-to-single-online-migration-issue": "このステートメントを 1 つのオンライン移行の問題に分割することをアドバイスします。"
     },
-    "prior-backup-tips": "影響を受けるデータを事前にバックアップする",
+    "prior-backup-tips": "影響を受けるデータを事前にバックアップします。データ変更（UPDATE、DELETE）のみに適用され、スキーマ変更には適用されません。",
     "database-create": {
       "created": "作成済み",
       "pending": "保留中"
+    },
+    "executed-by": "実行者",
+    "affected-rows": "影響を受けた行数",
+    "type": {
+      "database-create": "データベース作成",
+      "migrate": "マイグレーション",
+      "database-export": "データエクスポート",
+      "general": "一般"
     }
   },
   "task-run": {
     "failed-runs": "失敗したタスク - 最新の実行ログ",
     "history": "タスク実行履歴",
     "latest-logs": "最新のログ",
+    "latest": "最新の実行",
     "status": {
       "enqueued": "処刑を待っています。",
       "enqueued-with-rollout-time": "実行を待機しています。{time} の後に実行されます。",
-      "waiting-connection": "利用可能なインスタンス接続を待っています。インスタンス接続カウントは、Bytebaseの制限設定に達しました。最後の報告は {time} です。",
-      "waiting-task": "別のタスクが完了するのを待っています。最後の報告は {time} です。",
       "waiting-max-tasks-per-rollout": "他のタスクが完了するのを待っています。ロールアウトごとの最大実行タスク数制限に達しました。最後の報告は {time} です。"
     },
     "rollback": {
@@ -356,6 +370,31 @@
         "description": "Bytebaseはタスク実行に基づいてロールバックステートメントを生成します。ロールバックを実行する前にステートメントを確認できます。"
       },
       "no-statement-generated": "ロールバックステートメントは生成されません"
+    },
+    "log-type": {
+      "schema-dump": "スキーマダンプ",
+      "command-execute": "コマンド実行",
+      "database-sync": "データベース同期",
+      "transaction": "取引",
+      "prior-backup": "事前のバックアップ",
+      "retry": "リトライ",
+      "compute-diff": "差分計算",
+      "release-file-execute": "リリースファイル"
+    },
+    "log-detail": {
+      "dumping": "ダンピング...",
+      "syncing": "同期中...",
+      "backup-completed": "完了しました（{count} テーブル）",
+      "backing-up": "バックアップ中...",
+      "retry-attempt": "試行 {current}/{max}",
+      "computing": "コンピューティング..."
+    },
+    "log-viewer": {
+      "multiple-deploys-notice": "実行中にサーバーの再起動が検出されました。ログはデプロイごとにグループ化されています。",
+      "deployment-n": "デプロイ #{n}",
+      "expand-all": "すべて展開",
+      "collapse-all": "すべて折りたたむ",
+      "summary": "{sections} セクション · {entries} エントリ"
     }
   },
   "banner": {
@@ -385,6 +424,7 @@
       "users-and-groups": "ユーザーとグループ",
       "iam-and-admin": "IAM と管理",
       "im-integration": "IM",
+      "mcp": "MCP",
       "sso": "SSO",
       "subscription": "サブスクリプション",
       "global-masking": "グローバルマスキング",
@@ -392,6 +432,10 @@
       "data-access": "データアクセス",
       "audit-log": "監査ログ",
       "custom-roles": "カスタムロール"
+    },
+    "im": {
+      "add-im-integration": "IM統合を追加する",
+      "add-another-im": "別のIMを追加"
     },
     "profile": {
       "email": "メールアドレス",
@@ -406,7 +450,6 @@
       "subscription": "(有料プランにアップグレードするとキャラクター管理が可能になります)"
     },
     "members": {
-      "inactive": "非アクティブ",
       "inactive-users": "非アクティブユーザー",
       "table": {
         "account": "アカウント",
@@ -438,6 +481,28 @@
       },
       "system-bot": "ロボットアシスタント",
       "service-account": "サービスアカウント",
+      "workload-identity": "Workload Identity",
+      "workload-identity-platform": "Platform",
+      "workload-identity-owner": "Organization / Username",
+      "workload-identity-repo": "Repository",
+      "workload-identity-branch": "Branch",
+      "workload-identity-advanced": "Advanced Settings",
+      "workload-identity-issuer": "Issuer URL",
+      "workload-identity-audience": "Audience",
+      "workload-identity-subject": "Subject Pattern",
+      "workload-identity-repo-hint": "Leave empty for all repositories in the organization",
+      "workload-identity-branch-hint": "Leave empty for all branches",
+      "workload-identity-gitlab-url": "GitLab URL",
+      "workload-identity-gitlab-url-hint": "Your GitLab instance URL",
+      "workload-identity-group": "Group / Username",
+      "workload-identity-project": "Project",
+      "workload-identity-project-hint": "Leave empty to allow all projects",
+      "workload-identity-allowed-branches-tags": "Allowed Branches/Tags",
+      "workload-identity-all-branches-tags": "All branches and tags",
+      "workload-identity-specific-branch": "Specific branch",
+      "workload-identity-specific-tag": "Specific tag",
+      "workload-identity-tag": "Tag",
+      "workload-identity-tag-hint": "Leave empty to allow all tags",
       "copy-service-key": "サービスキーをコピーする",
       "reset-service-key": "サービスキーのリセット",
       "reset-service-key-alert": "古いサービス キーはすぐにリセットされ、この操作は元に戻すことはできません。サービス キーをリセットしてもよろしいですか?",
@@ -447,15 +512,14 @@
       "add-member": "メンバーを追加",
       "add-user": "ユーザーを追加",
       "entra-sync": {
-        "self": "Entra ID (Azure AD) から同期",
-        "description": "Entra ID (旧 Azure AD) のユーザーとグループを Bytebase インスタンスに同期します。",
+        "self": "SCIM から同期",
+        "description": "Entra ID (旧 Azure AD) または Okta のユーザーとグループを Bytebase インスタンスに同期します。",
         "endpoint": "Endpoint",
-        "endpoint-tip": "これを Entra の「Tenant URL」フィールドに貼り付けます。Entra は、このエンドポイントを介してユーザーとグループを Bytebase に同期します。",
+        "endpoint-tip": "ユーザーとグループはこのエンドポイントを介して Bytebase に同期されます。",
         "secret-token": "Secret Token",
-        "secret-token-tip": "これを Entra の「Secret Token」フィールドに貼り付けます。",
+        "secret-token-tip": "エンドポイントの検証トークンです。秘密にしてください。",
         "reset-token": "トークンをリセット",
-        "reset-token-warning": "Entra アプリケーションのプロビジョニング設定を更新する必要があります。",
-        "goto-entra-dashboard": "Entraダッシュボードへ"
+        "reset-token-warning": "Entra アプリケーションのプロビジョニング設定を更新する必要があります。"
       },
       "all-users": "すべてのユーザー",
       "search-member": "メンバーを検索",
@@ -472,7 +536,30 @@
       "assign-role": "役割の割り当て | 役割の割り当て"
     },
     "im-integration": {
-      "description": "特定のイシューイベントについて、プライベート メッセージをユーザーにプッシュします。プロジェクト Webhook で使用する必要があります。"
+      "description": "IM 統合は、特定のイシューイベントについてユーザーにダイレクトメッセージをプッシュするために使用されます。プロジェクト Webhook と連携して動作します。"
+    },
+    "mcp": {
+      "title": "MCP 統合",
+      "description": "Model Context Protocol を使用して、AI アシスタントを Bytebase に接続します。",
+      "auth": {
+        "title": "認証が必要",
+        "description": "初回接続時に OAuth 認証が必要です。適切な Bytebase 権限があることを確認してください。"
+      },
+      "general-config": {
+        "title": "方法 1：JSON 設定"
+      },
+      "quick-start": {
+        "title": "方法 2：CLI コマンド",
+        "description": "または、以下の CLI コマンドを使用してください。"
+      },
+      "setup": {
+        "add-to-config": "この JSON を MCP クライアント設定ファイルに追加してください。"
+      },
+      "first-prompt": {
+        "title": "最初のプロンプト",
+        "description": "接続後、AI アシスタントに聞いてみてください：",
+        "example": "Bytebase インスタンス内のすべてのプロジェクトをリストする"
+      }
     },
     "sso": {
       "create": "SSOの作成",
@@ -585,6 +672,11 @@
           "participate": "改善プログラムに参加",
           "description": "匿名の使用データを共有してBytebaseの改善に協力する"
         },
+        "audit-log-stdout": {
+          "self": "監査ログエクスポート",
+          "enable": "監査ログの標準出力への出力を有効にする",
+          "description": "構造化されたJSON監査ログを標準出力に出力し、ログアグリゲーター（Splunk、ELK、Datadog、Loki）で取り込めるようにします。TEAMまたはENTERPRISEライセンスが必要です。"
+        },
         "disallow-signup": {
           "enable": "セルフサービス登録を無効にする",
           "description": "無効化されると、新しいユーザーは自己登録できなくなり、管理者の招待を通じてのみアカウントを作成できます。"
@@ -600,13 +692,21 @@
         },
         "external-url": {
           "self": "外部URL",
-          "description": "ユーザーまたはコールバックがアクセスできる Bytebase URL は、http:// または https:// で始まる必要があります。"
+          "description": "ユーザーまたはコールバックがアクセスできる Bytebase URL は、http:// または https:// で始まる必要があります。",
+          "managed-by-flag": "この設定は --external-url コマンドラインフラグによって管理されています",
+          "cannot-edit-flag": "外部URLは --external-url コマンドラインフラグで設定されているため変更できません"
         },
-        "sign-in-frequency": {
-          "self": "ログイン頻度",
-          "description": "サインイン頻度は、ユーザーが再認証する必要がある間隔を定義します。設定の更新は、変更を反映させるためにユーザーが再度サインインする必要があります。",
-          "hours": "時間",
-          "days": "日"
+        "access-token-duration": {
+          "self": "Access token duration",
+          "description": "How long access tokens remain valid before requiring refresh. Shorter durations improve security.",
+          "minutes": "Minute(s)",
+          "hours": "Hour(s)"
+        },
+        "refresh-token-duration": {
+          "self": "Refresh token duration",
+          "description": "How often users must fully reauthenticate. Configuration updates require users to sign in again for changes to take effect.",
+          "hours": "Hour(s)",
+          "days": "Day(s)"
         },
         "inactive-session-timeout": {
           "self": "非アクティブセッションタイムアウト",
@@ -628,16 +728,20 @@
           "rows": {
             "self": "最大SQL結果行数",
             "rows": "行",
-            "description": "SQL クエリ結果の出力行を制限します。値 <= 0 は制限がないことを意味します。",
-            "limit": "値が0以下の場合、制限なし"
+            "description": "SQL クエリ結果の出力行を制限します。値 <= 0 は制限がないことを意味します。"
           }
         },
+        "no-limit": "値が0以下の場合、制限なし",
         "query-data-policy": {
           "timeout": {
             "self": "最大クエリ時間",
-            "description": "SQL エディターでクエリを実行するために許可される最大時間。"
+            "description": "クエリの実行に許容される最大時間。"
           },
-          "seconds": "秒"
+          "seconds": "秒",
+          "project-scope": "プロジェクト",
+          "workspace-scope": "ワークスペース",
+          "environment-scope": "環境",
+          "tooltip": "{scope} レベルでも設定可能です。Bytebase は最も厳格な値を適用します。"
         },
         "domain-restriction": {
           "self": "ワークスペースドメイン",
@@ -730,7 +834,11 @@
         "description": "グローバル ルールを使用してバッチでマスキングを適用します。たとえば、「email」という名前のすべての列は特定のセマンティック タイプでマスキングされ、マスキング アルゴリズムが適用されます。",
         "condition-order": "条件付きシーケンス",
         "re-order": "並び替え",
-        "delete-rule-tip": "このルールを削除しますか?"
+        "delete-rule-tip": "このルールを削除しますか?",
+        "error": {
+          "missing-semantic-type": "セマンティックタイプは必須です",
+          "invalid-condition": "条件が無効です"
+        }
       },
       "semantic-types": {
         "self": "セマンティックタイプ",
@@ -792,12 +900,6 @@
           "suffix-length": "サフィックスの長さ"
         }
       },
-      "action": {
-        "self": "操作の種類",
-        "select-action": "アクションを選択",
-        "query": "クエリ",
-        "export": "出力"
-      },
       "classification": {
         "upload": "分類をアップロード",
         "upload-label": "データを分類・分類したJSON形式ファイルをアップロードできます。",
@@ -831,25 +933,14 @@
       "reopened-issue": "イシューを再開する",
       "resolved-issue": "イシューを完了する",
       "canceled-issue": "イシューをキャンセルする",
-      "changed": "改訂",
-      "canceled": "キャンセル",
-      "started": "始める",
-      "completed": "仕上げる",
-      "failed": "失敗",
-      "skipped": "飛び越える",
-      "rolled-out": "リリース",
-      "xxx-automatically": "自動{verb}",
-      "failed-to-backup": "データのバックアップに失敗しました: {error}",
-      "prior-back-table": "データベース {database} のテーブル {tables} にバックアップされました",
-      "prior-back-table-for-line": "DML のデータベース {database} とテーブル {tables} の行 {line} へのデータのバックアップ"
-    },
-    "n-similar-activities": "({count} 件の同様のイベント)"
+      "xxx-automatically": "自動{verb}"
+    }
   },
   "issue": {
     "labels": "イシューラベル",
     "my-issues": "マイイシュー",
     "waiting-approval": "承認待ち",
-    "waiting-rollout": "リリース待ち",
+    "create-rollout": "ロールアウトを作成",
     "status-transition": {
       "modal": {
         "resolve": "イシューは完了しましたか?",
@@ -895,22 +986,13 @@
           "title": "環境",
           "description": "環境に基づいてフィルタリングする"
         },
-        "database": {
-          "title": "データベース",
-          "description": "データベースに基づいてフィルタリングする"
-        },
-        "type": {
-          "title": "種類の変更",
-          "description": "データベース変更タイプによる検索"
-        },
         "creator": {
           "title": "作成者",
           "description": "作成者で検索"
         },
-        "subscriber": {},
-        "approver": {
-          "title": "承認者",
-          "description": "イシューの承認者で検索"
+        "current-approver": {
+          "title": "現在の承認者",
+          "description": "問題の現在の承認者による検索"
         },
         "approval": {
           "value": {
@@ -935,8 +1017,7 @@
           "title": "エンジン",
           "description": "エンジンでフィルタリング"
         }
-      },
-      "hide": "詳細検索を非表示にする"
+      }
     },
     "table": {
       "open": "オープン",
@@ -998,6 +1079,7 @@
       "all-databases": "すべてのデータベース",
       "all-databases-tip": "このプロジェクトに属する現在および将来のすべてのデータベース。",
       "manually-select": "手動選択",
+      "use-cel": "CEL式を使用",
       "custom-date": "カスタム日付",
       "custom-date-placeholder": "有効期限と時刻を選択します"
     },
@@ -1020,9 +1102,9 @@
     "unfinished-resolved-issue-tips": "イシューは「完了」とマークされましたが、一部のタスクは正常に実行されませんでした。",
     "some-tasks-are-not-executed-successfully": "(一部のタスクは正常に実行されませんでした)",
     "missing-sql-statement": "SQL ステートメントが欠落しています。",
-    "task-summary-tooltip": "{failed} 個のタスクが失敗しました",
     "data-export": {
       "options": "設定項目",
+      "limits": "制限",
       "format": "エクスポート形式",
       "download-tooltip": "24 時間利用可能",
       "file-expired": "ファイルの有効期限が切れました"
@@ -1034,20 +1116,12 @@
         "entry-type": {
           "command-execute": "コマンド実行",
           "schema-dump": "スキーマダンプ",
-          "task-run-status-update": "ステータスアップデート",
           "transaction-control": "トランザクション制御",
           "database-sync": "データベースの同期",
           "prior-backup": "事前のバックアップ",
           "retry-info": "情報を再試行します",
           "compute-diff": "Diffを計算します"
-        },
-        "affected-rows-n": "影響行数: {n}",
-        "prior-backup-tables": "以前のバックアップテーブル",
-        "status-update": {
-          "waiting": "実行の準備完了",
-          "running": "処刑される"
-        },
-        "retry-info": "ロックタイムアウトのためにretrying（{n}/{m}を試行）。"
+        }
       },
       "task-run-session": {
         "blocking-sessions": {
@@ -1062,8 +1136,7 @@
       }
     },
     "title": {
-      "edit-schema": "スキーマを編集",
-      "change-data": "データの変更",
+      "change-database": "データベースの変更",
       "export-data": "データをエクスポート",
       "create-database": "データベースを作成する",
       "request-role": "役割をリクエストする",
@@ -1074,15 +1147,18 @@
       "description": "選択したデータベースにはスキーマドリフトがあります。ドリフトが想定どおりであり、適用しても安全であることを確認してください。"
     },
     "review": {
+      "self": "レビュー",
       "approved": "承認された",
       "rejected": "拒否",
-      "under-review": "審査中"
+      "under-review": "審査中",
+      "comment-description": "承認なしで一般的なフィードバックを送信する",
+      "approve-description": "フィードバックを送信してこの問題を承認する",
+      "reject-description": "フィードバックを送信して変更をリクエストする"
     },
     "approval": {
       "rejected-error": "問題の承認が拒否されました。",
       "pending-error": "問題の承認が保留中です。",
-      "approved-and-waiting-for-rollout": "この問題は承認されており、展開する準備ができています。",
-      "ready-for-rollout": "展開可能"
+      "approved-and-waiting-for-rollout": "この問題は承認されており、展開する準備ができています。"
     },
     "new-layout": "新しいCI/CDレイアウト"
   },
@@ -1090,29 +1166,26 @@
     "plans": "予定",
     "new-plan": "新しい計画",
     "add-spec": "仕様を追加",
-    "change-type": "変更タイプ",
-    "schema-migration": "スキーマの移行",
-    "schema-migration-description": "テーブル、列、インデックス、制約、スキーマの変更を含むデータベース構造の変更 (DDL)",
-    "data-change": "データの変更",
-    "data-change-description": "挿入、更新、削除、データ変換を含むデータベースコンテンツの変更（DML）",
     "select-targets": "ターゲットを選択",
     "ready-for-review": "レビュー準備完了",
+    "labels-required-for-review": "レビューをリクエストする前にラベルが必要です",
     "overview": {
       "no-checks": "チェックなし"
     },
     "navigator": {
       "changes": "変更点",
       "checks": "小切手",
-      "rollout": "ロールアウトする",
       "statement-empty": "ステートメントが空です"
+    },
+    "checks": {
+      "self": "小切手",
+      "no-results-match-filters": "フィルターに一致する結果がありません",
+      "no-check-results": "チェック結果がありません"
     },
     "spec": {
       "change": "変化",
       "type": {
         "create-database": "データベースの作成",
-        "schema-change": "スキーマの変更",
-        "data-change": "データの変更",
-        "ghost-migration": "ゴーストマイグレーション",
         "database-change": "データベースの変更",
         "export-data": "データのエクスポート",
         "unknown": "未知"
@@ -1130,20 +1203,19 @@
     "targets": {
       "title": "ターゲット",
       "no-targets-found": "ターゲットが見つかりません",
-      "type": {
-        "database-group": "データベースグループ"
-      },
       "view-all": "すべて表示 ({count})"
     },
     "select-isolation-level": "分離レベルを選択",
     "isolation-level": {
-      "self": "分離レベル"
+      "self": "分離レベル",
+      "description": "トランザクションが並行変更とどのように相互作用するかを制御します。トランザクションモードがオンの場合のみ適用されます。"
     },
     "options": {
       "self": "オプション",
       "applies-to-all-tasks": "すべてのタスクに適用",
       "applies-to-some-tasks": "一部のタスクに適用されます {count}/{total}",
-      "split-into-multiple-issues-tip": "タスクごとに異なるオプションを設定する場合は、複数の問題に分割してください。"
+      "split-into-multiple-issues-tip": "タスクごとに異なるオプションを設定する場合は、複数の問題に分割してください。",
+      "no-options-available": "利用可能なオプションはありません"
     },
     "editor": {
       "save-changes-before-continuing": "続行する前に変更を保存またはキャンセルしてください",
@@ -1161,9 +1233,6 @@
       "some-databases-not-meeting-requirements": "一部のデータベース ({databases}) は要件を満たしていません",
       "some-databases-have-issues": "{count} データベースに問題があります | {count} データベースに問題があります",
       "configuration-has-issues": "構成に {count} 個の問題があります | 構成に {count} 個の問題があります"
-    },
-    "checks": {
-      "self": "小切手"
     },
     "refresh-indicator": {
       "last-refresh": "最終更新: {time}"
@@ -1183,20 +1252,23 @@
     "task-execution-notices": "タスク実行通知",
     "task-execution-errors": "タスク実行エラー",
     "no-active-task-to-cancel": "キャンセルするアクティブなタスクはありません。",
+    "no-runnable-task": "実行可能なタスクがありません。",
     "automatic-rollout": {
       "description": "この環境では自動ロールアウトが有効になっています。"
     },
     "stage": {
       "self": "ステージ | ステージ",
-      "start-stage": "スタートステージ",
-      "no-stages": {
-        "self": "ステージなし",
-        "description": "このロールアウトにはステージが定義されていません。"
-      }
+      "run-stage": "タスクを実行",
+      "confirm-create": "このステージのタスクを作成してもよろしいですか？"
     },
-    "message": {
-      "pervious-stages-incomplete": {}
-    }
+    "task": {
+      "selected-count": "{count} 個のタスクが選択されました | {count} 個のタスクが選択されました",
+      "no-tasks": "このステージにはタスクはありません",
+      "no-statement": "SQL文なし",
+      "view-full-details": "詳細を表示",
+      "statement-truncated-hint": "サイズが大きいため、ステートメントは切り捨てられました。"
+    },
+    "no-stages": "利用可能なステージはありません"
   },
   "quick-action": {
     "create-db": "データベースの作成",
@@ -1204,7 +1276,7 @@
     "add-instance": "@:common.instance@:common.add",
     "new-project": "@:common.new@:common.project",
     "create-project": "@:common.create@:common.project",
-    "transfer-in-db": "データベースへの転送",
+    "transfer-in-db": "転入",
     "from-unassigned-databases": "割り当てられていないデータベース",
     "from-projects": "他のプロジェクトから",
     "transfer-in-db-title": "データベースへの転送",
@@ -1236,7 +1308,6 @@
     "start-to-sync-schema": "スキーマの同期を開始します",
     "failed-to-sync-schema": "スキーマの同期に失敗しました",
     "successfully-synced-schema": "スキーマの同期が完了しました",
-    "create": "データベースの作成",
     "procedures": "ストアドプロシージャ",
     "partitions": "パーティション",
     "packages": "パッケージ",
@@ -1265,7 +1336,6 @@
     }
   },
   "instance": {
-    "select": "インスタンスの選択",
     "select-database-user": "データベースユーザーの選択",
     "new-database": "@:common.new@:common.database",
     "syncing": "同期中 ...",
@@ -1371,19 +1441,27 @@
       "azure-iam": "Azure IAM",
       "external-secret-vault": "ボールト (KV v2)",
       "external-secret-aws": "AWS シークレットマネージャー",
-      "external-secret-gcp": "GCP シークレット マネージャー"
+      "external-secret-gcp": "GCP シークレット マネージャー",
+      "external-secret-azure": "Azure Key Vault"
     },
     "iam-extension": {
       "credential-source": "Credential Source",
       "tenant-id": "Tenant ID",
       "client-id": "Client ID",
       "client-secret": "Client Secret",
-      "specific-credential": "特定の資格情報"
+      "specific-credential": "特定の資格情報",
+      "saas-default-credential-restriction": "セキュリティ上の理由により、Bytebase Cloud ではデフォルトの認証情報は使用できません。具体的な認証情報を入力してください。"
     },
     "database-region": "データベース領域",
     "external-secret-gcp": {
       "secret-name": "キーのフルパス",
       "secret-name-tips": "キーへのフルパスは、「projects/project-id/secrets/secret-id」のようなものである必要があります。"
+    },
+    "external-secret-azure": {
+      "vault-url": "Key Vault URL",
+      "vault-url-tips": "Key Vault URL は「https://myvault.vault.azure.net/」のような形式である必要があります。",
+      "secret-name": "シークレット名",
+      "secret-name-tips": "Azure Key Vault に保存されているシークレットの名前。"
     },
     "external-secret-vault": {
       "vault-url": "ボールトの URL",
@@ -1407,7 +1485,12 @@
       "vault-secret-engine-name": "シークレットエンジン名",
       "vault-secret-path": "秘密の道",
       "vault-secret-key": "秘密鍵",
-      "vault-secret-engine-tips": "KV v2 ストレージのみをサポートします"
+      "vault-secret-engine-tips": "KV v2 ストレージのみをサポートします",
+      "vault-tls-config": "Vault TLS 構成 (オプション)",
+      "verify-vault-certificate": "Vault TLS証明書を確認する",
+      "vault-ca-cert": "Vault CA 証明書",
+      "vault-client-cert": "Vaultクライアント証明書",
+      "vault-client-key": "Vaultクライアントキー"
     },
     "external-secret": {
       "secret-name": "秘密の名前",
@@ -1433,12 +1516,6 @@
       "default-never": "デフォルト (なし)",
       "description": "Bytebase は定期的にインスタンスのスキーマを同期し、異常検出を実行します。",
       "min-value": "最短 {value} 分"
-    },
-    "maximum-connections": {
-      "self": "最大接続数",
-      "default-value": "デフォルト (10 接続)",
-      "description": "インスタンスの最大接続数を設定して、接続とリソースの使用を制限します。",
-      "max-value": "最大接続数 {value}"
     },
     "sync-databases": {
       "self": "データベースを同期する",
@@ -1474,7 +1551,7 @@
     "production-environment": "本番環境",
     "access-control": {
       "title": "アクセス制御",
-      "disable-copy-data-from-sql-editor": "SQL エディタにおけるデータコピーの制限 (管理者/DBA はコピー可能)",
+      "disable-copy-data-from-sql-editor": "SQL エディタにおけるデータコピーの制限",
       "restrict-admin-connection": {
         "self": "管理データソースのクエリを制限する",
         "disallow": "管理データソースからのデータのクエリを禁止する",
@@ -1540,7 +1617,9 @@
       "title": "セッションの有効期限が近づいています",
       "description": "しばらく操作がありませんでした。セキュリティのため、{minutes}分後に自動的にログアウトします。",
       "stay-signed-in": "ログインしたままにする"
-    }
+    },
+    "back-to-signin": "サインインに戻る",
+    "close-window": "このウィンドウを閉じる"
   },
   "policy": {
     "rollout": {
@@ -1548,26 +1627,7 @@
       "tip": "新しいポリシーは古いイシューにも適用されます",
       "info": "タスクは、「{permission}」許可または次の役割でユーザーが実行できます。",
       "auto": "自動",
-      "auto-info": "すべての事前チェックに合格すると、自動的にリリースされ、変更が反映されます。",
-      "checkers": {
-        "self": "要件",
-        "required-issue-approval": {
-          "self": "問題の承認が必要",
-          "description": "ロールアウトを続行する前に、問題を承認する必要があります。"
-        },
-        "plan-check-enforcement": {
-          "self": "計画チェックの実施",
-          "description": "計画チェック結果に基づいてブロックのロールアウトを行います。",
-          "error-only": {
-            "self": "エラーのみブロック",
-            "description": "計画チェックでエラーが見つかった場合のみロールアウトをブロックします。"
-          },
-          "strict": {
-            "self": "厳格な施行",
-            "description": "計画チェックでエラーまたは警告が見つかった場合は、ロールアウトをブロックします。"
-          }
-        }
-      }
+      "auto-info": "すべての事前チェックに合格すると、自動的にリリースされ、変更が反映されます。"
     },
     "environment-tier": {
       "name": "環境レベル",
@@ -1579,6 +1639,9 @@
     "self": "変更履歴",
     "select": "スキーマのバージョンは、Bytebase を通じてスキーマの変更が実行されるたびに記録されます。",
     "change-type": "タイプ",
+    "type": {
+      "migrate": "マイグレート"
+    },
     "no-schema-change": "この変更ではスキーマの変更はありません",
     "show-diff": "違いを表示",
     "schema-snapshot-after-change": "この変更を完了した後のスキーマのスナップショット",
@@ -1586,19 +1649,14 @@
     "establish-baseline": "新しいベースラインを確立する",
     "refreshing": "履歴を更新中...",
     "establish-baseline-description": "Bytebase は、現在のスキーマを新しいベースラインとして使用します。これにより、データベースの現在のスキーマ状態が Bytebase によって記録されたスキーマ状態と同期され、スキーマの逸脱の問題が解決されます。これを行う前に、現在のベースラインが実際に望ましい状態を反映していることを確認する必要があります。",
-    "establish-database-baseline": "ベースライン「{name}」を作成します",
-    "export": "変更履歴のエクスポート",
-    "need-to-select-first": "最初に変更履歴を選択する必要があります",
-    "all-tables": "すべてのテーブル",
-    "affected-tables": "影響を受けるテーブル",
-    "select-affection-tables": "影響を受けるテーブルを選択",
-    "rollback-tip": "ロールバックする特定の DDL 履歴を選択します。"
+    "establish-database-baseline": "ベースライン「{name}」を作成します"
   },
   "database": {
     "labels": "データベースラベル",
     "no-environment": "このデータベースは環境にバインドされていません",
     "set-environment": "環境を設定する",
     "sync-database": "データベースを同期",
+    "sync-schema-button": "スキーマを同期",
     "export-schema": "スキーマをエクスポート",
     "export-schema-single-file": "単一ファイル",
     "export-schema-multi-file": "複数ファイル (ZIP)",
@@ -1612,15 +1670,13 @@
     "unassign": "割り当てを解除する",
     "unassign-alert-title": "データベースの割り当てを解除する",
     "unassign-alert-description": "選択したデータベースがプロジェクトから削除されます",
+    "change-database": "データベースの変更",
     "edit-schema": "スキーマの変更",
     "edit-labels": "タグを編集する",
     "edit-environment": "環境の編集",
     "mixed-values-for-label": "タグの値が異なります",
-    "mixed-label-values-warning": "一部のタグには異なる値があり、タグの編集はバッチで適用されます",
-    "change-data": "データ変更",
+    "mixed-label-values-warning": "選択されたリソースの一部は、同じキーに対して異なる値を持っています。これらのキーと値のペアを変更する場合にのみ編集してください。",
     "table-detail": "テーブルの詳細",
-    "batch-action-not-support-alter-schema": "一部のデータベースはテーブル構造の変更をサポートしていません",
-    "batch-action-permission-denied": "データベース {action} に対する権限がありません",
     "batch-action-disabled": "異なるプロジェクトのデータベース {action} を比較できません",
     "batch-action-disabled-for-unassigned": "未割り当てのデータベース {action} にアクセスできません",
     "successfully-transferred-databases": "データベースの移行が完了しました",
@@ -1678,7 +1734,6 @@
       "select-tip": "開始するにはテーブルを選択してください。"
     },
     "all": "すべてのデータベース",
-    "show-schemaless-databases": "スキーマレス データベースを示します。 (スキーマの変更は、スキーマのないデータベースでは機能しません。)",
     "transfer": {
       "errors": {
         "select-target-project": "対象プロジェクトを選択",
@@ -1690,11 +1745,7 @@
     "transfer-database-to": "データベースをターゲットプロジェクトに転送します",
     "classification": {
       "self": "分類",
-      "description": "データ分類を使用して、少数の分類のみを制御することで、多数の列のマスキング ポリシーを管理します。",
-      "sync-from-comment": "コメントからカテゴリと評価を同期する",
-      "sync-from-comment-tip": "有効にすると、分類評価がテーブルまたは列のコメントから同期されます。コメントは「{format}」形式に従う必要があります。",
-      "sync-from-comment-enable-warning": "分類評価は DDL とともに変更され、元の注釈と同期されます。",
-      "sync-from-comment-disable-warning": "分類評価は DDL によって変更されません。データベースの詳細ページでいつでも変更できます。"
+      "description": "データ分類を使用して、少数の分類のみを制御することで、多数の列のマスキング ポリシーを管理します。"
     },
     "partitioned": "パーティション",
     "partition-tables": "パーティションテーブル",
@@ -1740,10 +1791,7 @@
       "type-declarative": "宣言的",
       "invalid-version-format": "バージョンはドットで区切られた数字部分でなければなりません（例：1.0.0）",
       "version-already-exists": "このバージョンは既にデータベースに存在します",
-      "delete-confirm-dialog": {
-        "title": "本当に削除しますか?",
-        "content": "これにより、適用されたリビジョンが削除され、データベース スキーマは変更されません。このアクションは元に戻せません。"
-      }
+      "delete-confirm-dialog": "これにより、適用されたリビジョンが削除され、データベース スキーマは変更されません。このアクションは元に戻せません。"
     },
     "not-found": "データベースが見つかりません",
     "drifted": {
@@ -1803,37 +1851,21 @@
           "title": "@:common.issue を作成する",
           "label": "新しいイシューが作成されたとき"
         },
-        "issue-status-change": {
-          "title": "イシューのステータスの変更",
-          "label": "イシューのステータスが変更されたとき"
-        },
-        "issue-stage-status-change": {
-          "title": "イシューのステージのステータスの変更",
-          "label": "イシューに含まれるステージステータスが変更されたとき"
-        },
-        "issue-task-status-change": {
-          "title": "イシューのタスクのステータスの変更",
-          "label": "イシューに含まれるタスクのステータスが変更されたとき"
-        },
-        "issue-info-change": {
-          "title": "イシューの情報の変更",
-          "label": "イシューの情報 (例: タイトル、説明) が変更されたとき"
-        },
-        "issue-comment-creation": {
-          "title": "イシューへのコメント",
-          "label": "新しいイシューコメントが作成されたとき"
-        },
         "issue-approval-notify": {
           "title": "イシューは承認待ちです",
           "label": "イシューに承認が必要な場合"
         },
-        "notify-issue-approved": {
-          "title": "イシューが承認されました",
-          "label": "イシューが承認されたとき"
+        "issue-sent-back": {
+          "title": "イシューが差し戻されました",
+          "label": "承認者がイシューを差し戻したとき"
         },
-        "notify-pipeline-rollout": {
-          "title": "リリースされる作業命令",
-          "label": "イシューがリリース保留中の場合"
+        "pipeline-failed": {
+          "title": "パイプラインが失敗しました",
+          "label": "パイプラインタスクが失敗したとき"
+        },
+        "pipeline-completed": {
+          "title": "パイプラインが完了しました",
+          "label": "パイプラインが正常に完了したとき"
         }
       }
     },
@@ -1863,17 +1895,9 @@
             "warning": "少なくとも 1 つのラベルを設定する必要があります"
           }
         },
-        "allow-modify-statement": {
-          "self": "ステートメントの変更を許可する",
-          "description": "ユーザーが作成後に問題の説明を変更できるようにします。"
-        },
-        "auto-resolve-issue": {
-          "self": "自動解決の問題",
-          "description": "すべてのタスクが完了すると、問題が自動的に解決されます。"
-        },
         "enforce-issue-title": {
-          "self": "問題のタイトルを強制する",
-          "description": "問題のタイトルが空でないこと、および自動生成ではなくユーザーが作成することを強制します。"
+          "self": "手動タイトルを要求する",
+          "description": "イシューとプランのタイトルを自動生成ではなくユーザーが作成することを要求します。"
         },
         "enforce-sql-review": {
           "self": "SQL レビューを強制",
@@ -1906,6 +1930,14 @@
         "parallel_tasks_per_rollout": {
           "self": "ロールアウトごとの並列タスク",
           "description": "ロールアウトあたりの並列タスクの数を制御します。\nこれをゼロに設定すると、スロットリングが無効になります。"
+        },
+        "require-issue-approval": {
+          "self": "ロールアウト前にイシュー承認が必要",
+          "description": "ロールアウトを作成する前にイシューの承認が必要です。"
+        },
+        "require-plan-check-no-error": {
+          "self": "ロールアウト前にプランチェック合格が必要",
+          "description": "ロールアウトを作成する前にすべてのプランチェックがエラーなしで合格する必要があります。"
         }
       },
       "project-labels": {
@@ -1953,6 +1985,9 @@
   },
   "data-source": {
     "snowflake-keypair-tip": "キーペア認証",
+    "private-key-passphrase": "秘密鍵のパスフレーズ",
+    "private-key-passphrase-tip": "暗号化された秘密鍵のオプションパスフレーズ",
+    "private-key-passphrase-placeholder": "秘密鍵が暗号化されていない場合は空のままにしてください",
     "extra-params": {
       "self": "追加のパラメーター",
       "description": "データベース接続文字列の追加パラメーター"
@@ -2000,14 +2035,13 @@
   "sql-editor": {
     "self": "SQLエディタ",
     "select-connection": "データ接続を選択してください",
-    "search-results": "の検索結果",
     "loading-databases": "データベース情報をロードしています...",
     "show-databases-without-query-permission": "クエリ権限のないデータベースを表示します",
     "loading-data": "データのロード...",
     "table-empty-placeholder": "「実行」をクリックしてクエリを実行します。",
     "no-data-available": "データなし",
     "download-as-file": "{file} 形式でダウンロード",
-    "only-select-allowed": "{select} ステートメントのみが実行を許可されます",
+    "only-select-allowed": "読み取り専用ステートメントのみが実行を許可されます",
     "enable-ddl-for-environment": "環境 {environment} に対して DDL/DML ステートメントを有効にすることができます。",
     "and-submit-an-issue": "そしてイシューを提出してください",
     "to-enable-admin-mode": "管理者モードを有効にするには",
@@ -2024,6 +2058,7 @@
     "hex-format": "16進形式",
     "boolean-format": "ブール形式",
     "text-format": "テキスト形式",
+    "show-in-editor": "エディタで表示",
     "hint-tips": {
       "confirm-to-close-unsaved-sheet": {
         "title": "未保存のワークシートを閉じてもよろしいですか?",
@@ -2031,7 +2066,8 @@
       }
     },
     "copy-url": "URLをコピー",
-    "connect-to-a-database": "データベースに接続する",
+    "url-copied-to-clipboard": "URLがクリップボードにコピーされました",
+    "connect-to-a-database": "データベースに接続",
     "link-access": "リンクアクセス",
     "private": "プライベート",
     "private-desc": "このシートにアクセスできるのはあなただけです",
@@ -2041,6 +2077,8 @@
     "project-write-desc": "シート所有者と「bb.worksheets.get」権限を持つプロジェクトユーザーの両方が読み取り/書き込みできます。",
     "create-read-only-data-source": "作成に行く",
     "save-sheet": "ワークシートの保存",
+    "choose-folder": "フォルダを選択または作成",
+    "choose-folder-tips": "存在しないパスを入力することで新しいフォルダを作成できます。フォルダは「/」で結合する必要があります。",
     "save-sheet-input-placeholder": "ワークシート名を入力してください",
     "format": "フォーマット",
     "visualize-explain": "視覚化の説明",
@@ -2056,12 +2094,7 @@
     "allow-admin-mode-only": "インスタンス {instance} には管理者モードでのみアクセスできます。",
     "query-time": "クエリ時間",
     "connection-lost": "接続切断。次回クエリが実行されるときに再接続が試行されます。",
-    "sheet": {
-      "self": "ワークシート",
-      "connection": "接続する"
-    },
     "tab": {
-      "unsaved": "保存されていません",
       "context-menu": {
         "actions": {
           "close": "閉じる",
@@ -2069,13 +2102,16 @@
           "close-to-the-right": "右側をすべて閉じます",
           "close-saved": "保存済みを閉じる",
           "close-all": "すべて閉じる",
-          "rename": "名前の変更"
+          "rename": "名前の変更",
+          "add-folder": "フォルダを追加",
+          "add-worksheet": "ワークシートを追加",
+          "multi-select": "複数選択"
         }
-      }
+      },
+      "unsaved-worksheet": "保存されていないワークシートがあります。"
     },
     "batch-query": {
       "batch": "バッチ",
-      "select-database-group": "バッチクエリを実行するには{select-database-group}を使用します",
       "description": "{project} の下の {database} 個の追加データベースと {group} 個のデータベース グループに対してバッチ クエリを実行します。",
       "show-or-hide-empty-query-results": "空のクエリ結果の表示/非表示",
       "select-data-source": {
@@ -2104,7 +2140,6 @@
     "last-synced": "最終同期時間: {time}",
     "click-to-sync-now": "クリックして今すぐ同期します",
     "sync-in-progress": "同期中",
-    "create-a-worksheet": "新しいワークシートを作成する",
     "select-a-database-to-start": "開始するにはデータベースを選択してください",
     "show-empty-environments": "空の環境を表示",
     "select-encoding": "エンコーディングの選択",
@@ -2117,12 +2152,9 @@
       "only-for-cluster": "クラスタ接続のみ使用可能"
     },
     "result-limit": {
-      "self": "結果の制限",
-      "n-rows": "{n} 行",
-      "rows": "行"
+      "self": "結果の制限"
     },
-    "n-per-page": "{n} / ページ",
-    "add-a-new-instance": "新しいインスタンスを追加する",
+    "add-a-new-instance": "新しいインスタンスを追加",
     "web-socket": {
       "errors": {
         "title": "WebSocket接続に失敗しました",
@@ -2148,16 +2180,19 @@
     "format-default": "デフォルト",
     "column-display-format": "列表示形式",
     "next-row": "次の行",
-    "previous-row": "前の行"
+    "previous-row": "前の行",
+    "search-scope-column-description": "{type}型の列。値を入力してEnterを押すと一致する行にジャンプします。",
+    "search-scope-row-number-title": "行番号",
+    "search-scope-row-number-description": "行番号を入力してその行にジャンプします。",
+    "scroll-to-top": "先頭へスクロール",
+    "scroll-to-bottom": "末尾へスクロール"
   },
   "schema-editor": {
     "self": "スキーマエディタ",
-    "preview-issue": "イシューのプレビュー",
-    "sync-sql-from-schema-editor": "スキーマエディタからSQLを同期する",
     "raw-sql": "SQL文",
     "search-database-and-table": "データベースとテーブルを検索する",
-    "failed-to-generate-ddl-for-database": "データベース {database} の DDL 生成に失敗しました",
-    "continue-with-empty-sql": "空のSQLで続行",
+    "insert-sql": "Insert SQL",
+    "template-database": "Template database",
     "actions": {
       "create-schema": "新しいスキーマ",
       "drop-schema": "スキーマの削除",
@@ -2166,7 +2201,6 @@
       "drop-table": "テーブルの削除",
       "restore": "復元する",
       "add-column": "列の追加",
-      "add-from-template": "テンプレートから追加",
       "drop-column": "列の削除",
       "create-procedure": "プロシージャの作成",
       "create-function": "関数の作成",
@@ -2198,7 +2232,6 @@
       "not-null": "空にすることはできません",
       "primary": "主キー",
       "foreign-key": "外部キー",
-      "classification": "分類と格付け",
       "on-update": "アップデート時"
     },
     "default": {
@@ -2210,17 +2243,12 @@
       "duplicated-table-name": "テーブル名が重複しています",
       "invalid-schema": "無効なスキーマ",
       "cannot-drop-the-last-column": "最後の列は削除できません",
-      "cannot-change-config": "データベースの設定はスキーマとともに変更する必要があります",
       "duplicated-procedure-name": "重複したプロシージャ名",
       "invalid-procedure-name": "無効なプロシージャ名です",
       "duplicated-function-name": "関数名が重複しています",
       "invalid-function-name": "無効な関数名です",
       "invalid-view-name": "無効なビュー名です",
       "duplicated-view-name": "重複したビュー名"
-    },
-    "confirm-to-close": {
-      "title": "閉じることを確認しますか？",
-      "description": "変更は閉じると失われます。"
     },
     "foreign-key": {
       "edit": "外部キーを編集",
@@ -2323,7 +2351,6 @@
     "expires-at": "有効期限",
     "plan-compare": "プランを比較する",
     "trialing": "トライアル中",
-    "unlimited": "無制限",
     "max-instance-count": "最大インスタンス数",
     "plan": {
       "free": {
@@ -2340,19 +2367,28 @@
   },
   "sheet": {
     "mine": "マイワークシート",
-    "star": "お気に入りに追加",
-    "unstar": "お気に入りをキャンセルする",
-    "starred": "お気に入り",
     "shared": "共有",
     "notifications": {
       "duplicate-success": "「マイワークシート」にコピーされました"
     },
+    "filter": {
+      "show-mine": "私のものを表示",
+      "show-shared": "共有を表示",
+      "show-draft": "下書きを表示",
+      "only-show-starred": "スター付きのみ表示"
+    },
     "hint-tips": {
-      "confirm-to-delete-this-sheet": "このワークシートを削除してもよろしいですか?",
+      "non-empty-folder-title": "空でないフォルダ",
+      "non-empty-folder-content": "すべてのワークシートをルート フォルダーに移動しますか、それとも削除するだけですか?",
+      "move-to-root-folder": "ルートフォルダに移動する",
+      "delete-all-sheets": "すべてのファイルを削除する",
+      "duplicate-folder-name-title": "重複したフォルダ名",
+      "duplicate-folder-name-content": "すべてのサブフォルダーとファイルを既存のフォルダー \"{folder}\" にマージしますか?",
+      "confirm-to-delete-sheet-title": "このワークシートを削除しますか?",
       "confirm-to-duplicate-sheet": "このワークシートをコピーしてもよろしいですか?"
     },
     "search-sheets": "ワークシートの検索",
-    "draft": "下書き"
+    "move-worksheets": "ワークシートを移動する"
   },
   "sql-review": {
     "title": "SQL監査ポリシー",
@@ -2401,7 +2437,6 @@
         "confirm-override-description": "以前のルールは上書きされます"
       }
     },
-    "rule": {},
     "enabled-rules": "開かれたルールの数",
     "rule-detail": "ルールの詳細",
     "view-definition": "ビューの定義",
@@ -2413,7 +2448,8 @@
       "name": "レベル",
       "error": "エラー",
       "warning": "警告"
-    }
+    },
+    "tooltip-for-resource": "{scope} レベルでも設定可能です。Bytebase は環境レベルの設定を優先します。"
   },
   "audit-log": {
     "export-finished": "エクスポートが完了しました",
@@ -2513,7 +2549,10 @@
           "description": "携帯電話の認証アプリを使用してスキャンします。スキャンできない場合は、{action} を実行できます。",
           "enter-the-text": "テキストを入力してください"
         },
-        "verify-code": "アプリケーションのコードを検証する"
+        "verify-code": "アプリケーションのコードを検証する",
+        "time-remaining": "残り時間: {time}",
+        "expired-notice": "このセットアップセッションは期限切れになりました。続行するには再生成してください。",
+        "regenerate": "再生成"
       },
       "download-recovery-codes": {
         "self": "リカバリーコードをダウンロード",
@@ -2582,12 +2621,7 @@
   "custom-approval": {
     "self": "カスタム承認",
     "risk-rule": {
-      "active": "オンにする",
-      "edit-rule": "ルールの編集",
-      "delete": "セキュリティルールを削除する",
       "risk": {
-        "self": "リスク",
-        "select": "リスクを選択する",
         "risk-level": {
           "default": "デフォルト",
           "low": "低",
@@ -2595,40 +2629,16 @@
           "high": "高"
         },
         "namespace": {
-          "dml": "DML",
-          "ddl": "DDL",
+          "change_database": "データベースの変更",
           "create_database": "データベースの作成",
           "data_export": "データのエクスポート",
           "request-role": "ロールのリクエスト"
         }
-      },
-      "template": {
-        "templates": "テンプレート",
-        "load": "負荷",
-        "load-template": "テンプレートをロードする",
-        "view": "テンプレートを表示"
-      },
-      "rule-name": "ルール名",
-      "view-rule": "ルールを表示する",
-      "source": {
-        "select": "タイプを選択してください",
-        "self": "タイプ"
-      },
-      "input-rule-name": "ルール名を入力してください",
-      "search": "検索ルール"
+      }
     },
     "approval-flow": {
       "self": "承認の流れ",
-      "approval-flows": "承認の流れ",
-      "approval-nodes": "承認ノード",
-      "delete": "承認フローの削除",
-      "select": "承認フローの選択",
       "create-approval-flow": "承認フローの作成",
-      "edit-approval-flow": "承認フローの編集",
-      "built-in": "組み込み承認フロー",
-      "built-in-description": "組み込みフローは読み取り専用であり、削除できません。",
-      "custom": "カスタム承認フロー",
-      "no-custom-flows": "カスタム承認フローがまだ作成されていません。「承認フローを作成」をクリックして追加してください。",
       "node": {
         "nodes": "承認ノード",
         "description": "ノードに複数の承認者がいる場合、必要な承認は 1 つだけです。",
@@ -2637,26 +2647,46 @@
         "add": "ノードの追加",
         "delete": "承認ノードの削除"
       },
-      "view-approval-flow": "承認フローを見る",
-      "skip": "手動承認をスキップする",
-      "risk-not-configured-tips": "{link} が定義されていることを確認してください。",
-      "the-related-risk-rules": "関連するリスクルール",
+      "skip": "承認不要",
       "issue-review": {
         "sent-back": "戻ってきた",
         "review-sent-back-by": "{user} から承認が返されました"
+      },
+      "add-rule": "ルールを追加",
+      "edit-rule": "ルールを編集",
+      "fallback-rules": "フォールバックルール",
+      "fallback-rules-hint": "フォールバックルールは、他のルールが一致しない場合にのみ評価されます。",
+      "template": {
+        "presets-title": "プリセット",
+        "presets": {
+          "drop-or-truncate": "テーブル削除/切り捨て",
+          "high-affected-rows": "高影響行数",
+          "fallback": "フォールバックルール"
+        },
+        "preset-descriptions": {
+          "drop-or-truncate": "DROP TABLEまたはTRUNCATEステートメントには承認が必要です。",
+          "high-affected-rows": "影響行数が100を超える場合は承認が必要です。",
+          "fallback": "すべてのリクエストに一致するキャッチオールルール。ルールリストの最後に配置してください。"
+        }
       }
     },
     "risk": {
-      "self": "リスク",
-      "risks": "リスク",
-      "description": "リスク センターは、さまざまな条件下でのさまざまなデータベース操作のリスク レベルを定義します。リスク レベルによって、イシューのカスタム承認プロセスが決まります。"
+      "self": "リスクセンター",
+      "description": "リスク評価は、データベースの変更を自動的に評価し、実行される操作の種類に基づいてリスクレベルを割り当てます。",
+      "how-it-works": "仕組み",
+      "how-it-works-description": "データベースの変更を作成すると、Bytebaseは自動的にSQL文を分析し、事前定義されたルールに基づいてリスクレベル（低、中、高）を割り当てます。",
+      "risk-levels": "リスクレベル",
+      "risk-level-low": "低リスクの操作には、SELECTクエリや問題を引き起こす可能性が低い軽微なスキーマ変更が含まれます。",
+      "risk-level-moderate": "中リスクの操作には、カラムやインデックスの追加などの標準的なDDL変更が含まれます。",
+      "risk-level-high": "高リスクの操作には、DROP TABLE、TRUNCATE、または大規模なデータ変更などの破壊的な変更が含まれます。",
+      "integration": "承認フローとの統合",
+      "integration-description": "リスクレベルはカスタム承認システムと統合されています。変更の評価されたリスクレベルに基づいて、異なるレベルのレビューを必要とする承認フローを設定できます。"
     },
     "rule": {
-      "rules": "ルール"
+      "first-match-wins": "ルールは順番に評価されます。最初に一致するルールが適用されます。"
     },
     "issue-review": {
       "approve-issue": "イシューを承認しますか?",
-      "you": "あなた",
       "generating-approval-flow": "承認フローが生成されています",
       "approved-issue": "イシューを承認する",
       "disallow-approve-reason": {
@@ -2668,6 +2698,7 @@
       "send-back-issue": "イシューを却下しますか?",
       "re-request-review": "再度承認をリクエストする",
       "re-request-review-issue": "イシューの承認を再度リクエストしますか?",
+      "re-request-review-success": "レビューの再リクエストが完了しました",
       "sent-back-issue": "イシューを却下する",
       "re-requested-review": "イシューの承認を再度リクエストします",
       "approved-by": "承認者",
@@ -2677,43 +2708,7 @@
     }
   },
   "schema-template": {
-    "self": "スキーマテンプレート",
-    "field-template": {
-      "self": "フィールドテンプレート",
-      "description": "後でスキーマを変更または設計するときに適用できる、事前定義されたフィールド テンプレート。"
-    },
-    "column-type-restriction": {
-      "self": "列の型の制約",
-      "description": "各データベース エンジンで、許可される列の種類を制限できます。",
-      "allow-all": "すべてのタイプが許可される",
-      "allow-limited-types": "一部のタイプのみが許可されます",
-      "back-to-edit": "編集に戻る",
-      "add-and-save": "追加して保存",
-      "messages": {
-        "unable-to-update": "制限を更新できません",
-        "following-column-types-are-used": "次のタイプは引き続きフィールド テンプレートで使用されます。",
-        "one-allowed-type-per-line": "許可されるデータ型を 1 行に 1 つずつ入力します"
-      }
-    },
-    "table-template": {
-      "self": "テーブルテンプレート",
-      "description": "後でスキーマを変更または設計するときに適用できるテーブル テンプレートを事前定義します。"
-    },
-    "search-by-name-or-comment": "名前やメモで検索",
-    "form": {
-      "category": "分類",
-      "category-desc": "既存のカテゴリを選択するか、新しいカテゴリを作成します",
-      "unclassified": "未分類",
-      "column-name": "フィールド名",
-      "column-type": "フィールドタイプ",
-      "default-value": "デフォルト値",
-      "comment": "コメント",
-      "nullable": "null も可能",
-      "table-name": "テーブル名",
-      "on-update": "アップデート時"
-    },
     "classification": {
-      "self": "データの分類とグレーディング",
       "select": "カテゴリを選択してください",
       "search": "カテゴリを検索する"
     }
@@ -2769,6 +2764,10 @@
       "self": "SQLエディタのユーザー",
       "description": "指定した範囲内のデータをクエリできます。"
     },
+    "gitops-service-agent": {
+      "self": "GitOps サービスエージェント",
+      "description": "GitOps を介して自動化された CI/CD ワークフローでデータベース変更を作成および実行するための権限。"
+    },
     "project-viewer": {
       "self": "プロジェクトビューア",
       "description": "基本的なプロジェクト情報を表示し、独自にデータ クエリとデータ エクスポート リクエストを開始できます。"
@@ -2776,17 +2775,18 @@
   },
   "database-group": {
     "create": "新しいデータベースグループを作成する",
+    "deleted": "削除されたデータベースグループ",
     "matched-database": "マッチングデータベース",
     "unmatched-database": "データベースが一致しません",
     "condition": {
       "self": "状態"
     },
     "select": "データベースグループを選択",
-    "no-matched-databases": "一致するデータベースはありません"
+    "no-matched-databases": "一致するデータベースはありません",
+    "delete-group": "データベースグループを削除する"
   },
   "export-center": {
-    "self": "エクスポートセンター",
-    "permission-denied": "この操作を実行する権限がありません"
+    "self": "エクスポートセンター"
   },
   "schema-designer": {
     "use-tips": "デザインするテーブルを選択してください"
@@ -2814,44 +2814,6 @@
       "add-root-condition-placeholder": "「条件を追加」または「条件グループを追加」をクリックして条件を追加します。"
     }
   },
-  "changelist": {
-    "self": "変更リスト",
-    "changelists": "変更リスト",
-    "new": "新しい変更リスト",
-    "name": "リスト名の変更",
-    "name-placeholder": "私の変更リスト",
-    "error": {
-      "name-is-required": "変更リスト名を空にすることはできません",
-      "invalid-resource-id": "無効なリソース ID",
-      "nothing-changed": "変化なし",
-      "sql-cannot-be-empty": "SQL を空にすることはできません",
-      "select-at-least-one-change": "少なくとも 1 つの変更を選択してください",
-      "select-at-least-one-change-to-export": "エクスポートする変更を少なくとも 1 つ選択してください",
-      "add-at-least-one-change": "少なくとも 1 つの変更を追加する",
-      "you-are-not-allowed-to-perform-this-action": "このアクションを実行する権限がありません"
-    },
-    "apply-to-database": "データベースに適用する",
-    "add-change": {
-      "self": "変更を追加",
-      "changelog": {
-        "select-at-least-one-changelog-below": "以下から少なくとも 1 つのレコードを選択してください"
-      }
-    },
-    "change-source": {
-      "self": "ソースを変更する",
-      "raw-sql": "SQL文",
-      "source": "ソース"
-    },
-    "confirm-remove-change": "この変更を削除しますか?",
-    "delete-this-changelist": "この変更リストを削除します",
-    "confirm-delete-changelist": "変更リストを削除しますか?",
-    "import": {
-      "no-file-to-upload": "アップロードするファイルがありません",
-      "upload-sql-or-zip-file": ".sql または .zip ファイルをアップロードする",
-      "optional-upload-sql-or-zip-file": "(オプション) .sql または .zip ファイルをアップロードします"
-    },
-    "change-type": "タイプを変更"
-  },
   "release": {
     "title": "リリース",
     "releases": "リリース",
@@ -2865,9 +2827,7 @@
     "and-n-more-files": "および{n}個のファイル",
     "change-type": {
       "ddl": "DDL",
-      "ddl-ghost": "DDLゴースト",
-      "dml": "DML",
-      "unspecified": "未指定"
+      "ddl-ghost": "DDLゴースト"
     },
     "file-type": {
       "versioned": "バージョン",
@@ -2877,8 +2837,6 @@
     "vcs-type": {
       "unspecified": "未指定"
     },
-    "actions": {},
-    "messages": {},
     "usage-description": "リリースは、GitOpsワークフローによって環境へのデプロイがトリガーされるバージョン管理されたアプリケーションアーティファクトです。"
   },
   "export-data": {
@@ -2931,8 +2889,7 @@
       "algorithm": "マスキング方法",
       "context": "ルール",
       "classification": "分類レベル"
-    },
-    "algorithms": {}
+    }
   },
   "landing": {
     "quick-link": {
@@ -2943,5 +2900,13 @@
     },
     "last-visit": "最終訪問",
     "changelog-for-version": "{version} の変更履歴"
+  },
+  "oauth2": {
+    "consent": {
+      "title": "認証リクエスト",
+      "description": "{clientName} があなたのアカウントへのアクセスを要求しています",
+      "permissions": "このアプリケーションは以下のことができます:",
+      "permission-access": "あなたの権限で Bytebase アカウントにアクセス"
+    }
   }
 }

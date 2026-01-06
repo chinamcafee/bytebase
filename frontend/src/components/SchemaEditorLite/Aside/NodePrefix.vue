@@ -36,7 +36,7 @@
       class="w-4 h-4 inline-flex items-center justify-center"
     >
       <PrimaryKeyIcon v-if="isPrimaryKeyColumn" class="w-4 h-4" />
-      <IndexIcon v-if="isIndexColumn" class="!w-4 !h-4 text-gray-500" />
+      <IndexIcon v-if="isIndexColumn" class="w-4! h-4! text-gray-500" />
     </div>
 
     <SchemaIcon
@@ -71,8 +71,8 @@ import {
 import { InstanceV1EngineIcon } from "@/components/v2";
 import { useEnvironmentV1Store } from "@/store";
 import { useSchemaEditorContext } from "../context";
-import NodeCheckbox from "./NodeCheckbox";
 import type { TreeNode, TreeNodeForInstance } from "./common";
+import NodeCheckbox from "./NodeCheckbox";
 
 const props = defineProps<{
   node: TreeNode;

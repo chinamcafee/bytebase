@@ -11,7 +11,7 @@ import (
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common/log"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
@@ -30,6 +30,8 @@ func makeValueByTypeName(typeName string, _ *sql.ColumnType) any {
 	case "FLOAT", "DOUBLE", "FLOAT4", "FLOAT8":
 		return new(sql.NullFloat64)
 	case "BIT", "VARBIT", "BINARY", "VARBINARY":
+		return new([]byte)
+	case "GEOMETRY", "POINT", "LINESTRING", "POLYGON", "MULTIPOINT", "MULTILINESTRING", "MULTIPOLYGON", "GEOMETRYCOLLECTION":
 		return new([]byte)
 	default:
 		return new(sql.NullString)

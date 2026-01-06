@@ -10,6 +10,8 @@ import (
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -18,50 +20,52 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.BuiltinRulePriorBackupCheck, &StatementPriorBackupCheckAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_BUILTIN_PRIOR_BACKUP_CHECK, &StatementPriorBackupCheckAdvisor{})
 }
 
 type StatementPriorBackupCheckAdvisor struct {
 }
 
 func (*StatementPriorBackupCheckAdvisor) Check(ctx context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	if !checkCtx.EnablePriorBackup || checkCtx.ChangeType != storepb.PlanCheckRunConfig_DML {
+	if !checkCtx.EnablePriorBackup {
 		return nil, nil
 	}
 
 	var adviceList []*storepb.Advice
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	title := string(checkCtx.Rule.Type)
+	title := checkCtx.Rule.Type.String()
 
-	if len(checkCtx.Statements) > common.MaxSheetCheckSize {
+	if checkCtx.StatementsTotalSize > common.MaxSheetCheckSize {
 		adviceList = append(adviceList, &storepb.Advice{
 			Status:        level,
 			Title:         title,
 			Content:       fmt.Sprintf("The size of the SQL statements exceeds the maximum limit of %d bytes for backup", common.MaxSheetCheckSize),
-			Code:          advisor.BuiltinPriorBackupCheck.Int32(),
+			Code:          code.BuiltinPriorBackupCheck.Int32(),
 			StartPosition: nil,
 		})
 	}
 
-	for _, stmt := range stmtList {
+	for _, stmt := range checkCtx.ParsedStatements {
 		checker := &mysqlparser.StatementTypeChecker{}
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 
 		if checker.IsDDL {
 			adviceList = append(adviceList, &storepb.Advice{
 				Status:        level,
 				Title:         title,
 				Content:       "Prior backup cannot deal with mixed DDL and DML statements",
-				Code:          advisor.BuiltinPriorBackupCheck.Int32(),
-				StartPosition: common.ConvertANTLRLineToPosition(stmt.BaseLine),
+				Code:          code.BuiltinPriorBackupCheck.Int32(),
+				StartPosition: common.ConvertANTLRLineToPosition(stmt.BaseLine()),
 			})
 		}
 	}
@@ -72,12 +76,12 @@ func (*StatementPriorBackupCheckAdvisor) Check(ctx context.Context, checkCtx adv
 			Status:        level,
 			Title:         title,
 			Content:       fmt.Sprintf("Need database %q to do prior backup but it does not exist", databaseName),
-			Code:          advisor.DatabaseNotExists.Int32(),
+			Code:          code.DatabaseNotExists.Int32(),
 			StartPosition: nil,
 		})
 	}
 
-	tableReferences, err := prepareTransformation(checkCtx.DBSchema.Name, stmtList)
+	tableReferences, err := prepareTransformation(checkCtx.DBSchema.Name, checkCtx.ParsedStatements)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to prepare transformation")
 	}
@@ -98,7 +102,7 @@ func (*StatementPriorBackupCheckAdvisor) Check(ctx context.Context, checkCtx adv
 					Status:        level,
 					Title:         title,
 					Content:       fmt.Sprintf("Prior backup cannot handle mixed DML statements on the same table %q", key),
-					Code:          advisor.BuiltinPriorBackupCheck.Int32(),
+					Code:          code.BuiltinPriorBackupCheck.Int32(),
 					StartPosition: nil,
 				})
 				break
@@ -109,10 +113,17 @@ func (*StatementPriorBackupCheckAdvisor) Check(ctx context.Context, checkCtx adv
 	return adviceList, nil
 }
 
-func prepareTransformation(databaseName string, parseResult []*mysqlparser.ParseResult) ([]*mysqlparser.TableReference, error) {
+func prepareTransformation(databaseName string, parsedStatements []base.ParsedStatement) ([]*mysqlparser.TableReference, error) {
 	var result []*mysqlparser.TableReference
-	for i, sql := range parseResult {
-		tables, err := mysqlparser.ExtractTables(databaseName, sql, i)
+	for i, stmt := range parsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		ast, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		tables, err := mysqlparser.ExtractTables(databaseName, ast, i)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to extract tables")
 		}

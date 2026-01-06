@@ -1,11 +1,7 @@
 import { uniq } from "lodash-es";
 import { defineStore } from "pinia";
-import { shallowReactive, computed } from "vue";
-import {
-  PresetRoleType,
-  PRESET_WORKSPACE_ROLES,
-  type Permission,
-} from "@/types";
+import { computed, shallowReactive } from "vue";
+import { type Permission, PRESET_WORKSPACE_ROLES } from "@/types";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import { type User } from "@/types/proto-es/v1/user_service_pb";
 import { bindingListInIAM } from "@/utils";
@@ -27,13 +23,6 @@ export const usePermissionStore = defineStore("permission", () => {
   const currentRolesInWorkspace = computed(() => {
     return workspaceStore.getWorkspaceRolesByEmail(currentUser.value.email);
   });
-
-  const onlyWorkspaceMember = computed(
-    () =>
-      currentRolesInWorkspace.value.size === 0 ||
-      (currentRolesInWorkspace.value.size === 1 &&
-        currentRolesInWorkspace.value.has(PresetRoleType.WORKSPACE_MEMBER))
-  );
 
   const currentPermissions = computed(() => {
     return new Set(
@@ -65,7 +54,11 @@ export const usePermissionStore = defineStore("permission", () => {
       ...projectBindings.map((binding) => binding.role),
       ...workspaceLevelProjectRoles,
     ]);
-    projectRoleListCache.set(key, result);
+    if (projectBindings.length > 0) {
+      // Note: do not set cache if no project IAM policy.
+      // The project IAM policy may not initialized at this time.
+      projectRoleListCache.set(key, result);
+    }
     return result;
   };
 
@@ -82,7 +75,11 @@ export const usePermissionStore = defineStore("permission", () => {
         .map((role) => roleStore.getRoleByName(role))
         .flatMap((role) => (role ? role.permissions : []) as Permission[])
     );
-    projectPermissionsCache.set(key, permissions);
+    if (permissions.size > 0) {
+      // Note: do not set cache if no project IAM policy.
+      // The project IAM policy may not initialized at this time.
+      projectPermissionsCache.set(key, permissions);
+    }
     return permissions;
   };
 
@@ -113,7 +110,6 @@ export const usePermissionStore = defineStore("permission", () => {
   return {
     currentPermissions,
     currentRolesInWorkspace,
-    onlyWorkspaceMember,
     currentRoleListInProjectV1,
     currentPermissionsInProjectV1,
     invalidCacheByProject,

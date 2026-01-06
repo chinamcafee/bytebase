@@ -1,5 +1,5 @@
 <template>
-  <div class="w-full space-y-3">
+  <div class="w-full flex flex-col gap-y-3">
     <NSelect
       v-bind="$attrs"
       :value="state.selected"
@@ -8,7 +8,7 @@
     />
 
     <template v-if="state.selected === -1">
-      <div class="space-y-2">
+      <div class="flex flex-col gap-y-2">
         <NDatePicker
           size="medium"
           class="w-full"
@@ -48,7 +48,7 @@
 <script lang="ts" setup>
 import { useLocalStorage } from "@vueuse/core";
 import dayjs from "dayjs";
-import { NSelect, NDatePicker } from "naive-ui";
+import { NDatePicker, NSelect } from "naive-ui";
 import { computed, reactive, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useSettingV1Store } from "@/store";

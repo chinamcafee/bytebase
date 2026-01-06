@@ -1,7 +1,7 @@
 <template>
   <div id="branding" class="py-6 lg:flex">
     <div class="text-left lg:w-1/4">
-      <div class="flex items-center space-x-2">
+      <div class="flex items-center gap-x-2">
         <h1 class="text-2xl font-bold">
           {{ title }}
         </h1>
@@ -29,11 +29,12 @@
                 :style="`background-image: url(${state.logoUrl});`"
               ></div>
               <SingleFileSelector
-                class="space-y-1 text-center flex flex-col justify-center items-center absolute top-0 bottom-0 left-0 right-0"
+                class="flex flex-col gap-y-1 text-center justify-center items-center absolute top-0 bottom-0 left-0 right-0"
                 :class="[state.logoUrl ? 'opacity-0 hover:opacity-90' : '']"
                 :max-file-size-in-mi-b="maxFileSizeInMiB"
                 :support-file-extensions="supportImageExtensions"
                 :disabled="!allowEdit || !hasBrandingFeature"
+                :show-no-data-placeholder="!state.logoUrl"
                 @on-select="onLogoSelect"
               />
             </div>
@@ -65,15 +66,12 @@
 
 <script lang="ts" setup>
 import { create } from "@bufbuild/protobuf";
+import { FieldMaskSchema } from "@bufbuild/protobuf/wkt";
 import { NButton, NTooltip } from "naive-ui";
 import { computed, reactive } from "vue";
 import { featureToRef } from "@/store";
 import { useActuatorV1Store } from "@/store/modules/v1/actuator";
 import { useSettingV1Store } from "@/store/modules/v1/setting";
-import {
-  Setting_SettingName,
-  ValueSchema as SettingValueSchema,
-} from "@/types/proto-es/v1/setting_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import { FeatureBadge, FeatureModal } from "../FeatureGuard";
 import SingleFileSelector from "../SingleFileSelector.vue";
@@ -121,13 +119,12 @@ const doUpdate = async (content: string) => {
   }
   state.loading = true;
   try {
-    await settingV1Store.upsertSetting({
-      name: Setting_SettingName.BRANDING_LOGO,
-      value: create(SettingValueSchema, {
-        value: {
-          case: "stringValue",
-          value: content,
-        },
+    await settingV1Store.updateWorkspaceProfile({
+      payload: {
+        brandingLogo: content,
+      },
+      updateMask: create(FieldMaskSchema, {
+        paths: ["value.workspace_profile.branding_logo"],
       }),
     });
     useActuatorV1Store().setLogo(content);

@@ -7,7 +7,7 @@ import (
 	"github.com/antlr4-go/antlr/v4"
 	"github.com/pkg/errors"
 
-	parser "github.com/bytebase/tsql-parser"
+	parser "github.com/bytebase/parser/tsql"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
@@ -15,43 +15,100 @@ import (
 
 func init() {
 	base.RegisterParseFunc(storepb.Engine_MSSQL, parseTSQLForRegistry)
+	base.RegisterParseStatementsFunc(storepb.Engine_MSSQL, parseTSQLStatements)
+	base.RegisterGetStatementTypes(storepb.Engine_MSSQL, GetStatementTypes)
 }
 
 // parseTSQLForRegistry is the ParseFunc for T-SQL.
-// Returns antlr.Tree on success.
-func parseTSQLForRegistry(statement string) (any, error) {
-	result, err := ParseTSQL(statement)
+// Returns []base.AST with *ANTLRAST instances.
+func parseTSQLForRegistry(statement string) ([]base.AST, error) {
+	antlrASTs, err := ParseTSQL(statement)
 	if err != nil {
 		return nil, err
 	}
-	if result == nil {
-		return nil, nil
+	var asts []base.AST
+	for _, a := range antlrASTs {
+		asts = append(asts, a)
 	}
-	return result.Tree, nil
+	return asts, nil
 }
 
-type ParseResult struct {
-	Tree   antlr.Tree
-	Tokens *antlr.CommonTokenStream
+// parseTSQLStatements is the ParseStatementsFunc for T-SQL (MSSQL).
+// Returns []ParsedStatement with both text and AST populated.
+func parseTSQLStatements(statement string) ([]base.ParsedStatement, error) {
+	// First split to get Statement with text and positions
+	stmts, err := SplitSQL(statement)
+	if err != nil {
+		return nil, err
+	}
+
+	// Then parse to get ASTs
+	antlrASTs, err := ParseTSQL(statement)
+	if err != nil {
+		return nil, err
+	}
+
+	// Combine: Statement provides text/positions, ANTLRAST provides AST
+	var result []base.ParsedStatement
+	astIndex := 0
+	for _, stmt := range stmts {
+		ps := base.ParsedStatement{
+			Statement: stmt,
+		}
+		if !stmt.Empty && astIndex < len(antlrASTs) {
+			ps.AST = antlrASTs[astIndex]
+			astIndex++
+		}
+		result = append(result, ps)
+	}
+
+	return result, nil
 }
 
-// ParseTSQL parses the given SQL statement by using antlr4. Returns the AST and token stream if no error.
-func ParseTSQL(statement string) (*ParseResult, error) {
+// ParseTSQL parses the given SQL and returns a list of ANTLRAST (one per statement).
+// Use the T-SQL parser based on antlr4.
+func ParseTSQL(sql string) ([]*base.ANTLRAST, error) {
+	stmts, err := SplitSQL(sql)
+	if err != nil {
+		return nil, err
+	}
+
+	var results []*base.ANTLRAST
+	for _, stmt := range stmts {
+		if stmt.Empty {
+			continue
+		}
+
+		antlrAST, err := parseSingleTSQL(stmt.Text, stmt.BaseLine())
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, antlrAST)
+	}
+
+	return results, nil
+}
+
+// parseSingleTSQL parses a single T-SQL statement and returns the ANTLRAST.
+func parseSingleTSQL(statement string, baseLine int) (*base.ANTLRAST, error) {
 	inputStream := antlr.NewInputStream(statement)
 	lexer := parser.NewTSqlLexer(inputStream)
 	stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
 	p := parser.NewTSqlParser(stream)
 
 	// Remove default error listener and add our own error listener.
+	startPosition := &storepb.Position{Line: int32(baseLine) + 1}
 	lexer.RemoveErrorListeners()
 	lexerErrorListener := &base.ParseErrorListener{
-		Statement: statement,
+		Statement:     statement,
+		StartPosition: startPosition,
 	}
 	lexer.AddErrorListener(lexerErrorListener)
 
 	p.RemoveErrorListeners()
 	parserErrorListener := &base.ParseErrorListener{
-		Statement: statement,
+		Statement:     statement,
+		StartPosition: startPosition,
 	}
 	p.AddErrorListener(parserErrorListener)
 
@@ -67,28 +124,13 @@ func ParseTSQL(statement string) (*ParseResult, error) {
 		return nil, parserErrorListener.Err
 	}
 
-	result := &ParseResult{
-		Tree:   tree,
-		Tokens: stream,
+	result := &base.ANTLRAST{
+		StartPosition: startPosition,
+		Tree:          tree,
+		Tokens:        stream,
 	}
 
 	return result, nil
-}
-
-func normalizeSimpleNameSeparated(ctx parser.ISimple_nameContext, fallbackSchemaName string, _ bool) (string, string) {
-	schema := fallbackSchemaName
-	name := ""
-	if s := ctx.GetSchema(); s != nil {
-		if id, _ := NormalizeTSQLIdentifier(s); id != "" {
-			schema = id
-		}
-	}
-	if t := ctx.GetName(); t != nil {
-		if id, _ := NormalizeTSQLIdentifier(t); id != "" {
-			name = id
-		}
-	}
-	return schema, name
 }
 
 func normalizeTableNameSeparated(ctx parser.ITable_nameContext, fallbackDatabaseName, fallbackSchemaName string, _ bool) (string, string, string) {
@@ -127,22 +169,6 @@ func NormalizeTSQLTableName(ctx parser.ITable_nameContext, fallbackDatabaseName,
 		tableNameParts = append(tableNameParts, table)
 	}
 	return strings.Join(tableNameParts, ".")
-}
-
-func normalizeProcedureSeparated(ctx parser.IFunc_proc_name_schemaContext, fallbackSchemaName string, _ bool) (string, string) {
-	schema := fallbackSchemaName
-	name := ""
-	if s := ctx.GetSchema(); s != nil {
-		if id, _ := NormalizeTSQLIdentifier(s); id != "" {
-			schema = id
-		}
-	}
-	if t := ctx.GetProcedure(); t != nil {
-		if id, _ := NormalizeTSQLIdentifier(t); id != "" {
-			name = id
-		}
-	}
-	return schema, name
 }
 
 // NormalizeTSQLIdentifier returns the normalized identifier.

@@ -3,12 +3,12 @@ import { includes, uniq } from "lodash-es";
 import { v4 as uuidv4 } from "uuid";
 import {
   computed,
+  type InjectionKey,
   inject,
   provide,
   ref,
   watch,
   watchEffect,
-  type InjectionKey,
 } from "vue";
 import { useRoute } from "vue-router";
 import { useProgressivePoll } from "@/composables/useProgressivePoll";
@@ -17,22 +17,23 @@ import {
   PROJECT_V1_ROUTE_PLAN_DETAIL,
   PROJECT_V1_ROUTE_PLAN_DETAIL_SPEC_DETAIL,
   PROJECT_V1_ROUTE_PLAN_DETAIL_SPECS,
-  PROJECT_V1_ROUTE_ROLLOUT_DETAIL,
-  PROJECT_V1_ROUTE_ROLLOUT_DETAIL_STAGE_DETAIL,
-  PROJECT_V1_ROUTE_ROLLOUT_DETAIL_TASK_DETAIL,
+  PROJECT_V1_ROUTE_PLAN_ROLLOUT,
+  PROJECT_V1_ROUTE_PLAN_ROLLOUT_STAGE,
+  PROJECT_V1_ROUTE_PLAN_ROLLOUT_TASK,
 } from "@/router/dashboard/projectV1";
 import { useCurrentProjectV1 } from "@/store";
 import { isValidRolloutName } from "@/types";
 import { IssueSchema } from "@/types/proto-es/v1/issue_service_pb";
 import { RolloutSchema } from "@/types/proto-es/v1/rollout_service_pb";
-import { isValidIssueName, isValidPlanName } from "@/utils";
+import { getRolloutFromPlan, isValidIssueName, isValidPlanName } from "@/utils";
 import { usePlanContext } from "../context";
 import {
+  refreshIssue,
   refreshPlan,
   refreshPlanCheckRuns,
   refreshRollout,
-  refreshIssue,
   refreshTaskRuns,
+  type TaskRunScope,
 } from "./utils";
 
 type ResourceType = "plan" | "planCheckRuns" | "issue" | "rollout" | "taskRuns";
@@ -58,6 +59,14 @@ export const provideResourcePoller = () => {
   const { isCreating, plan, planCheckRuns, taskRuns, issue, rollout, events } =
     usePlanContext();
 
+  // Extract stage/task scope from route params for scoped taskRuns polling
+  const taskRunScope = computed<TaskRunScope | undefined>(() => {
+    const stageId = route.params.stageId as string | undefined;
+    const taskId = route.params.taskId as string | undefined;
+    if (!stageId) return undefined;
+    return { stageId, taskId };
+  });
+
   // Consolidated state management
   const pollerState = ref({
     isRefreshing: false,
@@ -82,7 +91,7 @@ export const provideResourcePoller = () => {
     },
     issue: {
       canRefresh: () => !!issue?.value,
-      refresh: () => refreshIssue(issue as any),
+      refresh: () => refreshIssue(issue),
       canInitialize: () =>
         !!(plan.value?.issue && isValidIssueName(plan.value.issue)),
       initialize: async () => {
@@ -92,13 +101,23 @@ export const provideResourcePoller = () => {
       },
     },
     rollout: {
-      canRefresh: () => !!plan.value?.rollout && !!rollout,
-      refresh: () => refreshRollout(plan.value.rollout, project.value, rollout),
-      canInitialize: () =>
-        !!plan.value?.rollout && isValidRolloutName(plan.value.rollout),
+      canRefresh: () =>
+        !!plan.value?.name && !!rollout && !!plan.value.hasRollout,
+      refresh: () => {
+        const rolloutName = getRolloutFromPlan(plan.value.name);
+        return refreshRollout(rolloutName, project.value, rollout);
+      },
+      canInitialize: () => {
+        if (!plan.value?.name) return false;
+        if (!plan.value.hasRollout) return false;
+        const rolloutName = getRolloutFromPlan(plan.value.name);
+        return isValidRolloutName(rolloutName);
+      },
       initialize: async () => {
-        if (!plan.value?.rollout) return;
-        rollout.value = create(RolloutSchema, { name: plan.value.rollout });
+        if (!plan.value?.name) return;
+        if (!plan.value.hasRollout) return;
+        const rolloutName = getRolloutFromPlan(plan.value.name);
+        rollout.value = create(RolloutSchema, { name: rolloutName });
         await resourceStrategies.rollout.refresh();
       },
     },
@@ -106,7 +125,12 @@ export const provideResourcePoller = () => {
       canRefresh: () => !!rollout?.value && !!taskRuns,
       refresh: () => {
         if (!rollout.value) return Promise.resolve();
-        return refreshTaskRuns(rollout.value, project.value, taskRuns);
+        return refreshTaskRuns(
+          rollout.value,
+          project.value,
+          taskRuns,
+          taskRunScope.value
+        );
       },
     },
   };
@@ -141,15 +165,15 @@ export const provideResourcePoller = () => {
       PROJECT_V1_ROUTE_PLAN_DETAIL_SPEC_DETAIL,
     ];
     const rolloutRoutes = [
-      PROJECT_V1_ROUTE_ROLLOUT_DETAIL,
-      PROJECT_V1_ROUTE_ROLLOUT_DETAIL_STAGE_DETAIL,
-      PROJECT_V1_ROUTE_ROLLOUT_DETAIL_TASK_DETAIL,
+      PROJECT_V1_ROUTE_PLAN_ROLLOUT,
+      PROJECT_V1_ROUTE_PLAN_ROLLOUT_STAGE,
+      PROJECT_V1_ROUTE_PLAN_ROLLOUT_TASK,
     ];
 
     if (includes(planRoutes, routeName)) return ["plan"];
     if (includes([PROJECT_V1_ROUTE_ISSUE_DETAIL_V1], routeName)) {
       if (planType.value === "CHANGE_DATABASE") {
-        return ["issue"];
+        return ["plan", "issue"];
       } else {
         // For CREATE_DATABASE and EXPORT_DATA plans, we use the issue page to show the rollout and task runs.
         return ["plan", "issue", "rollout", "taskRuns"];
@@ -291,24 +315,40 @@ export const provideResourcePoller = () => {
     { deep: true }
   );
 
-  // Watch for plan issue/rollout changes on plan pages
+  // Watch for taskRunScope changes (stage/task navigation) and refresh taskRuns
   watch(
-    () => ({ issue: plan.value?.issue, rollout: plan.value?.rollout }),
+    taskRunScope,
+    async (newScope, oldScope) => {
+      const scopeChanged =
+        newScope?.stageId !== oldScope?.stageId ||
+        newScope?.taskId !== oldScope?.taskId;
+
+      if (scopeChanged && resourceStrategies.taskRuns.canRefresh()) {
+        await resourceStrategies.taskRuns.refresh();
+      }
+    },
+    { deep: true }
+  );
+
+  // Watch for plan issue/rollout changes on plan and issue pages
+  watch(
+    () => ({ issue: plan.value?.issue, hasRollout: plan.value?.hasRollout }),
     async (newValues, oldValues) => {
       const routeName = route.name as string;
-      const isPlanRoute = includes(
+      const isRelevantRoute = includes(
         [
           PROJECT_V1_ROUTE_PLAN_DETAIL,
           PROJECT_V1_ROUTE_PLAN_DETAIL_SPECS,
           PROJECT_V1_ROUTE_PLAN_DETAIL_SPEC_DETAIL,
+          PROJECT_V1_ROUTE_ISSUE_DETAIL_V1,
         ],
         routeName
       );
 
-      if (!isPlanRoute) return;
+      if (!isRelevantRoute) return;
 
       const issueAdded = !oldValues?.issue && newValues.issue;
-      const rolloutAdded = !oldValues?.rollout && newValues.rollout;
+      const rolloutAdded = !oldValues?.hasRollout && newValues.hasRollout;
 
       if (issueAdded && resourceStrategies.issue.initialize) {
         await resourceStrategies.issue.initialize();

@@ -6,8 +6,8 @@ import type {
   InstanceResource,
 } from "../proto-es/v1/instance_service_pb";
 import {
-  InstanceSchema,
   InstanceResourceSchema,
+  InstanceSchema,
 } from "../proto-es/v1/instance_service_pb";
 
 export const EMPTY_INSTANCE_NAME = `instances/${EMPTY_ID}`;
@@ -34,7 +34,7 @@ export const unknownInstanceResource = (): InstanceResource => {
   });
 };
 
-export const isValidInstanceName = (name: any): name is string => {
+export const isValidInstanceName = (name: unknown): name is string => {
   return (
     typeof name === "string" &&
     name.startsWith("instances/") &&

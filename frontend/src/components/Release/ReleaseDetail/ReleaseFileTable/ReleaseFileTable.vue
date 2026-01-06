@@ -5,26 +5,25 @@
     :data="files"
     :row-props="rowProps"
     :striped="true"
-    :row-key="(file) => file.id"
+    :row-key="(file) => file.path"
     :checked-row-keys="selectedFileIds"
     @update:checked-row-keys="(val) => onRowSelected(val as string[])"
   />
 </template>
 
 <script setup lang="tsx">
-import { NDataTable, type DataTableColumn } from "naive-ui";
+import { type DataTableColumn, NDataTable } from "naive-ui";
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   type Release_File,
-  Release_File_MigrationType,
-  Release_File_Type,
+  Release_Type,
 } from "@/types/proto-es/v1/release_service_pb";
-import { bytesToString, getReleaseFileStatement } from "@/utils";
 
 const props = withDefaults(
   defineProps<{
     files: Release_File[];
+    releaseType: Release_Type;
     showSelection?: boolean;
     rowClickable?: boolean;
     selectedFiles?: Release_File[];
@@ -43,8 +42,8 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-// Track currently selected file IDs, initialize with prop values
-const selectedFileIds = ref<string[]>(props.selectedFiles.map((f) => f.id));
+// Track currently selected file paths, initialize with prop values
+const selectedFileIds = ref<string[]>(props.selectedFiles.map((f) => f.path));
 
 const columnList = computed(() => {
   const columns: (DataTableColumn<Release_File> & {
@@ -83,45 +82,22 @@ const columnList = computed(() => {
       ellipsis: true,
       render: (file) => file.path || "-",
     },
-    {
-      key: "statement-size",
-      title: t("common.statement-size"),
-      width: 128,
-      ellipsis: true,
-      render: (file) => bytesToString(Number(file.statementSize)),
-    },
-    {
-      key: "statement",
-      title: t("common.statement"),
-      ellipsis: true,
-      render: (file) => getReleaseFileStatement(file),
-    },
   ];
   return columns.filter((column) => !column.hide);
 });
 
 const getReleaseFileTypeText = (file: Release_File) => {
-  switch (file.type) {
-    case Release_File_Type.DECLARATIVE:
+  switch (props.releaseType) {
+    case Release_Type.DECLARATIVE:
       return "SDL";
-    case Release_File_Type.VERSIONED:
-      switch (file.migrationType) {
-        case Release_File_MigrationType.DDL:
-          return "DDL";
-        case Release_File_MigrationType.DDL_GHOST:
-          return "DDL (gh-ost)";
-        case Release_File_MigrationType.DML:
-          return "DML";
-        case Release_File_MigrationType.MIGRATION_TYPE_UNSPECIFIED:
-          return "";
-        default:
-          file.migrationType satisfies never;
-          return "";
-      }
-    case Release_File_Type.TYPE_UNSPECIFIED:
+    case Release_Type.VERSIONED:
+      return file.enableGhost
+        ? `${t("issue.title.change-database")} (gh-ost)`
+        : t("issue.title.change-database");
+    case Release_Type.TYPE_UNSPECIFIED:
       return "";
     default:
-      file.type satisfies never;
+      props.releaseType satisfies never;
       return "";
   }
 };
@@ -141,15 +117,15 @@ const rowProps = (file: Release_File) => {
         // Trigger selection through NDataTable's mechanism
         // We need to maintain the current selection and toggle this file
         const currentSelectedIds = selectedFileIds.value;
-        const fileId = file.id;
+        const filePath = file.path;
 
         let newSelectedIds: string[];
-        if (currentSelectedIds.includes(fileId)) {
+        if (currentSelectedIds.includes(filePath)) {
           // Deselect
-          newSelectedIds = currentSelectedIds.filter((id) => id !== fileId);
+          newSelectedIds = currentSelectedIds.filter((id) => id !== filePath);
         } else {
           // Select
-          newSelectedIds = [...currentSelectedIds, fileId];
+          newSelectedIds = [...currentSelectedIds, filePath];
         }
 
         onRowSelected(newSelectedIds);
@@ -165,7 +141,7 @@ const onRowSelected = (val: string[]) => {
   selectedFileIds.value = val;
   emit(
     "update:selected-files",
-    val.map((id) => props.files.find((f) => f.id === id)!)
+    val.map((path) => props.files.find((f) => f.path === path)!)
   );
 };
 
@@ -173,7 +149,7 @@ const onRowSelected = (val: string[]) => {
 watch(
   () => props.selectedFiles,
   (newFiles) => {
-    selectedFileIds.value = newFiles.map((f) => f.id);
+    selectedFileIds.value = newFiles.map((f) => f.path);
   }
 );
 </script>

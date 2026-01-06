@@ -21,11 +21,10 @@
 
 <script lang="ts" setup>
 import { create } from "@bufbuild/protobuf";
-import { onMounted, ref, computed } from "vue";
-import { nextTick } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { MonacoEditor } from "@/components/MonacoEditor";
 import { CopyButton } from "@/components/v2";
-import { databaseServiceClientConnect } from "@/grpcweb";
+import { databaseServiceClientConnect } from "@/connect";
 import type { ComposedDatabase } from "@/types";
 import type { GetSchemaStringRequest_ObjectType } from "@/types/proto-es/v1/database_service_pb";
 import { GetSchemaStringRequestSchema } from "@/types/proto-es/v1/database_service_pb";

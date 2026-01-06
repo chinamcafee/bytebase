@@ -18,19 +18,13 @@ import { type DataTableColumn, NDataTable } from "naive-ui";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { RouterLink } from "vue-router";
 import { getDateForPbTimestampProtoEs } from "@/types";
 import type { Changelog } from "@/types/proto-es/v1/database_service_pb";
 import {
   Changelog_Status,
   Changelog_Type,
 } from "@/types/proto-es/v1/database_service_pb";
-import { extractIssueUID, getAffectedTableDisplayName } from "@/utils";
-import {
-  changelogLink,
-  getAffectedTablesOfChangelog,
-  getChangelogChangeType,
-} from "@/utils/v1/changelog";
+import { changelogLink, getChangelogChangeType } from "@/utils/v1/changelog";
 import HumanizeDate from "../misc/HumanizeDate.vue";
 import ChangelogStatusIcon from "./ChangelogStatusIcon.vue";
 
@@ -69,7 +63,7 @@ const columnList = computed(() => {
     },
     {
       key: "status",
-      width: "2rem",
+      width: 48,
       render: (changelog) => {
         return (
           <ChangelogStatusIcon class="mx-auto" status={changelog.status} />
@@ -79,84 +73,25 @@ const columnList = computed(() => {
     {
       key: "type",
       title: t("changelog.change-type"),
-      width: 96,
+      width: 120,
       resizable: true,
-      render: (changelog) =>
-        getChangelogChangeType(changelog.type, changelog.migrationType),
+      render: (changelog) => getChangelogChangeType(changelog.type),
     },
     {
-      key: "issue",
-      title: t("common.issue"),
-      width: 96,
+      key: "rollout",
+      title: t("common.rollout"),
       resizable: true,
-      render: (changelog) => {
-        const uid = extractIssueUID(changelog.issue);
-        if (!uid) return null;
-        return (
-          <RouterLink
-            to={{
-              path: `/${changelog.issue}`,
-            }}
-            custom={true}
-          >
-            {{
-              default: ({ href }: { href: string }) => (
-                <a
-                  href={href}
-                  class="normal-link"
-                  onClick={(e: MouseEvent) => e.stopPropagation()}
-                >
-                  #{uid}
-                </a>
-              ),
-            }}
-          </RouterLink>
-        );
+      minWidth: 200,
+      ellipsis: {
+        tooltip: true,
       },
-    },
-    {
-      key: "version",
-      title: t("common.version"),
-      width: 160,
-      resizable: true,
-      render: (changelog) => changelog.version || "-",
-    },
-    {
-      key: "tables",
-      title: t("db.tables"),
-      width: "15rem",
-      resizable: true,
-      ellipsis: true,
-      render: (changelog) => {
-        const tables = getAffectedTablesOfChangelog(changelog);
-        if (tables.length === 0) return "-";
-        return (
-          <p class="space-x-2 truncate">
-            {tables.map((table) => (
-              <span class={table.dropped ? "text-gray-400 italic" : ""}>
-                {getAffectedTableDisplayName(table)}
-              </span>
-            ))}
-          </p>
-        );
-      },
-    },
-    {
-      key: "statement",
-      title: t("common.statement"),
-      resizable: true,
-      minWidth: "13rem",
-      ellipsis: true,
-      render: (changelog) => {
-        return <p class="truncate whitespace-nowrap">{changelog.statement}</p>;
-      },
+      render: (changelog) => changelog.planTitle || "-",
     },
     {
       key: "created",
       title: t("common.created-at"),
-      width: 128,
+      width: 180,
       resizable: true,
-      ellipsis: true,
       render: (changelog) => {
         return (
           <HumanizeDate

@@ -4,15 +4,24 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pkg/errors"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
+	"github.com/antlr4-go/antlr/v4"
+
+	parser "github.com/bytebase/parser/postgresql"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/parser/pg/legacy/ast"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
+	"github.com/bytebase/bytebase/backend/plugin/parser/pg"
+)
+
+var (
+	_ advisor.Advisor = (*IndexNoDuplicateColumnAdvisor)(nil)
 )
 
 func init() {
-	advisor.Register(storepb.Engine_POSTGRES, advisor.SchemaRuleIndexNoDuplicateColumn, &IndexNoDuplicateColumnAdvisor{})
+	advisor.Register(storepb.Engine_POSTGRES, storepb.SQLReviewRule_INDEX_NO_DUPLICATE_COLUMN, &IndexNoDuplicateColumnAdvisor{})
 }
 
 // IndexNoDuplicateColumnAdvisor is the advisor checking for no duplicate columns in index.
@@ -21,140 +30,253 @@ type IndexNoDuplicateColumnAdvisor struct {
 
 // Check checks for no duplicate columns in index.
 func (*IndexNoDuplicateColumnAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.Node)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Node")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	checker := &indexNoDuplicateColumnChecker{
-		level: level,
-		title: string(checkCtx.Rule.Type),
+
+	rule := &indexNoDuplicateColumnRule{
+		BaseRule: BaseRule{
+			level: level,
+			title: checkCtx.Rule.Type.String(),
+		},
 	}
 
-	for _, stmt := range stmtList {
-		checker.text = stmt.Text()
-		checker.line = stmt.LastLine()
-		ast.Walk(checker, stmt)
-	}
+	checker := NewGenericChecker([]Rule{rule})
 
-	return checker.adviceList, nil
-}
-
-type indexNoDuplicateColumnChecker struct {
-	adviceList []*storepb.Advice
-	level      storepb.Advice_Status
-	title      string
-	text       string
-	line       int
-}
-
-type duplicateColumn struct {
-	table          string
-	index          string
-	column         string
-	constraintType string
-	line           int
-}
-
-func (checker *indexNoDuplicateColumnChecker) Visit(node ast.Node) ast.Visitor {
-	var columnList []duplicateColumn
-	switch node := node.(type) {
-	case *ast.CreateTableStmt:
-		for _, constraint := range node.ConstraintList {
-			switch constraint.Type {
-			case ast.ConstraintTypePrimary,
-				ast.ConstraintTypeForeign,
-				ast.ConstraintTypePrimaryUsingIndex,
-				ast.ConstraintTypeUnique,
-				ast.ConstraintTypeUniqueUsingIndex:
-				if column, duplicate := hasDuplicateColumn(constraint.KeyList); duplicate {
-					columnList = append(columnList, duplicateColumn{
-						table:          node.Name.Name,
-						index:          constraint.Name,
-						column:         column,
-						constraintType: contraintsTypeToString(constraint.Type),
-						line:           checker.line,
-					})
-				}
-			default:
-				// Other constraint types are not checked for duplicate columns
-			}
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
 		}
-	case *ast.CreateIndexStmt:
-		if column, duplicate := hasDuplicateColumn(node.Index.GetKeyNameList()); duplicate {
-			columnList = append(columnList, duplicateColumn{
-				table:          node.Index.Table.Name,
-				index:          node.Index.Name,
-				column:         column,
-				constraintType: "INDEX",
-				line:           checker.line,
-			})
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
 		}
-	case *ast.AlterTableStmt:
-		for _, item := range node.AlterItemList {
-			switch cmd := item.(type) {
-			case *ast.AddConstraintStmt:
-				switch cmd.Constraint.Type {
-				case ast.ConstraintTypePrimary,
-					ast.ConstraintTypeForeign,
-					ast.ConstraintTypePrimaryUsingIndex,
-					ast.ConstraintTypeUnique,
-					ast.ConstraintTypeUniqueUsingIndex:
-					if column, duplicate := hasDuplicateColumn(cmd.Constraint.KeyList); duplicate {
-						columnList = append(columnList, duplicateColumn{
-							table:          cmd.Table.Name,
-							index:          cmd.Constraint.Name,
-							column:         column,
-							constraintType: contraintsTypeToString(cmd.Constraint.Type),
-							line:           checker.line,
-						})
-					}
-				default:
-					// Other constraint types are not checked for duplicate columns
-				}
-			default:
-				continue
-			}
-		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
-	for _, column := range columnList {
-		checker.adviceList = append(checker.adviceList, &storepb.Advice{
-			Status:        checker.level,
-			Code:          advisor.DuplicateColumnInIndex.Int32(),
-			Title:         checker.title,
-			Content:       fmt.Sprintf("%s \"%s\" has duplicate column \"%s\".\"%s\"", column.constraintType, column.index, column.table, column.column),
-			StartPosition: newPositionAtLineStart(column.line),
-		})
-	}
-
-	return checker
+	return checker.GetAdviceList(), nil
 }
 
-func hasDuplicateColumn(keyList []string) (string, bool) {
-	existMap := make(map[string]bool)
-	for _, key := range keyList {
-		if _, isExist := existMap[key]; isExist {
-			return key, true
-		}
-		existMap[key] = true
-	}
-	return "", false
+type indexNoDuplicateColumnRule struct {
+	BaseRule
 }
 
-func contraintsTypeToString(constrainType ast.ConstraintType) string {
-	switch constrainType {
-	case ast.ConstraintTypePrimary, ast.ConstraintTypePrimaryUsingIndex:
-		return "PRIMARY KEY"
-	case ast.ConstraintTypeUnique, ast.ConstraintTypeUniqueUsingIndex:
-		return "UNIQUE KEY"
-	case ast.ConstraintTypeForeign:
-		return "FOREIGN KEY"
+func (*indexNoDuplicateColumnRule) Name() string {
+	return "index_no_duplicate_column"
+}
+
+func (r *indexNoDuplicateColumnRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
+	switch nodeType {
+	case "Indexstmt":
+		r.handleIndexstmt(ctx)
+	case "Createstmt":
+		r.handleCreatestmt(ctx)
+	case "Altertablestmt":
+		r.handleAltertablestmt(ctx)
 	default:
-		return "INDEX"
+		// Do nothing for other node types
 	}
+	return nil
+}
+
+func (*indexNoDuplicateColumnRule) OnExit(_ antlr.ParserRuleContext, _ string) error {
+	return nil
+}
+
+func (r *indexNoDuplicateColumnRule) handleIndexstmt(ctx antlr.ParserRuleContext) {
+	indexCtx, ok := ctx.(*parser.IndexstmtContext)
+	if !ok {
+		return
+	}
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	// Get index name
+	indexName := ""
+	if indexCtx.Name() != nil {
+		indexName = pg.NormalizePostgreSQLName(indexCtx.Name())
+	}
+
+	// Get table name
+	tableName := ""
+	if indexCtx.Relation_expr() != nil && indexCtx.Relation_expr().Qualified_name() != nil {
+		tableName = extractTableName(indexCtx.Relation_expr().Qualified_name())
+	}
+
+	// Check for duplicate columns in index parameters
+	if indexCtx.Index_params() != nil {
+		columns := r.extractIndexColumns(indexCtx.Index_params())
+		if dupCol := findDuplicate(columns); dupCol != "" {
+			r.addAdvice("INDEX", indexName, tableName, dupCol, indexCtx.GetStart().GetLine())
+		}
+	}
+}
+
+func (r *indexNoDuplicateColumnRule) handleCreatestmt(ctx antlr.ParserRuleContext) {
+	createCtx, ok := ctx.(*parser.CreatestmtContext)
+	if !ok {
+		return
+	}
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	qualifiedNames := createCtx.AllQualified_name()
+	if len(qualifiedNames) == 0 {
+		return
+	}
+
+	tableName := extractTableName(qualifiedNames[0])
+	if tableName == "" {
+		return
+	}
+
+	// Check table-level constraints
+	if createCtx.Opttableelementlist() != nil && createCtx.Opttableelementlist().Tableelementlist() != nil {
+		allElements := createCtx.Opttableelementlist().Tableelementlist().AllTableelement()
+		for _, elem := range allElements {
+			if elem.Tableconstraint() != nil {
+				r.checkTableConstraint(elem.Tableconstraint(), tableName, elem.GetStart().GetLine())
+			}
+		}
+	}
+}
+
+func (r *indexNoDuplicateColumnRule) handleAltertablestmt(ctx antlr.ParserRuleContext) {
+	alterCtx, ok := ctx.(*parser.AltertablestmtContext)
+	if !ok {
+		return
+	}
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	if alterCtx.Relation_expr() == nil || alterCtx.Relation_expr().Qualified_name() == nil {
+		return
+	}
+
+	tableName := extractTableName(alterCtx.Relation_expr().Qualified_name())
+	if tableName == "" {
+		return
+	}
+
+	// Check ALTER TABLE ADD CONSTRAINT
+	if alterCtx.Alter_table_cmds() != nil {
+		allCmds := alterCtx.Alter_table_cmds().AllAlter_table_cmd()
+		for _, cmd := range allCmds {
+			// ADD CONSTRAINT
+			if cmd.ADD_P() != nil && cmd.Tableconstraint() != nil {
+				r.checkTableConstraint(cmd.Tableconstraint(), tableName, alterCtx.GetStart().GetLine())
+			}
+		}
+	}
+}
+
+func (r *indexNoDuplicateColumnRule) checkTableConstraint(constraint parser.ITableconstraintContext, tableName string, line int) {
+	if constraint == nil {
+		return
+	}
+
+	// Get constraint name
+	constraintName := ""
+	if constraint.Name() != nil {
+		constraintName = pg.NormalizePostgreSQLName(constraint.Name())
+	}
+
+	// Check different constraint types
+	if constraint.Constraintelem() != nil {
+		elem := constraint.Constraintelem()
+
+		// PRIMARY KEY
+		if elem.PRIMARY() != nil && elem.KEY() != nil {
+			if elem.Columnlist() != nil {
+				columns := r.extractColumnList(elem.Columnlist())
+				if dupCol := findDuplicate(columns); dupCol != "" {
+					r.addAdvice("PRIMARY KEY", constraintName, tableName, dupCol, line)
+				}
+			}
+		}
+
+		// UNIQUE
+		if elem.UNIQUE() != nil {
+			if elem.Columnlist() != nil {
+				columns := r.extractColumnList(elem.Columnlist())
+				if dupCol := findDuplicate(columns); dupCol != "" {
+					r.addAdvice("UNIQUE KEY", constraintName, tableName, dupCol, line)
+				}
+			}
+		}
+
+		// FOREIGN KEY
+		if elem.FOREIGN() != nil && elem.KEY() != nil {
+			if elem.Columnlist() != nil {
+				columns := r.extractColumnList(elem.Columnlist())
+				if dupCol := findDuplicate(columns); dupCol != "" {
+					r.addAdvice("FOREIGN KEY", constraintName, tableName, dupCol, line)
+				}
+			}
+		}
+	}
+}
+
+func (*indexNoDuplicateColumnRule) extractIndexColumns(params parser.IIndex_paramsContext) []string {
+	if params == nil {
+		return nil
+	}
+
+	var columns []string
+	allParams := params.AllIndex_elem()
+	for _, param := range allParams {
+		if param.Colid() != nil {
+			colName := pg.NormalizePostgreSQLColid(param.Colid())
+			columns = append(columns, colName)
+		}
+	}
+
+	return columns
+}
+
+func (*indexNoDuplicateColumnRule) extractColumnList(columnList parser.IColumnlistContext) []string {
+	if columnList == nil {
+		return nil
+	}
+
+	var columns []string
+	allColumns := columnList.AllColumnElem()
+	for _, col := range allColumns {
+		if col.Colid() != nil {
+			colName := pg.NormalizePostgreSQLColid(col.Colid())
+			columns = append(columns, colName)
+		}
+	}
+
+	return columns
+}
+
+func findDuplicate(columns []string) string {
+	seen := make(map[string]bool)
+	for _, col := range columns {
+		if seen[col] {
+			return col
+		}
+		seen[col] = true
+	}
+	return ""
+}
+
+func (r *indexNoDuplicateColumnRule) addAdvice(constraintType, constraintName, tableName, duplicateColumn string, line int) {
+	r.AddAdvice(&storepb.Advice{
+		Status:  r.level,
+		Code:    code.DuplicateColumnInIndex.Int32(),
+		Title:   r.title,
+		Content: fmt.Sprintf("%s %q has duplicate column %q.%q", constraintType, constraintName, tableName, duplicateColumn),
+		StartPosition: &storepb.Position{
+			Line:   int32(line),
+			Column: 0,
+		},
+	})
 }

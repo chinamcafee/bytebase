@@ -1,10 +1,6 @@
 <template>
-  <div class="w-full mx-auto space-y-4 pb-4">
-    <NoPermissionPlaceholder
-      v-if="permissionStore.onlyWorkspaceMember"
-      class="py-6"
-    />
-    <NTabs v-else v-model:value="state.selectedTab" type="line" animated>
+  <div class="w-full mx-auto flex flex-col gap-y-4 pb-4">
+    <NTabs v-model:value="state.selectedTab" type="line" animated>
       <NTabPane name="MEMBERS">
         <template #tab>
           <p class="text-base font-medium leading-7 text-main">
@@ -43,26 +39,35 @@
       </NTabPane>
 
       <template #suffix>
-        <div class="flex items-center space-x-3">
+        <div class="flex items-center gap-x-2">
           <SearchBox
             v-model:value="state.searchText"
             :placeholder="$t('settings.members.search-member')"
           />
-          <div v-if="allowEdit" class="flex justify-end gap-x-3">
-            <NButton
-              v-if="state.selectedTab === 'MEMBERS'"
-              :disabled="state.selectedMembers.length === 0"
-              @click="handleRevokeSelectedMembers"
-            >
-              {{ $t("settings.members.revoke-access") }}
-            </NButton>
-            <NButton type="primary" @click="state.showAddMemberPanel = true">
-              <template #icon>
-                <heroicons-outline:user-add class="w-4 h-4" />
-              </template>
-              {{ $t("settings.members.grant-access") }}
-            </NButton>
-          </div>
+          <PermissionGuardWrapper
+            v-slot="slotProps"
+            :permissions="['bb.workspaces.setIamPolicy']"
+          >
+            <div class="flex justify-end gap-x-2">
+              <NButton
+                v-if="state.selectedTab === 'MEMBERS'"
+                :disabled="slotProps.disabled || state.selectedMembers.length === 0"
+                @click="handleRevokeSelectedMembers"
+              >
+                {{ $t("settings.members.revoke-access") }}
+              </NButton>
+              <NButton
+                type="primary"
+                :disabled="slotProps.disabled"
+                @click="state.showAddMemberPanel = true"
+              >
+                <template #icon>
+                  <heroicons-outline:user-add class="w-4 h-4" />
+                </template>
+                {{ $t("settings.members.grant-access") }}
+              </NButton>
+            </div>
+          </PermissionGuardWrapper>
         </div>
       </template>
     </NTabs>
@@ -81,7 +86,6 @@
 </template>
 
 <script setup lang="ts">
-import { computedAsync } from "@vueuse/core";
 import { NButton, NTabPane, NTabs, useDialog } from "naive-ui";
 import { computed, reactive } from "vue";
 import { useI18n } from "vue-i18n";
@@ -90,12 +94,11 @@ import MemberDataTable from "@/components/Member/MemberDataTable/index.vue";
 import MemberDataTableByRole from "@/components/Member/MemberDataTableByRole.vue";
 import type { MemberBinding } from "@/components/Member/types";
 import { getMemberBindings } from "@/components/Member/utils";
-import NoPermissionPlaceholder from "@/components/misc/NoPermissionPlaceholder.vue";
+import PermissionGuardWrapper from "@/components/Permission/PermissionGuardWrapper.vue";
 import { SearchBox } from "@/components/v2";
 import {
   pushNotification,
   useCurrentUserV1,
-  usePermissionStore,
   useWorkspaceV1Store,
 } from "@/store";
 import { userBindingPrefix } from "@/types";
@@ -120,7 +123,6 @@ const { t } = useI18n();
 const dialog = useDialog();
 const currentUserV1 = useCurrentUserV1();
 const workspaceStore = useWorkspaceV1Store();
-const permissionStore = usePermissionStore();
 
 const state = reactive<LocalState>({
   searchText: "",
@@ -191,7 +193,7 @@ const revokeMember = async (binding: MemberBinding) => {
   });
 };
 
-const memberBindings = computedAsync(() => {
+const memberBindings = computed(() => {
   return getMemberBindings({
     policies: [
       {
@@ -202,5 +204,5 @@ const memberBindings = computedAsync(() => {
     searchText: state.searchText,
     ignoreRoles: new Set([]),
   });
-}, []);
+});
 </script>

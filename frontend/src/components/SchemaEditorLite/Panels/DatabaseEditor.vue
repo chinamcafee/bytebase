@@ -4,7 +4,7 @@
       <div>
         <div
           v-if="state.selectedSubTab === 'table-list'"
-          class="w-full flex justify-between items-center space-x-2"
+          class="w-full flex justify-between items-center gap-x-2"
         >
           <div class="flex flex-row justify-start items-center gap-x-2">
             <div
@@ -15,7 +15,7 @@
               <NSelect
                 :value="selectedSchemaName"
                 :options="schemaSelectorOptionList"
-                class="min-w-[8rem]"
+                class="min-w-32"
                 @update:value="$emit('update:selected-schema-name', $event)"
               />
             </div>
@@ -28,16 +28,6 @@
                 <PlusIcon class="w-4 h-4" />
               </template>
               {{ $t("schema-editor.actions.create-table") }}
-            </NButton>
-            <NButton
-              v-if="!readonly"
-              :disabled="!allowCreateTable"
-              @click="state.showSchemaTemplateDrawer = true"
-            >
-              <template #icon>
-                <PlusIcon class="w-4 h-4" />
-              </template>
-              {{ $t("schema-editor.actions.add-from-template") }}
             </NButton>
             <div
               v-if="selectionEnabled"
@@ -60,7 +50,7 @@
       </div>
       <div class="flex justify-end items-center">
         <div
-          class="flex flex-row justify-end items-center bg-gray-100 p-1 rounded whitespace-nowrap"
+          class="flex flex-row justify-end items-center bg-gray-100 p-1 rounded-sm whitespace-nowrap"
         >
           <NButton
             size="small"
@@ -124,31 +114,14 @@
     mode="create"
     @close="state.tableNameModalContext = undefined"
   />
-
-  <Drawer
-    :show="state.showSchemaTemplateDrawer"
-    @close="state.showSchemaTemplateDrawer = false"
-  >
-    <DrawerContent :title="$t('schema-template.table-template.self')">
-      <div class="w-[calc(100vw-36rem)] min-w-[64rem] max-w-[calc(100vw-8rem)]">
-        <TableTemplates
-          :engine="engine"
-          :readonly="true"
-          @apply="handleApplyTemplate"
-        />
-      </div>
-    </DrawerContent>
-  </Drawer>
 </template>
 
 <script lang="ts" setup>
-import { create } from "@bufbuild/protobuf";
 import { head, sumBy } from "lodash-es";
 import { PlusIcon } from "lucide-vue-next";
 import { NButton, NSelect, NTooltip } from "naive-ui";
 import { computed, nextTick, reactive, watch } from "vue";
 import SchemaDiagram, { SchemaDiagramIcon } from "@/components/SchemaDiagram";
-import { Drawer, DrawerContent } from "@/components/v2";
 import type { ComposedDatabase } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import type {
@@ -157,18 +130,8 @@ import type {
   SchemaMetadata,
   TableMetadata,
 } from "@/types/proto-es/v1/database_service_pb";
-import type {
-  TableMetadata as NewTableMetadata,
-  ColumnMetadata as NewColumnMetadata,
-} from "@/types/proto-es/v1/database_service_pb";
-import {
-  TableMetadataSchema,
-  ColumnMetadataSchema,
-} from "@/types/proto-es/v1/database_service_pb";
-import type { SchemaTemplateSetting_TableTemplate } from "@/types/proto-es/v1/setting_service_pb";
-import TableTemplates from "@/views/SchemaTemplate/TableTemplates.vue";
-import TableNameModal from "../Modals/TableNameModal.vue";
 import { useSchemaEditorContext } from "../context";
+import TableNameModal from "../Modals/TableNameModal.vue";
 import TableList from "./TableList";
 import TableSelectionSummary from "./TableSelectionSummary.vue";
 
@@ -191,47 +154,11 @@ const emit = defineEmits<{
   (event: "update:selected-schema-name", schema: string | undefined): void;
 }>();
 
-// Conversion function for TableMetadata at service boundaries
-const convertNewTableToOld = (newTable: NewTableMetadata): TableMetadata => {
-  return create(TableMetadataSchema, {
-    name: newTable.name,
-    columns: newTable.columns.map(convertNewColumnToOld),
-    engine: newTable.engine,
-    collation: newTable.collation,
-    userComment: newTable.userComment,
-    comment: newTable.comment,
-    indexes: [], // Initialize empty, will be handled separately if needed
-    partitions: [], // Initialize empty, will be handled separately if needed
-    foreignKeys: [], // Initialize empty, will be handled separately if needed
-  });
-};
-
-// Conversion function for ColumnMetadata at service boundaries
-const convertNewColumnToOld = (
-  newColumn: NewColumnMetadata
-): ColumnMetadata => {
-  return create(ColumnMetadataSchema, {
-    name: newColumn.name,
-    position: newColumn.position,
-    hasDefault: newColumn.hasDefault,
-    default: newColumn.default,
-    onUpdate: newColumn.onUpdate,
-    nullable: newColumn.nullable,
-    type: newColumn.type,
-    characterSet: newColumn.characterSet,
-    collation: newColumn.collation,
-    userComment: newColumn.userComment,
-    comment: newColumn.comment,
-    // classification, labels, effectiveMaskingLevel are not available in old proto types
-  });
-};
-
 type SubTabType = "table-list" | "schema-diagram";
 
 interface LocalState {
   selectedSubTab: SubTabType;
   showFeatureModal: boolean;
-  showSchemaTemplateDrawer: boolean;
   tableNameModalContext?: {
     schema: SchemaMetadata;
   };
@@ -239,20 +166,10 @@ interface LocalState {
 }
 
 const context = useSchemaEditorContext();
-const {
-  readonly,
-  selectionEnabled,
-  events,
-  addTab,
-  getSchemaStatus,
-  markEditStatus,
-  upsertTableCatalog,
-  queuePendingScrollToTable,
-} = context;
+const { readonly, selectionEnabled, addTab, getSchemaStatus } = context;
 const state = reactive<LocalState>({
   selectedSubTab: "table-list",
   showFeatureModal: false,
-  showSchemaTemplateDrawer: false,
 });
 const engine = computed(() => {
   return props.db.instanceResource.engine;
@@ -362,61 +279,5 @@ const tryEditColumn = async (
     //   scrollIntoView(input);
     // }
   }
-};
-
-const handleApplyTemplate = (template: SchemaTemplateSetting_TableTemplate) => {
-  state.showSchemaTemplateDrawer = false;
-  if (!template.table) {
-    return;
-  }
-  if (template.engine !== engine.value) {
-    return;
-  }
-
-  const table = convertNewTableToOld(template.table);
-  const schema = selectedSchema.value;
-  if (!schema) {
-    return;
-  }
-  schema.tables.push(table);
-  const metadataForTable = () => {
-    return {
-      database: props.database,
-      schema,
-      table,
-    };
-  };
-  const { db } = props;
-  if (template.catalog) {
-    upsertTableCatalog(
-      {
-        database: props.db.name,
-        schema: schema.name,
-        table: table.name,
-      },
-      (catalog) => {
-        Object.assign(catalog, template.catalog);
-      }
-    );
-  }
-  markEditStatus(db, metadataForTable(), "created");
-  table.columns.forEach((column) => {
-    markEditStatus(db, { ...metadataForTable(), column }, "created");
-  });
-
-  addTab({
-    type: "table",
-    database: db,
-    metadata: metadataForTable(),
-  });
-
-  queuePendingScrollToTable({
-    db,
-    metadata: metadataForTable(),
-  });
-
-  events.emit("rebuild-tree", {
-    openFirstChild: false,
-  });
 };
 </script>

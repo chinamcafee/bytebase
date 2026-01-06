@@ -41,32 +41,32 @@
 import { useElementSize } from "@vueuse/core";
 import { orderBy } from "lodash-es";
 import type { DataTableColumn } from "naive-ui";
-import { NPerformantEllipsis, NDataTable } from "naive-ui";
-import { reactive, computed, watch, ref, h } from "vue";
+import { NDataTable, NPerformantEllipsis } from "naive-ui";
+import { computed, h, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { BBAvatar } from "@/bbkit";
 import BatchIssueActionsV1 from "@/components/IssueV1/components/BatchIssueActionsV1.vue";
 import CurrentApproverV1 from "@/components/IssueV1/components/CurrentApproverV1.vue";
+import { UserNameCell } from "@/components/v2/Model/cells";
 import { useElementVisibilityInScrollParent } from "@/composables/useElementVisibilityInScrollParent";
 import { useIssueLayoutVersion } from "@/composables/useIssueLayoutVersion";
 import { useUserStore } from "@/store";
 import {
+  type ComposedIssue,
   getTimeForPbTimestampProtoEs,
   unknownUser,
-  type ComposedIssue,
 } from "@/types";
 import {
-  getHighlightHTMLByRegExp,
-  humanizeTs,
   extractIssueUID,
+  getHighlightHTMLByRegExp,
   getIssueRoute,
+  humanizeTs,
 } from "@/utils";
 import { projectOfIssue } from "../logic";
 import IssueLabelSelector, {
   getValidIssueLabels,
 } from "./IssueLabelSelector.vue";
-import IssueStatusIconWithTaskSummary from "./IssueStatusIconWithTaskSummary.vue";
+import IssueStatusIcon from "./IssueStatusIcon.vue";
 
 interface LocalState {
   selectedIssueNameList: Set<string>;
@@ -151,7 +151,7 @@ const columnList = computed((): DataTableColumn<ComposedIssue>[] => {
       hide: !props.highlightText,
       renderExpand: (issue) => (
         <div
-          class="max-h-[20rem] overflow-auto whitespace-pre-wrap break-words break-all"
+          class="max-h-80 overflow-auto whitespace-pre-wrap wrap-break-word break-all"
           innerHTML={highlight(issue.description)}
         ></div>
       ),
@@ -167,11 +167,11 @@ const columnList = computed((): DataTableColumn<ComposedIssue>[] => {
           projectEntity.issueLabels
         );
         return (
-          <div class="flex items-center space-x-2">
-            <IssueStatusIconWithTaskSummary issue={issue} />
+          <div class="flex items-center gap-x-2">
+            <IssueStatusIcon issueStatus={issue.status} />
             <a
               href={issueUrl(issue)}
-              class="flex items-center space-x-2 select-none truncate"
+              class="flex items-center gap-x-2 select-none truncate"
               onClick={(e: MouseEvent) => {
                 e.stopPropagation();
               }}
@@ -193,7 +193,7 @@ const columnList = computed((): DataTableColumn<ComposedIssue>[] => {
             </a>
             {labels.length > 0 && (
               <IssueLabelSelector
-                class="!w-auto shrink-0"
+                class="w-auto! shrink-0"
                 size="small"
                 selected={labels}
                 maxTagCount={3}
@@ -234,12 +234,18 @@ const columnList = computed((): DataTableColumn<ComposedIssue>[] => {
       hide: !showExtendedColumns.value,
       render: (issue) => {
         const creator =
-          userStore.getUserByIdentifier(issue.creator) || unknownUser();
+          userStore.getUserByIdentifier(issue.creator) ||
+          unknownUser(issue.creator);
         return (
-          <div class="flex flex-row items-center overflow-hidden gap-x-2">
-            <BBAvatar size="SMALL" username={creator.title} />
-            <span class="truncate">{creator.title}</span>
-          </div>
+          <UserNameCell
+            user={creator}
+            size="small"
+            link={false}
+            allowEdit={false}
+            showMfaEnabled={false}
+            showSource={false}
+            showEmail={false}
+          />
         );
       },
     },
@@ -378,11 +384,12 @@ const isIssueExpanded = (issue: ComposedIssue): boolean => {
 
 <style scoped lang="postcss">
 :deep(.n-base-selection-tags) {
-  @apply !bg-transparent !p-0;
+  background-color: transparent !important;
+  padding: 0 !important;
 }
 :deep(.n-base-suffix),
 :deep(.n-base-selection__border),
 :deep(.n-base-selection__state-border) {
-  @apply !hidden;
+  display: none !important;
 }
 </style>

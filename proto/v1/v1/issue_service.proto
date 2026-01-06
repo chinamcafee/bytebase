@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package bytebase.v1;
 
+import "buf/validate/validate.proto";
 import "google/api/annotations.proto";
 import "google/api/client.proto";
 import "google/api/field_behavior.proto";
@@ -207,18 +208,15 @@ message ListIssuesRequest {
   // - status: the issue status, support "==" and "in" operator, check the IssueStatus enum for the values.
   // - create_time: issue create time in "2006-01-02T15:04:05Z07:00" format, support ">=" or "<=" operator.
   // - type: the issue type, support "==" and "in" operator, check the Type enum in the Issue message for the values.
-  // - task_type: support "==" operator, the value can be "DDL", "DML" or "DATA_EXPORT"
-  // - instance: the instance full name in the "instances/{id}" format, support "==" operator.
-  // - database: the database full name in the "instances/{id}/databases/{name}" format, support "==" operator.
-  // - environment: the database full name in the "environments/{name}" format, support "==" operator.
   // - labels: the issue labels, support "==" and "in" operator.
+  // - approval_status: issue approval status, support "==" operator.
+  // - current_approver: the issue approver, should in "users/{email} format", support "==" operator.
   //
   // For example:
   // creator == "users/ed@bytebase.com" && status in ["OPEN", "DONE"]
   // status == "CANCELED" && type == "DATABASE_CHANGE"
-  // instance == "instances/sample" && labels in ["label1", "label2"]
+  // labels in ["label1", "label2"]
   // create_time >= "2025-01-02T15:04:05Z07:00"
-  // environment == "environments/test"
   string filter = 4;
 
   // Query is the query statement.
@@ -350,17 +348,15 @@ message Issue {
     pattern: "projects/{project}/issues/{issue}"
   };
 
-  reserved 2, 7, 8;
-
   // The name of the issue.
   // Format: projects/{project}/issues/{issue}
   string name = 1;
 
   // The title of the issue.
-  string title = 3;
+  string title = 2 [(buf.validate.field).string.max_len = 200];
 
   // The description of the issue.
-  string description = 4;
+  string description = 3 [(buf.validate.field).string.max_len = 10000];
 
   // The type of issue.
   enum Type {
@@ -373,10 +369,10 @@ message Issue {
     // Database data export request.
     DATABASE_EXPORT = 3;
   }
-  Type type = 5;
+  Type type = 4;
 
   // The status of the issue.
-  IssueStatus status = 6;
+  IssueStatus status = 5;
 
   // Approvers and their approval status for the issue.
   message Approver {
@@ -397,59 +393,31 @@ message Issue {
     // Format: users/hello@world.com
     string principal = 2;
   }
-  repeated Approver approvers = 9;
+  repeated Approver approvers = 6;
 
   // The approval template for the issue.
-  ApprovalTemplate approval_template = 10;
-
-  reserved 11, 12;
+  ApprovalTemplate approval_template = 7;
 
   // Format: users/hello@world.com
-  string creator = 14 [(google.api.field_behavior) = OUTPUT_ONLY];
+  string creator = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
 
-  google.protobuf.Timestamp create_time = 15 [(google.api.field_behavior) = OUTPUT_ONLY];
+  google.protobuf.Timestamp create_time = 9 [(google.api.field_behavior) = OUTPUT_ONLY];
 
-  google.protobuf.Timestamp update_time = 16 [(google.api.field_behavior) = OUTPUT_ONLY];
+  google.protobuf.Timestamp update_time = 10 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   // The plan associated with the issue.
   // Can be empty.
   // Format: projects/{project}/plans/{plan}
-  string plan = 17;
-
-  // The rollout associated with the issue.
-  // Can be empty.
-  // Format: projects/{project}/rollouts/{rollout}
-  string rollout = 18;
+  string plan = 11;
 
   // Used if the issue type is GRANT_REQUEST.
-  GrantRequest grant_request = 19;
-
-  // The releasers of the pending stage of the issue rollout, judging
-  // from the rollout policy.
-  // Format:
-  // - roles/workspaceOwner
-  // - roles/workspaceDBA
-  // - roles/projectOwner
-  // - roles/projectReleaser
-  // - users/{email}
-  repeated string releasers = 20;
+  GrantRequest grant_request = 13;
 
   // The risk level of the issue.
-  RiskLevel risk_level = 21;
-
-  // The status count of the issue.
-  // Keys are the following:
-  // - NOT_STARTED
-  // - SKIPPED
-  // - PENDING
-  // - RUNNING
-  // - DONE
-  // - FAILED
-  // - CANCELED
-  map<string, int32> task_status_count = 22;
+  RiskLevel risk_level = 15;
 
   // Labels attached to the issue for categorization and filtering.
-  repeated string labels = 23;
+  repeated string labels = 17;
 
   // The overall approval status for the issue.
   enum ApprovalStatus {
@@ -465,12 +433,8 @@ message Issue {
     REJECTED = 4;
     // Approval was skipped.
     SKIPPED = 5;
-    // Error occurred during approval evaluation.
-    ERROR = 6;
   }
-  ApprovalStatus approval_status = 24 [(google.api.field_behavior) = OUTPUT_ONLY];
-  // Only populated when approval_status == ERROR
-  string approval_status_error = 25 [(google.api.field_behavior) = OUTPUT_ONLY];
+  ApprovalStatus approval_status = 18 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 message GrantRequest {
@@ -499,10 +463,6 @@ enum IssueStatus {
 }
 
 message ApprovalTemplate {
-  // The unique identifier for the approval template.
-  // For built-in templates, use "bb." prefix (e.g., "bb.project-owner", "bb.workspace-dba").
-  // For custom templates, use a UUID or other unique identifier.
-  string id = 4;
   // The approval flow definition.
   ApprovalFlow flow = 1;
   // The title of the approval template.
@@ -579,13 +539,11 @@ message UpdateIssueCommentRequest {
 
 // A comment on an issue.
 message IssueComment {
-  reserved 6;
-
   // Format: projects/{project}/issues/{issue}/issueComments/{issueComment-uid}
   string name = 1;
 
   // The text content of the comment.
-  string comment = 2;
+  string comment = 2 [(buf.validate.field).string.max_len = 65536];
 
   // TODO: use struct message instead.
   string payload = 3;
@@ -595,20 +553,16 @@ message IssueComment {
   google.protobuf.Timestamp update_time = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   // Format: users/{email}
-  string creator = 7 [(google.api.field_behavior) = OUTPUT_ONLY];
+  string creator = 6 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   // The event associated with this comment.
   oneof event {
     // Approval event.
-    Approval approval = 8;
+    Approval approval = 7;
     // Issue update event.
-    IssueUpdate issue_update = 9;
-    // Stage end event.
-    StageEnd stage_end = 10;
-    // Task update event.
-    TaskUpdate task_update = 11;
-    // Task prior backup event.
-    TaskPriorBackup task_prior_backup = 12;
+    IssueUpdate issue_update = 8;
+    // Plan spec update event.
+    PlanSpecUpdate plan_spec_update = 12;
   }
 
   // Approval event information.
@@ -631,8 +585,6 @@ message IssueComment {
 
   // Issue update event information.
   message IssueUpdate {
-    reserved 7, 8;
-
     optional string from_title = 1;
     optional string to_title = 2;
     optional string from_description = 3;
@@ -640,64 +592,20 @@ message IssueComment {
     optional IssueStatus from_status = 5;
     optional IssueStatus to_status = 6;
 
-    repeated string from_labels = 9;
-    repeated string to_labels = 10;
+    repeated string from_labels = 7;
+    repeated string to_labels = 8;
   }
 
-  // Stage end event information.
-  message StageEnd {
-    // The stage that ended.
-    string stage = 1;
-  }
-
-  // Task update event information.
-  message TaskUpdate {
-    // The tasks that were updated.
-    repeated string tasks = 1;
+  // Plan spec update event information (tracks sheet changes to plan specs).
+  message PlanSpecUpdate {
+    // The spec that was updated.
+    // Format: projects/{project}/plans/{plan}/specs/{spec}
+    string spec = 1;
+    // The previous sheet.
     // Format: projects/{project}/sheets/{sheet}
     optional string from_sheet = 2;
+    // The new sheet.
     // Format: projects/{project}/sheets/{sheet}
     optional string to_sheet = 3;
-    optional Status to_status = 6;
-
-    // Task status values.
-    enum Status {
-      // Unspecified status.
-      STATUS_UNSPECIFIED = 0;
-      // Task is pending.
-      PENDING = 1;
-      // Task is running.
-      RUNNING = 2;
-      // Task is done.
-      DONE = 3;
-      // Task failed.
-      FAILED = 4;
-      // Task was skipped.
-      SKIPPED = 5;
-      // Task was canceled.
-      CANCELED = 6;
-    }
-  }
-
-  // Task prior backup event information.
-  message TaskPriorBackup {
-    // The task for which backup was performed.
-    string task = 1;
-    // The tables that were backed up.
-    repeated Table tables = 2;
-    // The original line number in the statement.
-    optional int32 original_line = 3;
-    // The database that was backed up.
-    string database = 4;
-    // Error message if backup failed.
-    string error = 5;
-
-    // Table identification.
-    message Table {
-      // The schema name.
-      string schema = 1;
-      // The table name.
-      string table = 2;
-    }
   }
 }

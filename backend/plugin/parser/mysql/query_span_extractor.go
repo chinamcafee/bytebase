@@ -6,11 +6,10 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/mysql-parser"
+	parser "github.com/bytebase/parser/mysql"
 	"github.com/pkg/errors"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
-	parsererror "github.com/bytebase/bytebase/backend/plugin/parser/errors"
 	"github.com/bytebase/bytebase/backend/store/model"
 
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
@@ -110,7 +109,7 @@ func (q *querySpanExtractor) getQuerySpan(ctx context.Context, stmt string) (*ba
 	antlr.ParseTreeWalkerDefault.Walk(listener, tree)
 	err = listener.err
 	if err != nil {
-		var resourceNotFound *parsererror.ResourceNotFoundError
+		var resourceNotFound *base.ResourceNotFoundError
 		if errors.As(err, &resourceNotFound) {
 			return &base.QuerySpan{
 				Type:          base.Select,
@@ -528,7 +527,7 @@ func (q *querySpanExtractor) extractTableWild(ctx parser.ITableWildContext) ([]b
 	}
 	querySpanResults, ok := q.getAllTableColumnSources(databaseName, tableName)
 	if !ok {
-		return nil, &parsererror.ResourceNotFoundError{
+		return nil, &base.ResourceNotFoundError{
 			Err:      errors.Errorf("failed to find table to calculate asterisk"),
 			Database: &databaseName,
 			Table:    &tableName,
@@ -1275,7 +1274,7 @@ func (q *querySpanExtractor) getFieldColumnSource(databaseName, tableName, field
 		}
 	}
 
-	return nil, &parsererror.ResourceNotFoundError{
+	return nil, &base.ResourceNotFoundError{
 		Database: &databaseName,
 		Table:    &tableName,
 		Column:   &fieldName,
@@ -1319,7 +1318,7 @@ func (q *querySpanExtractor) findTableSchema(databaseName, tableName string) (ba
 
 	databaseName = q.filterClusterName(databaseName)
 
-	var dbSchema *model.DatabaseMetadata
+	var dbMetadata *model.DatabaseMetadata
 	allDatabaseNames, err := q.gCtx.ListDatabaseNamesFunc(q.ctx, q.gCtx.InstanceID)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list databases")
@@ -1327,7 +1326,7 @@ func (q *querySpanExtractor) findTableSchema(databaseName, tableName string) (ba
 	if q.ignoreCaseSensitive {
 		for _, db := range allDatabaseNames {
 			if strings.EqualFold(db, databaseName) {
-				_, dbSchema, err = q.gCtx.GetDatabaseMetadataFunc(q.ctx, q.gCtx.InstanceID, db)
+				_, dbMetadata, err = q.gCtx.GetDatabaseMetadataFunc(q.ctx, q.gCtx.InstanceID, db)
 				if err != nil {
 					return nil, errors.Wrapf(err, "failed to get database metadata for database %q", db)
 				}
@@ -1337,7 +1336,7 @@ func (q *querySpanExtractor) findTableSchema(databaseName, tableName string) (ba
 	} else {
 		for _, db := range allDatabaseNames {
 			if db == databaseName {
-				_, dbSchema, err = q.gCtx.GetDatabaseMetadataFunc(q.ctx, q.gCtx.InstanceID, db)
+				_, dbMetadata, err = q.gCtx.GetDatabaseMetadataFunc(q.ctx, q.gCtx.InstanceID, db)
 				if err != nil {
 					return nil, errors.Wrapf(err, "failed to get database metadata for database %q", db)
 				}
@@ -1345,16 +1344,16 @@ func (q *querySpanExtractor) findTableSchema(databaseName, tableName string) (ba
 			}
 		}
 	}
-	if dbSchema == nil {
-		return nil, &parsererror.ResourceNotFoundError{
+	if dbMetadata == nil {
+		return nil, &base.ResourceNotFoundError{
 			Database: &databaseName,
 		}
 	}
 
 	emptySchema := ""
-	schema := dbSchema.GetSchema(emptySchema)
+	schema := dbMetadata.GetSchemaMetadata(emptySchema)
 	if schema == nil {
-		return nil, &parsererror.ResourceNotFoundError{
+		return nil, &base.ResourceNotFoundError{
 			Database: &databaseName,
 			Schema:   &emptySchema,
 		}
@@ -1372,20 +1371,20 @@ func (q *querySpanExtractor) findTableSchema(databaseName, tableName string) (ba
 		tableSchema = schema.GetTable(tableName)
 	}
 	if tableSchema != nil {
-		columnNames := make([]string, 0, len(tableSchema.GetColumns()))
-		for _, column := range tableSchema.GetColumns() {
+		columnNames := make([]string, 0, len(tableSchema.GetProto().GetColumns()))
+		for _, column := range tableSchema.GetProto().GetColumns() {
 			columnNames = append(columnNames, column.Name)
 		}
 		return &base.PhysicalTable{
 			Name:     tableSchema.GetProto().Name,
 			Schema:   emptySchema,
-			Database: dbSchema.GetName(),
+			Database: dbMetadata.GetProto().GetName(),
 			Server:   "",
 			Columns:  columnNames,
 		}, nil
 	}
 
-	var viewSchema *model.ViewMetadata
+	var viewSchema *storepb.ViewMetadata
 	if q.ignoreCaseSensitive {
 		for _, view := range schema.ListViewNames() {
 			if strings.EqualFold(view, tableName) {
@@ -1402,15 +1401,15 @@ func (q *querySpanExtractor) findTableSchema(databaseName, tableName string) (ba
 			return nil, errors.Wrapf(err, "failed to get columns for view %q", tableName)
 		}
 		return &base.PhysicalView{
-			Name:     viewSchema.GetProto().Name,
+			Name:     viewSchema.Name,
 			Schema:   emptySchema,
-			Database: dbSchema.GetName(),
+			Database: dbMetadata.GetProto().GetName(),
 			Server:   "",
 			Columns:  columns,
 		}, nil
 	}
 
-	return nil, &parsererror.ResourceNotFoundError{
+	return nil, &base.ResourceNotFoundError{
 		Database: &databaseName,
 		Schema:   &emptySchema,
 		Table:    &tableName,

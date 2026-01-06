@@ -6,12 +6,14 @@ import (
 	"regexp"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/tsql-parser"
+	parser "github.com/bytebase/parser/tsql"
 	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	tsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/tsql"
 )
 
@@ -20,7 +22,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MSSQL, advisor.SchemaRuleTableDropNamingConvention, &TableDropNamingConventionAdvisor{})
+	advisor.Register(storepb.Engine_MSSQL, storepb.SQLReviewRule_TABLE_DROP_NAMING_CONVENTION, &TableDropNamingConventionAdvisor{})
 }
 
 // TableDropNamingConventionAdvisor is the advisor checking for table drop with naming convention.
@@ -29,27 +31,38 @@ type TableDropNamingConventionAdvisor struct {
 
 // Check checks for table drop with naming convention.
 func (*TableDropNamingConventionAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	format, _, err := advisor.UnmarshalNamingRulePayloadAsRegexp(checkCtx.Rule.Payload)
+
+	namingPayload := checkCtx.Rule.GetNamingPayload()
+	if namingPayload == nil {
+		return nil, errors.New("naming_payload is required for table drop naming convention rule")
+	}
+
+	format, err := regexp.Compile(namingPayload.Format)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to compile regex format %q", namingPayload.Format)
 	}
 
 	// Create the rule
-	rule := NewTableDropNamingConventionRule(level, string(checkCtx.Rule.Type), format)
+	rule := NewTableDropNamingConventionRule(level, checkCtx.Rule.Type.String(), format)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList(), nil
 }
@@ -101,7 +114,7 @@ func (r *TableDropNamingConventionRule) enterDropTable(ctx *parser.Drop_tableCon
 		if !r.format.MatchString(normalizedTableName) {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.TableDropNamingConventionMismatch.Int32(),
+				Code:          code.TableDropNamingConventionMismatch.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("[%s] mismatches drop table naming convention, naming format should be %q", normalizedTableName, r.format),
 				StartPosition: common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),

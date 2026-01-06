@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
-	"github.com/pkg/errors"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -20,7 +22,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleIndexTypeAllowList, &IndexTypeAllowListAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_INDEX_TYPE_ALLOW_LIST, &IndexTypeAllowListAdvisor{})
 }
 
 // IndexTypeAllowListAdvisor is the advisor checking for index types.
@@ -28,31 +30,30 @@ type IndexTypeAllowListAdvisor struct {
 }
 
 func (*IndexTypeAllowListAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parser result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	payload, err := advisor.UnmarshalStringArrayTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
+	stringArrayPayload := checkCtx.Rule.GetStringArrayPayload()
 
 	// Create the rule
-	rule := NewIndexTypeAllowListRule(level, string(checkCtx.Rule.Type), payload.List)
+	rule := NewIndexTypeAllowListRule(level, checkCtx.Rule.Type.String(), stringArrayPayload.List)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -189,7 +190,7 @@ func (r *IndexTypeAllowListRule) validateIndexType(indexType string, line int) {
 
 	r.AddAdvice(&storepb.Advice{
 		Status:        r.level,
-		Code:          advisor.IndexTypeNotAllowed.Int32(),
+		Code:          code.IndexTypeNotAllowed.Int32(),
 		Title:         r.title,
 		Content:       fmt.Sprintf("Index type `%s` is not allowed", indexType),
 		StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + line),

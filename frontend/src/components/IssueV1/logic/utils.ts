@@ -7,16 +7,16 @@ import {
   useProjectV1Store,
 } from "@/store";
 import {
+  type ComposedDatabase,
+  type ComposedIssue,
   isValidDatabaseName,
   isValidInstanceName,
   unknownDatabase,
   unknownInstance,
-  type ComposedDatabase,
-  type ComposedIssue,
 } from "@/types";
 import { State } from "@/types/proto-es/v1/common_pb";
 import { InstanceResourceSchema } from "@/types/proto-es/v1/instance_service_pb";
-import { IssueStatus, type Issue } from "@/types/proto-es/v1/issue_service_pb";
+import { type Issue, IssueStatus } from "@/types/proto-es/v1/issue_service_pb";
 import type { Plan } from "@/types/proto-es/v1/plan_service_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import type { Task } from "@/types/proto-es/v1/rollout_service_pb";
@@ -41,7 +41,6 @@ export const useInstanceForTask = (task: Task) => {
       instanceName = task.target;
       break;
     case Task_Type.DATABASE_MIGRATE:
-    case Task_Type.DATABASE_SDL:
     case Task_Type.DATABASE_EXPORT:
       instanceName = extractDatabaseResourceName(task.target).instance;
       break;
@@ -94,7 +93,8 @@ export const mockDatabase = (projectEntity: Project, database: string) => {
 
 export const extractCoreDatabaseInfoFromDatabaseCreateTask = (
   project: Project,
-  task: Task
+  task: Task,
+  plan?: Plan
 ) => {
   const coreDatabaseInfo = (
     instanceName: string,
@@ -137,8 +137,14 @@ export const extractCoreDatabaseInfoFromDatabaseCreateTask = (
   };
 
   if (task.payload?.case === "databaseCreate") {
-    const databaseName = task.payload.value.database;
     const instance = task.target;
+    // Get database name from plan spec
+    const spec = plan?.specs?.find((s) => s.id === task.specId);
+    const createConfig =
+      spec?.config?.case === "createDatabaseConfig"
+        ? spec.config.value
+        : undefined;
+    const databaseName = createConfig?.database || "";
     return coreDatabaseInfo(instance, databaseName);
   }
 

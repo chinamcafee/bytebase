@@ -6,8 +6,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -20,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleColumnSetDefaultForNotNull, &ColumnSetDefaultForNotNullAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_COLUMN_SET_DEFAULT_FOR_NOT_NULL, &ColumnSetDefaultForNotNullAdvisor{})
 }
 
 // ColumnSetDefaultForNotNullAdvisor is the advisor checking for set default value for not null column.
@@ -29,9 +30,10 @@ type ColumnSetDefaultForNotNullAdvisor struct {
 
 // Check checks for set default value for not null column.
 func (*ColumnSetDefaultForNotNullAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -40,7 +42,7 @@ func (*ColumnSetDefaultForNotNullAdvisor) Check(_ context.Context, checkCtx advi
 	}
 	checker := &columnSetDefaultForNotNullChecker{
 		level: level,
-		title: string(checkCtx.Rule.Type),
+		title: checkCtx.Rule.Type.String(),
 	}
 
 	for _, stmt := range stmtList {
@@ -119,7 +121,7 @@ func (checker *columnSetDefaultForNotNullChecker) Enter(in ast.Node) (ast.Node, 
 	for _, column := range notNullColumnWithNoDefault {
 		checker.adviceList = append(checker.adviceList, &storepb.Advice{
 			Status:        checker.level,
-			Code:          advisor.NotNullColumnWithNoDefault.Int32(),
+			Code:          code.NotNullColumnWithNoDefault.Int32(),
 			Title:         checker.title,
 			Content:       fmt.Sprintf("Column `%s`.`%s` is NOT NULL but doesn't have DEFAULT", column.tableName, column.columnName),
 			StartPosition: common.ConvertANTLRLineToPosition(column.line),

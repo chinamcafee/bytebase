@@ -1,5 +1,5 @@
 <template>
-  <div class="w-full space-y-4">
+  <div class="w-full flex flex-col gap-y-4">
     <div class="flex flex-row items-center justify-end">
       <div v-if="state.reorderRules" class="flex items-center gap-x-2">
         <NButton
@@ -21,32 +21,38 @@
           {{ $t("common.confirm") }}
         </NButton>
       </div>
-      <div v-else class="flex items-center gap-x-2">
-        <NButton
-          class="capitalize"
-          :disabled="
-            !hasPermission ||
-            !hasSensitiveDataFeature ||
-            state.maskingRuleItemList.length <= 1
-          "
-          @click="state.reorderRules = true"
-        >
-          <template #icon>
-            <ListOrderedIcon class="h-4 w-4" />
-          </template>
-          {{ $t("settings.sensitive-data.global-rules.re-order") }}
-        </NButton>
-        <NButton
-          type="primary"
-          :disabled="!hasPermission || !hasSensitiveDataFeature"
-          @click="addNewRule"
-        >
-          <template #icon>
-            <PlusIcon class="h-4 w-4" />
-          </template>
-          {{ $t("common.add") }}
-        </NButton>
-      </div>
+      <PermissionGuardWrapper
+        v-else
+        v-slot="slotProps"
+        :permissions="['bb.policies.update']"
+      >
+        <div class="flex items-center gap-x-2">
+          <NButton
+            class="capitalize"
+            :disabled="
+              slotProps.disabled ||
+              !hasSensitiveDataFeature ||
+              state.maskingRuleItemList.length <= 1
+            "
+            @click="state.reorderRules = true"
+          >
+            <template #icon>
+              <ListOrderedIcon class="h-4 w-4" />
+            </template>
+            {{ $t("settings.sensitive-data.global-rules.re-order") }}
+          </NButton>
+          <NButton
+            type="primary"
+            :disabled="slotProps.disabled || !hasSensitiveDataFeature"
+            @click="addNewRule"
+          >
+            <template #icon>
+              <PlusIcon class="h-4 w-4" />
+            </template>
+            {{ $t("common.add") }}
+          </NButton>
+        </div>
+      </PermissionGuardWrapper>
     </div>
     <div class="textinfolabel">
       {{ $t("settings.sensitive-data.global-rules.description") }}
@@ -55,7 +61,7 @@
       />
     </div>
     <NEmpty
-      class="py-12 border rounded"
+      class="py-12 border rounded-sm"
       v-if="state.maskingRuleItemList.length === 0"
     />
     <div
@@ -114,64 +120,54 @@
 <script lang="ts" setup>
 import { create } from "@bufbuild/protobuf";
 import {
-  PlusIcon,
-  PencilIcon,
-  ChevronUpIcon,
   ChevronDownIcon,
+  ChevronUpIcon,
   ListOrderedIcon,
+  PencilIcon,
+  PlusIcon,
 } from "lucide-vue-next";
-import { NButton, NEmpty, type SelectOption } from "naive-ui";
+import { NButton, NEmpty } from "naive-ui";
 import { v4 as uuidv4 } from "uuid";
-import { computed, reactive, nextTick, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import {
-  getEnvironmentIdOptions,
-  getProjectIdOptions,
-} from "@/components/CustomApproval/Settings/components/common";
-import { getDatabaseIdOptions } from "@/components/CustomApproval/Settings/components/common/utils";
 import { type OptionConfig } from "@/components/ExprEditor/context";
+import PermissionGuardWrapper from "@/components/Permission/PermissionGuardWrapper.vue";
+import type { ResourceSelectOption } from "@/components/v2/Select/RemoteResourceSelector/types";
 import { useBodyLayoutContext } from "@/layouts/common";
 import type { Factor } from "@/plugins/cel";
-import {
-  featureToRef,
-  pushNotification,
-  usePolicyV1Store,
-  useProjectV1Store,
-  useInstanceV1Store,
-  useDatabaseV1Store,
-} from "@/store";
-import type { Policy } from "@/types/proto-es/v1/org_policy_service_pb";
-import type { MaskingRulePolicy_MaskingRule } from "@/types/proto-es/v1/org_policy_service_pb";
-import {
-  MaskingRulePolicySchema,
-  MaskingRulePolicy_MaskingRuleSchema,
+import { featureToRef, pushNotification, usePolicyV1Store } from "@/store";
+import type {
+  MaskingRulePolicy_MaskingRule,
+  Policy,
 } from "@/types/proto-es/v1/org_policy_service_pb";
 import {
-  PolicyType,
+  MaskingRulePolicy_MaskingRuleSchema,
+  MaskingRulePolicySchema,
   PolicyResourceType,
+  PolicyType,
 } from "@/types/proto-es/v1/org_policy_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import {
   arraySwap,
+  getDatabaseIdOptionConfig,
+  getEnvironmentIdOptions,
+  getInstanceIdOptionConfig,
+  getProjectIdOptionConfig,
   hasWorkspacePermissionV2,
-  getDefaultPagination,
 } from "@/utils";
 import {
-  CEL_ATTRIBUTE_RESOURCE_ENVIRONMENT_ID,
-  CEL_ATTRIBUTE_RESOURCE_PROJECT_ID,
-  CEL_ATTRIBUTE_RESOURCE_INSTANCE_ID,
-  CEL_ATTRIBUTE_RESOURCE_DATABASE_NAME,
-  CEL_ATTRIBUTE_RESOURCE_TABLE_NAME,
-  CEL_ATTRIBUTE_RESOURCE_COLUMN_NAME,
   CEL_ATTRIBUTE_RESOURCE_CLASSIFICATION_LEVEL,
+  CEL_ATTRIBUTE_RESOURCE_COLUMN_NAME,
+  CEL_ATTRIBUTE_RESOURCE_DATABASE_NAME,
+  CEL_ATTRIBUTE_RESOURCE_ENVIRONMENT_ID,
+  CEL_ATTRIBUTE_RESOURCE_INSTANCE_ID,
+  CEL_ATTRIBUTE_RESOURCE_PROJECT_ID,
+  CEL_ATTRIBUTE_RESOURCE_TABLE_NAME,
 } from "@/utils/cel-attributes";
 import LearnMoreLink from "../LearnMoreLink.vue";
 import { MiniActionButton } from "../v2";
 import MaskingRuleConfig from "./components/MaskingRuleConfig.vue";
-import {
-  getClassificationLevelOptions,
-  getInstanceIdOptions,
-} from "./components/utils";
+import { getClassificationLevelOptions } from "./components/utils";
 
 type MaskingRuleMode = "NORMAL" | "EDIT" | "CREATE";
 
@@ -185,9 +181,6 @@ interface LocalState {
   processing: boolean;
   reorderRules: boolean;
 }
-const props = defineProps<{
-  embedded?: boolean;
-}>();
 const { t } = useI18n();
 const state = reactive<LocalState>({
   maskingRuleItemList: [],
@@ -203,9 +196,7 @@ const hasSensitiveDataFeature = featureToRef(PlanFeature.FEATURE_DATA_MASKING);
 const layout = {
   mainContainerRef: ref<HTMLDivElement>(),
 };
-if (!props.embedded) {
-  layout.mainContainerRef = useBodyLayoutContext().mainContainerRef;
-}
+layout.mainContainerRef = useBodyLayoutContext().mainContainerRef;
 
 const updateList = async () => {
   const policy = await policyStore.getOrFetchPolicyByParentAndType({
@@ -366,70 +357,26 @@ const factorList = computed((): Factor[] => {
 
 const factorOptionsMap = computed((): Map<Factor, OptionConfig> => {
   return factorList.value.reduce((map, factor) => {
-    let options: SelectOption[] = [];
+    let options: ResourceSelectOption<unknown>[] = [];
     switch (factor) {
       case CEL_ATTRIBUTE_RESOURCE_ENVIRONMENT_ID:
         options = getEnvironmentIdOptions();
         break;
       case CEL_ATTRIBUTE_RESOURCE_INSTANCE_ID:
-        const store = useInstanceV1Store();
-        map.set(factor, {
-          remote: true,
-          options: [],
-          search: async (keyword: string) => {
-            return store
-              .fetchInstanceList({
-                pageSize: getDefaultPagination(),
-                filter: {
-                  query: keyword,
-                },
-              })
-              .then((resp) => getInstanceIdOptions(resp.instances));
-          },
-        });
+        map.set(factor, getInstanceIdOptionConfig());
         return map;
       case CEL_ATTRIBUTE_RESOURCE_PROJECT_ID:
-        const projectStore = useProjectV1Store();
-        map.set(factor, {
-          remote: true,
-          options: [],
-          search: async (keyword: string) => {
-            return projectStore
-              .fetchProjectList({
-                pageSize: getDefaultPagination(),
-                filter: {
-                  query: keyword,
-                },
-              })
-              .then((resp) => getProjectIdOptions(resp.projects));
-          },
-        });
+        map.set(factor, getProjectIdOptionConfig());
         return map;
       case CEL_ATTRIBUTE_RESOURCE_CLASSIFICATION_LEVEL:
         options = getClassificationLevelOptions();
         break;
       case CEL_ATTRIBUTE_RESOURCE_DATABASE_NAME: {
-        const dbStore = useDatabaseV1Store();
-        map.set(factor, {
-          remote: true,
-          options: [],
-          search: async (keyword: string) => {
-            return dbStore
-              .fetchDatabases({
-                pageSize: getDefaultPagination(),
-                parent: "workspaces/-",
-                filter: {
-                  query: keyword,
-                },
-              })
-              .then((resp) => getDatabaseIdOptions(resp.databases));
-          },
-        });
+        map.set(factor, getDatabaseIdOptionConfig("workspaces/-"));
         return map;
       }
     }
     map.set(factor, {
-      remote: false,
       options,
     });
     return map;

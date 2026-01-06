@@ -6,8 +6,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pkg/errors"
+
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
+	"github.com/pingcap/tidb/pkg/parser/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -20,7 +23,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleRequiredColumn, &ColumnRequirementAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_COLUMN_REQUIRED, &ColumnRequirementAdvisor{})
 }
 
 // ColumnRequirementAdvisor is the advisor checking for column requirement.
@@ -29,26 +32,27 @@ type ColumnRequirementAdvisor struct {
 
 // Check checks for the column requirement.
 func (*ColumnRequirementAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	root, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	columnList, err := advisor.UnmarshalRequiredColumnList(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	stringArrayPayload := checkCtx.Rule.GetStringArrayPayload()
+	if stringArrayPayload == nil {
+		return nil, errors.New("string_array_payload is required for column required rule")
 	}
 	requiredColumns := make(columnSet)
-	for _, column := range columnList {
+	for _, column := range stringArrayPayload.List {
 		requiredColumns[column] = true
 	}
 	checker := &columnRequirementChecker{
 		level:           level,
-		title:           string(checkCtx.Rule.Type),
+		title:           checkCtx.Rule.Type.String(),
 		requiredColumns: requiredColumns,
 		tables:          make(tableState),
 		line:            make(map[string]int),
@@ -133,7 +137,7 @@ func (v *columnRequirementChecker) generateAdviceList() []*storepb.Advice {
 			slices.Sort(missingColumns)
 			v.adviceList = append(v.adviceList, &storepb.Advice{
 				Status:        v.level,
-				Code:          advisor.NoRequiredColumn.Int32(),
+				Code:          code.NoRequiredColumn.Int32(),
 				Title:         v.title,
 				Content:       fmt.Sprintf("Table `%s` requires columns: %s", tableName, strings.Join(missingColumns, ", ")),
 				StartPosition: common.ConvertANTLRLineToPosition(v.line[tableName]),

@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package bytebase.v1;
 
+import "buf/validate/validate.proto";
 import "google/api/annotations.proto";
 import "google/api/client.proto";
 import "google/api/field_behavior.proto";
@@ -63,7 +64,6 @@ service GroupService {
     };
     option (google.api.method_signature) = "group,update_mask";
     option (bytebase.v1.permission) = "bb.groups.update";
-    option (bytebase.v1.allow_missing_requires) = "bb.groups.create";
     option (bytebase.v1.auth_method) = CUSTOM;
     option (bytebase.v1.audit) = true;
   }
@@ -214,18 +214,21 @@ message Group {
   };
 
   // The name of the group to retrieve.
-  // Format: groups/{group}, group is an email.
+  // Format: groups/{group}, the group should be email or uuid.
   string name = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   // The display title of the group.
-  string title = 2;
+  string title = 2 [(buf.validate.field).string.max_len = 200];
 
   // The description of the group.
-  string description = 3;
+  string description = 3 [(buf.validate.field).string.max_len = 1000];
 
   // The members of the group.
-  repeated GroupMember members = 5;
+  repeated GroupMember members = 4;
 
   // The source system where the group originated (e.g., Entra ID for SCIM sync).
-  string source = 7;
+  string source = 5;
+
+  // The unique email for the group.
+  string email = 6;
 }

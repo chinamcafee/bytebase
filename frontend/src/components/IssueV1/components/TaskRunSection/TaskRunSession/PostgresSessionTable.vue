@@ -1,5 +1,5 @@
 <template>
-  <div class="w-full space-y-2">
+  <div class="w-full flex flex-col gap-y-2">
     <NDataTable
       :single-column="true"
       :columns="columns"
@@ -49,7 +49,7 @@
 
 <script setup lang="tsx">
 import { AlignHorizontalJustifyStartIcon } from "lucide-vue-next";
-import { NDataTable, type DataTableColumn } from "naive-ui";
+import { type DataTableColumn, NDataTable } from "naive-ui";
 import { computed } from "vue";
 import { getDateForPbTimestampProtoEs } from "@/types";
 import type {

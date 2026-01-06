@@ -4,10 +4,10 @@
       :classification="classification"
       :classification-config="classificationConfig"
     />
-    <template v-if="!readonly && !disabled && !setClassificationFromComment">
+    <template v-if="!readonly && !disabled">
       <NPopconfirm v-if="classification" @positive-click="removeClassification">
         <template #trigger>
-          <MiniActionButton>
+          <MiniActionButton @click.stop="">
             <XIcon class="w-3 h-3" />
           </MiniActionButton>
         </template>
@@ -35,15 +35,14 @@
 <script lang="ts" setup>
 import { PencilIcon, XIcon } from "lucide-vue-next";
 import { NPopconfirm } from "naive-ui";
-import { ref, computed } from "vue";
-import ClassificationLevelBadge from "@/components/SchemaTemplate/ClassificationLevelBadge.vue";
+import { ref } from "vue";
+import ClassificationLevelBadge from "@/components/SensitiveData/components/ClassificationLevelBadge.vue";
+import SelectClassificationDrawer from "@/components/SensitiveData/components/SelectClassificationDrawer.vue";
 import { MiniActionButton } from "@/components/v2";
 import type { Engine } from "@/types/proto-es/v1/common_pb";
 import type { DataClassificationSetting_DataClassificationConfig as DataClassificationConfig } from "@/types/proto-es/v1/setting_service_pb";
-import SelectClassificationDrawer from "../SchemaTemplate/SelectClassificationDrawer.vue";
-import { supportSetClassificationFromComment } from "./utils";
 
-const props = defineProps<{
+defineProps<{
   classification?: string | undefined;
   readonly?: boolean;
   disabled?: boolean;
@@ -66,11 +65,4 @@ const removeClassification = (e: MouseEvent) => {
   e.stopPropagation();
   emit("apply", "");
 };
-
-const setClassificationFromComment = computed(() => {
-  return supportSetClassificationFromComment(
-    props.engine,
-    props.classificationConfig?.classificationFromConfig ?? false
-  );
-});
 </script>

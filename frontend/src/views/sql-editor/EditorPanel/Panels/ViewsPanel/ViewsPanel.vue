@@ -2,7 +2,7 @@
   <div v-if="metadata?.schema" class="h-full overflow-hidden flex flex-col">
     <div
       v-show="!metadata.view"
-      class="w-full h-[44px] py-2 px-2 border-b flex flex-row gap-x-2 justify-end items-center"
+      class="w-full h-11 py-2 px-2 border-b flex flex-row gap-x-2 justify-end items-center"
     >
       <SearchBox
         v-model:value="state.keyword"
@@ -40,8 +40,8 @@ import {
 } from "@/store";
 import type {
   DatabaseMetadata,
-  ViewMetadata,
   SchemaMetadata,
+  ViewMetadata,
 } from "@/types/proto-es/v1/database_service_pb";
 import { useCurrentTabViewStateContext } from "../../context/viewState";
 import ViewDetail from "./ViewDetail.vue";

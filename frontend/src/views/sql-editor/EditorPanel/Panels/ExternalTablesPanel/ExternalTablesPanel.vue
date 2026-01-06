@@ -25,7 +25,7 @@
 
     <template v-if="metadata.externalTable">
       <div
-        class="w-full h-[28px] flex flex-row gap-x-2 justify-between items-center"
+        class="w-full h-7 flex flex-row gap-x-2 justify-between items-center"
       >
         <div class="flex items-center justify-start">
           <NButton text @click="deselect">
@@ -67,8 +67,8 @@ import {
 } from "@/store";
 import type {
   DatabaseMetadata,
-  SchemaMetadata,
   ExternalTableMetadata,
+  SchemaMetadata,
 } from "@/types/proto-es/v1/database_service_pb";
 import { useCurrentTabViewStateContext } from "../../context/viewState";
 import ExternalTableColumnsTable from "./ExternalTableColumnsTable.vue";

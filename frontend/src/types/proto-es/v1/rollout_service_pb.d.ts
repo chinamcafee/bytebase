@@ -5,8 +5,7 @@
 import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
-import type { Plan } from "./plan_service_pb";
-import type { DatabaseChangeType, ExportFormat, MigrationType, Position } from "./common_pb";
+import type { Position, Range } from "./common_pb";
 
 /**
  * Describes the file v1/rollout_service.proto.
@@ -18,8 +17,8 @@ export declare const file_v1_rollout_service: GenFile;
  */
 export declare type BatchRunTasksRequest = Message<"bytebase.v1.BatchRunTasksRequest"> & {
   /**
-   * The name of the parent of the tasks.
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}
+   * The stage name for the tasks.
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}
    *
    * @generated from field: string parent = 1;
    */
@@ -27,23 +26,16 @@ export declare type BatchRunTasksRequest = Message<"bytebase.v1.BatchRunTasksReq
 
   /**
    * The tasks to run.
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}
    *
    * @generated from field: repeated string tasks = 2;
    */
   tasks: string[];
 
   /**
-   * The reason for running the tasks.
-   *
-   * @generated from field: string reason = 3;
-   */
-  reason: string;
-
-  /**
    * The task run should run after run_time.
    *
-   * @generated from field: optional google.protobuf.Timestamp run_time = 4;
+   * @generated from field: optional google.protobuf.Timestamp run_time = 3;
    */
   runTime?: Timestamp;
 };
@@ -71,8 +63,8 @@ export declare const BatchRunTasksResponseSchema: GenMessage<BatchRunTasksRespon
  */
 export declare type BatchSkipTasksRequest = Message<"bytebase.v1.BatchSkipTasksRequest"> & {
   /**
-   * The name of the parent of the tasks.
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}
+   * The stage name for the tasks.
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}
    *
    * @generated from field: string parent = 1;
    */
@@ -80,7 +72,7 @@ export declare type BatchSkipTasksRequest = Message<"bytebase.v1.BatchSkipTasksR
 
   /**
    * The tasks to skip.
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}
    *
    * @generated from field: repeated string tasks = 2;
    */
@@ -117,9 +109,9 @@ export declare const BatchSkipTasksResponseSchema: GenMessage<BatchSkipTasksResp
  */
 export declare type BatchCancelTaskRunsRequest = Message<"bytebase.v1.BatchCancelTaskRunsRequest"> & {
   /**
-   * The name of the parent of the taskRuns.
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}
-   * Use `projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/-` to cancel task runs under the same stage.
+   * The task name for the taskRuns.
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}
+   * Use `projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/-` to cancel task runs under the same stage.
    *
    * @generated from field: string parent = 1;
    */
@@ -127,18 +119,11 @@ export declare type BatchCancelTaskRunsRequest = Message<"bytebase.v1.BatchCance
 
   /**
    * The taskRuns to cancel.
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
    *
    * @generated from field: repeated string task_runs = 2;
    */
   taskRuns: string[];
-
-  /**
-   * The reason for canceling the task runs.
-   *
-   * @generated from field: string reason = 3;
-   */
-  reason: string;
 };
 
 /**
@@ -165,7 +150,8 @@ export declare const BatchCancelTaskRunsResponseSchema: GenMessage<BatchCancelTa
 export declare type GetRolloutRequest = Message<"bytebase.v1.GetRolloutRequest"> & {
   /**
    * The name of the rollout to retrieve.
-   * Format: projects/{project}/rollouts/{rollout}
+   * This is the rollout resource name, which is the plan name plus /rollout suffix.
+   * Format: projects/{project}/plans/{plan}/rollout
    *
    * @generated from field: string name = 1;
    */
@@ -217,13 +203,11 @@ export declare type ListRolloutsRequest = Message<"bytebase.v1.ListRolloutsReque
    * The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
    *
    * Supported filters:
-   * - creator: the rollout creator full name in "users/{email or id}" format, support "==" operator.
    * - update_time: rollout update time in "2006-01-02T15:04:05Z07:00" format, support ">=" or "<=" operator.
-   * - task_type: the task type, support "==" and "in" operators, check the Task.Type enum for the values.
+   * - task_type: the task type, support "in" operator, check the Task.Type enum for the values.
    *
    * For example:
-   * creator == "users/ed@bytebase.com" && update_time >= "2025-01-02T15:04:05Z07:00"
-   * task_type == "DATABASE_MIGRATE"
+   * update_time >= "2025-01-02T15:04:05Z07:00"
    * task_type in ["DATABASE_MIGRATE", "DATABASE_EXPORT"]
    *
    * @generated from field: string filter = 4;
@@ -268,22 +252,15 @@ export declare const ListRolloutsResponseSchema: GenMessage<ListRolloutsResponse
  */
 export declare type CreateRolloutRequest = Message<"bytebase.v1.CreateRolloutRequest"> & {
   /**
-   * The parent project where this rollout will be created.
-   * Format: projects/{project}
+   * The parent plan for which this rollout will be created.
+   * Format: projects/{project}/plans/{plan}
    *
    * @generated from field: string parent = 1;
    */
   parent: string;
 
   /**
-   * The rollout to create.
-   *
-   * @generated from field: bytebase.v1.Rollout rollout = 2;
-   */
-  rollout?: Rollout;
-
-  /**
-   * Create the rollout and the stages up to the target stage.
+   * Create the rollout only for the specified target.
    * Format: environments/{environment}
    * If unspecified, all stages are created.
    * If set to "", no stages are created.
@@ -291,14 +268,6 @@ export declare type CreateRolloutRequest = Message<"bytebase.v1.CreateRolloutReq
    * @generated from field: optional string target = 3;
    */
   target?: string;
-
-  /**
-   * If set, validate the request and preview the rollout, but
-   * do not actually create it.
-   *
-   * @generated from field: bool validate_only = 4;
-   */
-  validateOnly: boolean;
 };
 
 /**
@@ -308,39 +277,13 @@ export declare type CreateRolloutRequest = Message<"bytebase.v1.CreateRolloutReq
 export declare const CreateRolloutRequestSchema: GenMessage<CreateRolloutRequest>;
 
 /**
- * @generated from message bytebase.v1.PreviewRolloutRequest
- */
-export declare type PreviewRolloutRequest = Message<"bytebase.v1.PreviewRolloutRequest"> & {
-  /**
-   * The name of the project.
-   * Format: projects/{project}
-   *
-   * @generated from field: string project = 1;
-   */
-  project: string;
-
-  /**
-   * The plan used to preview rollout.
-   *
-   * @generated from field: bytebase.v1.Plan plan = 2;
-   */
-  plan?: Plan;
-};
-
-/**
- * Describes the message bytebase.v1.PreviewRolloutRequest.
- * Use `create(PreviewRolloutRequestSchema)` to create a new message.
- */
-export declare const PreviewRolloutRequestSchema: GenMessage<PreviewRolloutRequest>;
-
-/**
  * @generated from message bytebase.v1.ListTaskRunsRequest
  */
 export declare type ListTaskRunsRequest = Message<"bytebase.v1.ListTaskRunsRequest"> & {
   /**
-   * The parent, which owns this collection of plans.
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}
-   * Use "projects/{project}/rollouts/{rollout}/stages/-/tasks/-" to list all taskRuns from a rollout.
+   * The parent, which owns this collection of taskRuns.
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}
+   * Use "projects/{project}/plans/{plan}/rollout/stages/-/tasks/-" to list all taskRuns from a rollout.
    *
    * @generated from field: string parent = 1;
    */
@@ -376,7 +319,7 @@ export declare const ListTaskRunsResponseSchema: GenMessage<ListTaskRunsResponse
  */
 export declare type GetTaskRunRequest = Message<"bytebase.v1.GetTaskRunRequest"> & {
   /**
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
    *
    * @generated from field: string name = 1;
    */
@@ -394,8 +337,7 @@ export declare const GetTaskRunRequestSchema: GenMessage<GetTaskRunRequest>;
  */
 export declare type GetTaskRunLogRequest = Message<"bytebase.v1.GetTaskRunLogRequest"> & {
   /**
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
-   * TODO(d): check the resource_reference.
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
    *
    * @generated from field: string parent = 1;
    */
@@ -414,59 +356,36 @@ export declare const GetTaskRunLogRequestSchema: GenMessage<GetTaskRunLogRequest
 export declare type Rollout = Message<"bytebase.v1.Rollout"> & {
   /**
    * The resource name of the rollout.
-   * Format: projects/{project}/rollouts/{rollout}
+   * Format: projects/{project}/plans/{plan}/rollout
    *
    * @generated from field: string name = 1;
    */
   name: string;
 
   /**
-   * The plan that this rollout is based on.
-   * Format: projects/{project}/plans/{plan}
-   *
-   * @generated from field: string plan = 3;
-   */
-  plan: string;
-
-  /**
    * The title of the rollout, inherited from the associated plan.
    * This field is output only and cannot be directly set.
    *
-   * @generated from field: string title = 4;
+   * @generated from field: string title = 3;
    */
   title: string;
 
   /**
    * Stages and thus tasks of the rollout.
    *
-   * @generated from field: repeated bytebase.v1.Stage stages = 5;
+   * @generated from field: repeated bytebase.v1.Stage stages = 4;
    */
   stages: Stage[];
 
   /**
-   * Format: users/hello@world.com
-   *
-   * @generated from field: string creator = 6;
-   */
-  creator: string;
-
-  /**
-   * @generated from field: google.protobuf.Timestamp create_time = 7;
+   * @generated from field: google.protobuf.Timestamp create_time = 6;
    */
   createTime?: Timestamp;
 
   /**
-   * @generated from field: google.protobuf.Timestamp update_time = 8;
+   * @generated from field: google.protobuf.Timestamp update_time = 7;
    */
   updateTime?: Timestamp;
-
-  /**
-   * The issue associated with the rollout. Could be empty.
-   * Format: projects/{project}/issues/{issue}
-   *
-   * @generated from field: string issue = 9;
-   */
-  issue: string;
 };
 
 /**
@@ -480,7 +399,7 @@ export declare const RolloutSchema: GenMessage<Rollout>;
  */
 export declare type Stage = Message<"bytebase.v1.Stage"> & {
   /**
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}
    * Use "-" for {stage} when the stage has no environment or deleted environment.
    *
    * @generated from field: string name = 1;
@@ -492,7 +411,7 @@ export declare type Stage = Message<"bytebase.v1.Stage"> & {
    * e.g., "prod".
    * Use "-" when the stage has no environment or deleted environment.
    *
-   * @generated from field: string id = 3;
+   * @generated from field: string id = 2;
    */
   id: string;
 
@@ -500,14 +419,14 @@ export declare type Stage = Message<"bytebase.v1.Stage"> & {
    * environment is the environment of the stage.
    * Format: environments/{environment} for valid environments, or "environments/-" for stages without environment or with deleted environments.
    *
-   * @generated from field: string environment = 4;
+   * @generated from field: string environment = 3;
    */
   environment: string;
 
   /**
    * The tasks within this stage.
    *
-   * @generated from field: repeated bytebase.v1.Task tasks = 5;
+   * @generated from field: repeated bytebase.v1.Task tasks = 4;
    */
   tasks: Task[];
 };
@@ -523,7 +442,7 @@ export declare const StageSchema: GenMessage<Stage>;
  */
 export declare type Task = Message<"bytebase.v1.Task"> & {
   /**
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}
    *
    * @generated from field: string name = 1;
    */
@@ -531,28 +450,27 @@ export declare type Task = Message<"bytebase.v1.Task"> & {
 
   /**
    * A UUID4 string that uniquely identifies the Spec.
-   * Could be empty if the rollout of the task does not have an associating plan.
    *
-   * @generated from field: string spec_id = 4;
+   * @generated from field: string spec_id = 2;
    */
   specId: string;
 
   /**
    * Status is the status of the task.
    *
-   * @generated from field: bytebase.v1.Task.Status status = 5;
+   * @generated from field: bytebase.v1.Task.Status status = 3;
    */
   status: Task_Status;
 
   /**
    * The reason why the task was skipped.
    *
-   * @generated from field: string skipped_reason = 15;
+   * @generated from field: string skipped_reason = 4;
    */
   skippedReason: string;
 
   /**
-   * @generated from field: bytebase.v1.Task.Type type = 6;
+   * @generated from field: bytebase.v1.Task.Type type = 5;
    */
   type: Task_Type;
 
@@ -560,7 +478,7 @@ export declare type Task = Message<"bytebase.v1.Task"> & {
    * Format: instances/{instance} if the task is DatabaseCreate.
    * Format: instances/{instance}/databases/{database}
    *
-   * @generated from field: string target = 8;
+   * @generated from field: string target = 6;
    */
   target: string;
 
@@ -569,19 +487,19 @@ export declare type Task = Message<"bytebase.v1.Task"> & {
    */
   payload: {
     /**
-     * @generated from field: bytebase.v1.Task.DatabaseCreate database_create = 9;
+     * @generated from field: bytebase.v1.Task.DatabaseCreate database_create = 7;
      */
     value: Task_DatabaseCreate;
     case: "databaseCreate";
   } | {
     /**
-     * @generated from field: bytebase.v1.Task.DatabaseUpdate database_update = 11;
+     * @generated from field: bytebase.v1.Task.DatabaseUpdate database_update = 8;
      */
     value: Task_DatabaseUpdate;
     case: "databaseUpdate";
   } | {
     /**
-     * @generated from field: bytebase.v1.Task.DatabaseDataExport database_data_export = 16;
+     * @generated from field: bytebase.v1.Task.DatabaseDataExport database_data_export = 9;
      */
     value: Task_DatabaseDataExport;
     case: "databaseDataExport";
@@ -591,7 +509,7 @@ export declare type Task = Message<"bytebase.v1.Task"> & {
    * The update_time is the update time of latest task run.
    * If there are no task runs, it will be empty.
    *
-   * @generated from field: optional google.protobuf.Timestamp update_time = 13;
+   * @generated from field: optional google.protobuf.Timestamp update_time = 10;
    */
   updateTime?: Timestamp;
 
@@ -599,7 +517,7 @@ export declare type Task = Message<"bytebase.v1.Task"> & {
    * The run_time is the scheduled run time of latest task run.
    * If there are no task runs or the task run is not scheduled, it will be empty.
    *
-   * @generated from field: optional google.protobuf.Timestamp run_time = 21;
+   * @generated from field: optional google.protobuf.Timestamp run_time = 11;
    */
   runTime?: Timestamp;
 };
@@ -617,54 +535,11 @@ export declare const TaskSchema: GenMessage<Task>;
  */
 export declare type Task_DatabaseCreate = Message<"bytebase.v1.Task.DatabaseCreate"> & {
   /**
-   * The project owning the database.
-   * Format: projects/{project}
-   *
-   * @generated from field: string project = 1;
-   */
-  project: string;
-
-  /**
-   * Database name.
-   *
-   * @generated from field: string database = 2;
-   */
-  database: string;
-
-  /**
-   * Table name.
-   *
-   * @generated from field: string table = 3;
-   */
-  table: string;
-
-  /**
    * Format: projects/{project}/sheets/{sheet}
    *
    * @generated from field: string sheet = 4;
    */
   sheet: string;
-
-  /**
-   * The character set for the database.
-   *
-   * @generated from field: string character_set = 5;
-   */
-  characterSet: string;
-
-  /**
-   * The collation for the database.
-   *
-   * @generated from field: string collation = 6;
-   */
-  collation: string;
-
-  /**
-   * The environment the database belongs to.
-   *
-   * @generated from field: string environment = 7;
-   */
-  environment: string;
 };
 
 /**
@@ -680,32 +555,27 @@ export declare const Task_DatabaseCreateSchema: GenMessage<Task_DatabaseCreate>;
  */
 export declare type Task_DatabaseUpdate = Message<"bytebase.v1.Task.DatabaseUpdate"> & {
   /**
-   * Format: projects/{project}/sheets/{sheet}
+   * The source can be either a sheet or a release.
    *
-   * @generated from field: string sheet = 1;
+   * @generated from oneof bytebase.v1.Task.DatabaseUpdate.source
    */
-  sheet: string;
-
-  /**
-   * The target schema version after this update.
-   *
-   * @generated from field: string schema_version = 2;
-   */
-  schemaVersion: string;
-
-  /**
-   * The type of database change (MIGRATE or SDL).
-   *
-   * @generated from field: bytebase.v1.DatabaseChangeType database_change_type = 3;
-   */
-  databaseChangeType: DatabaseChangeType;
-
-  /**
-   * migration_type is only set when database_change_type is MIGRATE.
-   *
-   * @generated from field: bytebase.v1.MigrationType migration_type = 4;
-   */
-  migrationType: MigrationType;
+  source: {
+    /**
+     * Format: projects/{project}/sheets/{sheet}
+     *
+     * @generated from field: string sheet = 1;
+     */
+    value: string;
+    case: "sheet";
+  } | {
+    /**
+     * Format: projects/{project}/releases/{release}
+     *
+     * @generated from field: string release = 4;
+     */
+    value: string;
+    case: "release";
+  } | { case: undefined; value?: undefined };
 };
 
 /**
@@ -721,35 +591,12 @@ export declare const Task_DatabaseUpdateSchema: GenMessage<Task_DatabaseUpdate>;
  */
 export declare type Task_DatabaseDataExport = Message<"bytebase.v1.Task.DatabaseDataExport"> & {
   /**
-   * The resource name of the target.
-   * Format: instances/{instance-id}/databases/{database-name}
-   *
-   * @generated from field: string target = 1;
-   */
-  target: string;
-
-  /**
    * The resource name of the sheet.
    * Format: projects/{project}/sheets/{sheet}
    *
    * @generated from field: string sheet = 2;
    */
   sheet: string;
-
-  /**
-   * The format of the exported file.
-   *
-   * @generated from field: bytebase.v1.ExportFormat format = 3;
-   */
-  format: ExportFormat;
-
-  /**
-   * The zip password provided by users.
-   * Leave it empty if no needs to encrypt the zip file.
-   *
-   * @generated from field: optional string password = 4;
-   */
-  password?: string;
 };
 
 /**
@@ -859,20 +706,12 @@ export enum Task_Type {
   DATABASE_MIGRATE = 3,
 
   /**
-   * Database SDL (Schema Definition Language) task that synchronizes declarative schema.
-   * Use payload DatabaseUpdate.
-   *
-   * @generated from enum value: DATABASE_SDL = 6;
-   */
-  DATABASE_SDL = 6,
-
-  /**
    * Database export task that exports query results or table data.
    * Use payload DatabaseDataExport.
    *
-   * @generated from enum value: DATABASE_EXPORT = 5;
+   * @generated from enum value: DATABASE_EXPORT = 4;
    */
-  DATABASE_EXPORT = 5,
+  DATABASE_EXPORT = 4,
 }
 
 /**
@@ -885,7 +724,7 @@ export declare const Task_TypeSchema: GenEnum<Task_Type>;
  */
 export declare type TaskRun = Message<"bytebase.v1.TaskRun"> & {
   /**
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
    *
    * @generated from field: string name = 1;
    */
@@ -894,24 +733,24 @@ export declare type TaskRun = Message<"bytebase.v1.TaskRun"> & {
   /**
    * Format: users/hello@world.com
    *
-   * @generated from field: string creator = 3;
+   * @generated from field: string creator = 2;
    */
   creator: string;
 
   /**
-   * @generated from field: google.protobuf.Timestamp create_time = 5;
+   * @generated from field: google.protobuf.Timestamp create_time = 3;
    */
   createTime?: Timestamp;
 
   /**
-   * @generated from field: google.protobuf.Timestamp update_time = 6;
+   * @generated from field: google.protobuf.Timestamp update_time = 4;
    */
   updateTime?: Timestamp;
 
   /**
    * The current execution status of the task run.
    *
-   * @generated from field: bytebase.v1.TaskRun.Status status = 8;
+   * @generated from field: bytebase.v1.TaskRun.Status status = 5;
    */
   status: TaskRun_Status;
 
@@ -919,65 +758,45 @@ export declare type TaskRun = Message<"bytebase.v1.TaskRun"> & {
    * Below are the results of a task run.
    * Detailed information about the task run result.
    *
-   * @generated from field: string detail = 9;
+   * @generated from field: string detail = 6;
    */
   detail: string;
 
   /**
-   * The resource name of the changelog.
-   * Format: instances/{instance}/databases/{database}/changelogs/{changelog}
-   *
-   * @generated from field: string changelog = 20;
-   */
-  changelog: string;
-
-  /**
-   * The schema version after this task run completes.
-   *
-   * @generated from field: string schema_version = 11;
-   */
-  schemaVersion: string;
-
-  /**
    * The time when the task run started execution.
    *
-   * @generated from field: google.protobuf.Timestamp start_time = 14;
+   * @generated from field: google.protobuf.Timestamp start_time = 9;
    */
   startTime?: Timestamp;
 
   /**
    * The export archive status for data export tasks.
    *
-   * @generated from field: bytebase.v1.TaskRun.ExportArchiveStatus export_archive_status = 16;
+   * @generated from field: bytebase.v1.TaskRun.ExportArchiveStatus export_archive_status = 10;
    */
   exportArchiveStatus: TaskRun_ExportArchiveStatus;
 
   /**
-   * The prior backup detail that will be used to rollback the task run.
+   * Indicates whether a prior backup was created for this task run.
+   * When true, rollback SQL can be generated via PreviewTaskRunRollback.
+   * Backup details are available in the task run logs.
    *
-   * @generated from field: bytebase.v1.TaskRun.PriorBackupDetail prior_backup_detail = 17;
+   * @generated from field: bool has_prior_backup = 11;
    */
-  priorBackupDetail?: TaskRun_PriorBackupDetail;
+  hasPriorBackup: boolean;
 
   /**
    * Scheduling information about the task run.
    *
-   * @generated from field: bytebase.v1.TaskRun.SchedulerInfo scheduler_info = 18;
+   * @generated from field: bytebase.v1.TaskRun.SchedulerInfo scheduler_info = 12;
    */
   schedulerInfo?: TaskRun_SchedulerInfo;
-
-  /**
-   * Format: projects/{project}/sheets/{sheet}
-   *
-   * @generated from field: string sheet = 19;
-   */
-  sheet: string;
 
   /**
    * The task run should run after run_time.
    * This can only be set when creating the task run calling BatchRunTasks.
    *
-   * @generated from field: optional google.protobuf.Timestamp run_time = 21;
+   * @generated from field: optional google.protobuf.Timestamp run_time = 14;
    */
   runTime?: Timestamp;
 };
@@ -987,102 +806,6 @@ export declare type TaskRun = Message<"bytebase.v1.TaskRun"> & {
  * Use `create(TaskRunSchema)` to create a new message.
  */
 export declare const TaskRunSchema: GenMessage<TaskRun>;
-
-/**
- * Prior backup detail for rollback purposes.
- *
- * @generated from message bytebase.v1.TaskRun.PriorBackupDetail
- */
-export declare type TaskRun_PriorBackupDetail = Message<"bytebase.v1.TaskRun.PriorBackupDetail"> & {
-  /**
-   * The list of backed up tables.
-   *
-   * @generated from field: repeated bytebase.v1.TaskRun.PriorBackupDetail.Item items = 1;
-   */
-  items: TaskRun_PriorBackupDetail_Item[];
-};
-
-/**
- * Describes the message bytebase.v1.TaskRun.PriorBackupDetail.
- * Use `create(TaskRun_PriorBackupDetailSchema)` to create a new message.
- */
-export declare const TaskRun_PriorBackupDetailSchema: GenMessage<TaskRun_PriorBackupDetail>;
-
-/**
- * A single backup table mapping.
- *
- * @generated from message bytebase.v1.TaskRun.PriorBackupDetail.Item
- */
-export declare type TaskRun_PriorBackupDetail_Item = Message<"bytebase.v1.TaskRun.PriorBackupDetail.Item"> & {
-  /**
-   * The original table information.
-   *
-   * @generated from field: bytebase.v1.TaskRun.PriorBackupDetail.Item.Table source_table = 1;
-   */
-  sourceTable?: TaskRun_PriorBackupDetail_Item_Table;
-
-  /**
-   * The target backup table information.
-   *
-   * @generated from field: bytebase.v1.TaskRun.PriorBackupDetail.Item.Table target_table = 2;
-   */
-  targetTable?: TaskRun_PriorBackupDetail_Item_Table;
-
-  /**
-   * The start position in the SQL statement.
-   *
-   * @generated from field: bytebase.v1.Position start_position = 3;
-   */
-  startPosition?: Position;
-
-  /**
-   * The end position in the SQL statement.
-   *
-   * @generated from field: bytebase.v1.Position end_position = 4;
-   */
-  endPosition?: Position;
-};
-
-/**
- * Describes the message bytebase.v1.TaskRun.PriorBackupDetail.Item.
- * Use `create(TaskRun_PriorBackupDetail_ItemSchema)` to create a new message.
- */
-export declare const TaskRun_PriorBackupDetail_ItemSchema: GenMessage<TaskRun_PriorBackupDetail_Item>;
-
-/**
- * Table information.
- *
- * @generated from message bytebase.v1.TaskRun.PriorBackupDetail.Item.Table
- */
-export declare type TaskRun_PriorBackupDetail_Item_Table = Message<"bytebase.v1.TaskRun.PriorBackupDetail.Item.Table"> & {
-  /**
-   * The database information.
-   * Format: instances/{instance}/databases/{database}
-   *
-   * @generated from field: string database = 1;
-   */
-  database: string;
-
-  /**
-   * The schema name.
-   *
-   * @generated from field: string schema = 2;
-   */
-  schema: string;
-
-  /**
-   * The table name.
-   *
-   * @generated from field: string table = 3;
-   */
-  table: string;
-};
-
-/**
- * Describes the message bytebase.v1.TaskRun.PriorBackupDetail.Item.Table.
- * Use `create(TaskRun_PriorBackupDetail_Item_TableSchema)` to create a new message.
- */
-export declare const TaskRun_PriorBackupDetail_Item_TableSchema: GenMessage<TaskRun_PriorBackupDetail_Item_Table>;
 
 /**
  * Information about task run scheduling.
@@ -1124,22 +847,6 @@ export declare type TaskRun_SchedulerInfo_WaitingCause = Message<"bytebase.v1.Ta
    */
   cause: {
     /**
-     * Waiting due to connection limit reached.
-     *
-     * @generated from field: bool connection_limit = 1;
-     */
-    value: boolean;
-    case: "connectionLimit";
-  } | {
-    /**
-     * Waiting for another task to complete.
-     *
-     * @generated from field: bytebase.v1.TaskRun.SchedulerInfo.WaitingCause.Task task = 2;
-     */
-    value: TaskRun_SchedulerInfo_WaitingCause_Task;
-    case: "task";
-  } | {
-    /**
      * Waiting due to parallel tasks limit.
      *
      * @generated from field: bool parallel_tasks_limit = 3;
@@ -1154,33 +861,6 @@ export declare type TaskRun_SchedulerInfo_WaitingCause = Message<"bytebase.v1.Ta
  * Use `create(TaskRun_SchedulerInfo_WaitingCauseSchema)` to create a new message.
  */
 export declare const TaskRun_SchedulerInfo_WaitingCauseSchema: GenMessage<TaskRun_SchedulerInfo_WaitingCause>;
-
-/**
- * Information about a blocking task.
- *
- * @generated from message bytebase.v1.TaskRun.SchedulerInfo.WaitingCause.Task
- */
-export declare type TaskRun_SchedulerInfo_WaitingCause_Task = Message<"bytebase.v1.TaskRun.SchedulerInfo.WaitingCause.Task"> & {
-  /**
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}
-   *
-   * @generated from field: string task = 1;
-   */
-  task: string;
-
-  /**
-   * Format: projects/{project}/issues/{issue}
-   *
-   * @generated from field: string issue = 2;
-   */
-  issue: string;
-};
-
-/**
- * Describes the message bytebase.v1.TaskRun.SchedulerInfo.WaitingCause.Task.
- * Use `create(TaskRun_SchedulerInfo_WaitingCause_TaskSchema)` to create a new message.
- */
-export declare const TaskRun_SchedulerInfo_WaitingCause_TaskSchema: GenMessage<TaskRun_SchedulerInfo_WaitingCause_Task>;
 
 /**
  * @generated from enum bytebase.v1.TaskRun.Status
@@ -1227,6 +907,13 @@ export enum TaskRun_Status {
    * @generated from enum value: CANCELED = 5;
    */
   CANCELED = 5,
+
+  /**
+   * Task run is ready for immediate execution.
+   *
+   * @generated from enum value: AVAILABLE = 6;
+   */
+  AVAILABLE = 6,
 }
 
 /**
@@ -1270,7 +957,7 @@ export declare const TaskRun_ExportArchiveStatusSchema: GenEnum<TaskRun_ExportAr
  */
 export declare type TaskRunLog = Message<"bytebase.v1.TaskRunLog"> & {
   /**
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}/log
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}/log
    *
    * @generated from field: string name = 1;
    */
@@ -1304,72 +991,72 @@ export declare type TaskRunLogEntry = Message<"bytebase.v1.TaskRunLogEntry"> & {
   /**
    * The time when the log was recorded.
    *
-   * @generated from field: google.protobuf.Timestamp log_time = 6;
+   * @generated from field: google.protobuf.Timestamp log_time = 2;
    */
   logTime?: Timestamp;
 
   /**
    * The deployment ID for this log entry.
    *
-   * @generated from field: string deploy_id = 12;
+   * @generated from field: string deploy_id = 3;
    */
   deployId: string;
 
   /**
    * Schema dump details (if type is SCHEMA_DUMP).
    *
-   * @generated from field: bytebase.v1.TaskRunLogEntry.SchemaDump schema_dump = 2;
+   * @generated from field: bytebase.v1.TaskRunLogEntry.SchemaDump schema_dump = 4;
    */
   schemaDump?: TaskRunLogEntry_SchemaDump;
 
   /**
    * Command execution details (if type is COMMAND_EXECUTE).
    *
-   * @generated from field: bytebase.v1.TaskRunLogEntry.CommandExecute command_execute = 3;
+   * @generated from field: bytebase.v1.TaskRunLogEntry.CommandExecute command_execute = 5;
    */
   commandExecute?: TaskRunLogEntry_CommandExecute;
 
   /**
    * Database sync details (if type is DATABASE_SYNC).
    *
-   * @generated from field: bytebase.v1.TaskRunLogEntry.DatabaseSync database_sync = 4;
+   * @generated from field: bytebase.v1.TaskRunLogEntry.DatabaseSync database_sync = 6;
    */
   databaseSync?: TaskRunLogEntry_DatabaseSync;
 
   /**
-   * Task run status update details (if type is TASK_RUN_STATUS_UPDATE).
-   *
-   * @generated from field: bytebase.v1.TaskRunLogEntry.TaskRunStatusUpdate task_run_status_update = 5;
-   */
-  taskRunStatusUpdate?: TaskRunLogEntry_TaskRunStatusUpdate;
-
-  /**
    * Transaction control details (if type is TRANSACTION_CONTROL).
    *
-   * @generated from field: bytebase.v1.TaskRunLogEntry.TransactionControl transaction_control = 7;
+   * @generated from field: bytebase.v1.TaskRunLogEntry.TransactionControl transaction_control = 8;
    */
   transactionControl?: TaskRunLogEntry_TransactionControl;
 
   /**
    * Prior backup details (if type is PRIOR_BACKUP).
    *
-   * @generated from field: bytebase.v1.TaskRunLogEntry.PriorBackup prior_backup = 8;
+   * @generated from field: bytebase.v1.TaskRunLogEntry.PriorBackup prior_backup = 9;
    */
   priorBackup?: TaskRunLogEntry_PriorBackup;
 
   /**
    * Retry information details (if type is RETRY_INFO).
    *
-   * @generated from field: bytebase.v1.TaskRunLogEntry.RetryInfo retry_info = 9;
+   * @generated from field: bytebase.v1.TaskRunLogEntry.RetryInfo retry_info = 10;
    */
   retryInfo?: TaskRunLogEntry_RetryInfo;
 
   /**
    * Compute diff details (if type is COMPUTE_DIFF).
    *
-   * @generated from field: bytebase.v1.TaskRunLogEntry.ComputeDiff compute_diff = 10;
+   * @generated from field: bytebase.v1.TaskRunLogEntry.ComputeDiff compute_diff = 11;
    */
   computeDiff?: TaskRunLogEntry_ComputeDiff;
+
+  /**
+   * Release file execution details (if type is RELEASE_FILE_EXECUTE).
+   *
+   * @generated from field: bytebase.v1.TaskRunLogEntry.ReleaseFileExecute release_file_execute = 12;
+   */
+  releaseFileExecute?: TaskRunLogEntry_ReleaseFileExecute;
 };
 
 /**
@@ -1426,12 +1113,13 @@ export declare type TaskRunLogEntry_CommandExecute = Message<"bytebase.v1.TaskRu
   logTime?: Timestamp;
 
   /**
-   * Either `command_indexes` or `statement` is set.
-   * The indexes of the executed commands.
+   * The byte offset range of the executed command in the sheet.
+   * Uses byte offsets (not character indices) for efficient slicing of sheet content bytes.
+   * Example: For "SELECT 你好;" in a UTF-8 sheet, range [0, 13) represents all 13 bytes.
    *
-   * @generated from field: repeated int32 command_indexes = 2;
+   * @generated from field: bytebase.v1.Range range = 2;
    */
-  commandIndexes: number[];
+  range?: Range;
 
   /**
    * The executed statement.
@@ -1531,59 +1219,6 @@ export declare type TaskRunLogEntry_DatabaseSync = Message<"bytebase.v1.TaskRunL
 export declare const TaskRunLogEntry_DatabaseSyncSchema: GenMessage<TaskRunLogEntry_DatabaseSync>;
 
 /**
- * Task run status update details.
- *
- * @generated from message bytebase.v1.TaskRunLogEntry.TaskRunStatusUpdate
- */
-export declare type TaskRunLogEntry_TaskRunStatusUpdate = Message<"bytebase.v1.TaskRunLogEntry.TaskRunStatusUpdate"> & {
-  /**
-   * The new status.
-   *
-   * @generated from field: bytebase.v1.TaskRunLogEntry.TaskRunStatusUpdate.Status status = 1;
-   */
-  status: TaskRunLogEntry_TaskRunStatusUpdate_Status;
-};
-
-/**
- * Describes the message bytebase.v1.TaskRunLogEntry.TaskRunStatusUpdate.
- * Use `create(TaskRunLogEntry_TaskRunStatusUpdateSchema)` to create a new message.
- */
-export declare const TaskRunLogEntry_TaskRunStatusUpdateSchema: GenMessage<TaskRunLogEntry_TaskRunStatusUpdate>;
-
-/**
- * Internal status for task run execution.
- *
- * @generated from enum bytebase.v1.TaskRunLogEntry.TaskRunStatusUpdate.Status
- */
-export enum TaskRunLogEntry_TaskRunStatusUpdate_Status {
-  /**
-   * Unspecified status.
-   *
-   * @generated from enum value: STATUS_UNSPECIFIED = 0;
-   */
-  STATUS_UNSPECIFIED = 0,
-
-  /**
-   * The task run is ready to be executed by the scheduler.
-   *
-   * @generated from enum value: RUNNING_WAITING = 1;
-   */
-  RUNNING_WAITING = 1,
-
-  /**
-   * The task run is being executed by the scheduler.
-   *
-   * @generated from enum value: RUNNING_RUNNING = 2;
-   */
-  RUNNING_RUNNING = 2,
-}
-
-/**
- * Describes the enum bytebase.v1.TaskRunLogEntry.TaskRunStatusUpdate.Status.
- */
-export declare const TaskRunLogEntry_TaskRunStatusUpdate_StatusSchema: GenEnum<TaskRunLogEntry_TaskRunStatusUpdate_Status>;
-
-/**
  * Transaction control operation details.
  *
  * @generated from message bytebase.v1.TaskRunLogEntry.TransactionControl
@@ -1673,9 +1308,9 @@ export declare type TaskRunLogEntry_PriorBackup = Message<"bytebase.v1.TaskRunLo
   /**
    * The backup details.
    *
-   * @generated from field: bytebase.v1.TaskRun.PriorBackupDetail prior_backup_detail = 3;
+   * @generated from field: bytebase.v1.TaskRunLogEntry.PriorBackup.PriorBackupDetail prior_backup_detail = 3;
    */
-  priorBackupDetail?: TaskRun_PriorBackupDetail;
+  priorBackupDetail?: TaskRunLogEntry_PriorBackup_PriorBackupDetail;
 
   /**
    * Error message if the backup failed.
@@ -1690,6 +1325,102 @@ export declare type TaskRunLogEntry_PriorBackup = Message<"bytebase.v1.TaskRunLo
  * Use `create(TaskRunLogEntry_PriorBackupSchema)` to create a new message.
  */
 export declare const TaskRunLogEntry_PriorBackupSchema: GenMessage<TaskRunLogEntry_PriorBackup>;
+
+/**
+ * Prior backup detail for rollback purposes.
+ *
+ * @generated from message bytebase.v1.TaskRunLogEntry.PriorBackup.PriorBackupDetail
+ */
+export declare type TaskRunLogEntry_PriorBackup_PriorBackupDetail = Message<"bytebase.v1.TaskRunLogEntry.PriorBackup.PriorBackupDetail"> & {
+  /**
+   * The list of backed up tables.
+   *
+   * @generated from field: repeated bytebase.v1.TaskRunLogEntry.PriorBackup.PriorBackupDetail.Item items = 1;
+   */
+  items: TaskRunLogEntry_PriorBackup_PriorBackupDetail_Item[];
+};
+
+/**
+ * Describes the message bytebase.v1.TaskRunLogEntry.PriorBackup.PriorBackupDetail.
+ * Use `create(TaskRunLogEntry_PriorBackup_PriorBackupDetailSchema)` to create a new message.
+ */
+export declare const TaskRunLogEntry_PriorBackup_PriorBackupDetailSchema: GenMessage<TaskRunLogEntry_PriorBackup_PriorBackupDetail>;
+
+/**
+ * A single backup table mapping.
+ *
+ * @generated from message bytebase.v1.TaskRunLogEntry.PriorBackup.PriorBackupDetail.Item
+ */
+export declare type TaskRunLogEntry_PriorBackup_PriorBackupDetail_Item = Message<"bytebase.v1.TaskRunLogEntry.PriorBackup.PriorBackupDetail.Item"> & {
+  /**
+   * The original table information.
+   *
+   * @generated from field: bytebase.v1.TaskRunLogEntry.PriorBackup.PriorBackupDetail.Item.Table source_table = 1;
+   */
+  sourceTable?: TaskRunLogEntry_PriorBackup_PriorBackupDetail_Item_Table;
+
+  /**
+   * The target backup table information.
+   *
+   * @generated from field: bytebase.v1.TaskRunLogEntry.PriorBackup.PriorBackupDetail.Item.Table target_table = 2;
+   */
+  targetTable?: TaskRunLogEntry_PriorBackup_PriorBackupDetail_Item_Table;
+
+  /**
+   * The start position in the SQL statement.
+   *
+   * @generated from field: bytebase.v1.Position start_position = 3;
+   */
+  startPosition?: Position;
+
+  /**
+   * The end position in the SQL statement.
+   *
+   * @generated from field: bytebase.v1.Position end_position = 4;
+   */
+  endPosition?: Position;
+};
+
+/**
+ * Describes the message bytebase.v1.TaskRunLogEntry.PriorBackup.PriorBackupDetail.Item.
+ * Use `create(TaskRunLogEntry_PriorBackup_PriorBackupDetail_ItemSchema)` to create a new message.
+ */
+export declare const TaskRunLogEntry_PriorBackup_PriorBackupDetail_ItemSchema: GenMessage<TaskRunLogEntry_PriorBackup_PriorBackupDetail_Item>;
+
+/**
+ * Table information.
+ *
+ * @generated from message bytebase.v1.TaskRunLogEntry.PriorBackup.PriorBackupDetail.Item.Table
+ */
+export declare type TaskRunLogEntry_PriorBackup_PriorBackupDetail_Item_Table = Message<"bytebase.v1.TaskRunLogEntry.PriorBackup.PriorBackupDetail.Item.Table"> & {
+  /**
+   * The database information.
+   * Format: instances/{instance}/databases/{database}
+   *
+   * @generated from field: string database = 1;
+   */
+  database: string;
+
+  /**
+   * The schema name.
+   *
+   * @generated from field: string schema = 2;
+   */
+  schema: string;
+
+  /**
+   * The table name.
+   *
+   * @generated from field: string table = 3;
+   */
+  table: string;
+};
+
+/**
+ * Describes the message bytebase.v1.TaskRunLogEntry.PriorBackup.PriorBackupDetail.Item.Table.
+ * Use `create(TaskRunLogEntry_PriorBackup_PriorBackupDetail_Item_TableSchema)` to create a new message.
+ */
+export declare const TaskRunLogEntry_PriorBackup_PriorBackupDetail_Item_TableSchema: GenMessage<TaskRunLogEntry_PriorBackup_PriorBackupDetail_Item_Table>;
 
 /**
  * Retry information for failed operations.
@@ -1760,6 +1491,33 @@ export declare type TaskRunLogEntry_ComputeDiff = Message<"bytebase.v1.TaskRunLo
 export declare const TaskRunLogEntry_ComputeDiffSchema: GenMessage<TaskRunLogEntry_ComputeDiff>;
 
 /**
+ * Release file execution details.
+ *
+ * @generated from message bytebase.v1.TaskRunLogEntry.ReleaseFileExecute
+ */
+export declare type TaskRunLogEntry_ReleaseFileExecute = Message<"bytebase.v1.TaskRunLogEntry.ReleaseFileExecute"> & {
+  /**
+   * The version of the file being executed (e.g., "0001").
+   *
+   * @generated from field: string version = 1;
+   */
+  version: string;
+
+  /**
+   * The file path within the release (e.g., "2.2/V0001_create_table.sql").
+   *
+   * @generated from field: string file_path = 2;
+   */
+  filePath: string;
+};
+
+/**
+ * Describes the message bytebase.v1.TaskRunLogEntry.ReleaseFileExecute.
+ * Use `create(TaskRunLogEntry_ReleaseFileExecuteSchema)` to create a new message.
+ */
+export declare const TaskRunLogEntry_ReleaseFileExecuteSchema: GenMessage<TaskRunLogEntry_ReleaseFileExecute>;
+
+/**
  * The type of log entry.
  *
  * @generated from enum bytebase.v1.TaskRunLogEntry.Type
@@ -1794,13 +1552,6 @@ export enum TaskRunLogEntry_Type {
   DATABASE_SYNC = 3,
 
   /**
-   * Task run status update.
-   *
-   * @generated from enum value: TASK_RUN_STATUS_UPDATE = 4;
-   */
-  TASK_RUN_STATUS_UPDATE = 4,
-
-  /**
    * Transaction control (BEGIN, COMMIT, ROLLBACK).
    *
    * @generated from enum value: TRANSACTION_CONTROL = 5;
@@ -1827,6 +1578,13 @@ export enum TaskRunLogEntry_Type {
    * @generated from enum value: COMPUTE_DIFF = 8;
    */
   COMPUTE_DIFF = 8,
+
+  /**
+   * Release file execution.
+   *
+   * @generated from enum value: RELEASE_FILE_EXECUTE = 9;
+   */
+  RELEASE_FILE_EXECUTE = 9,
 }
 
 /**
@@ -1839,7 +1597,7 @@ export declare const TaskRunLogEntry_TypeSchema: GenEnum<TaskRunLogEntry_Type>;
  */
 export declare type GetTaskRunSessionRequest = Message<"bytebase.v1.GetTaskRunSessionRequest"> & {
   /**
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
    *
    * @generated from field: string parent = 1;
    */
@@ -1857,7 +1615,7 @@ export declare const GetTaskRunSessionRequestSchema: GenMessage<GetTaskRunSessio
  */
 export declare type TaskRunSession = Message<"bytebase.v1.TaskRunSession"> & {
   /**
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}/session
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}/session
    *
    * @generated from field: string name = 1;
    */
@@ -2035,7 +1793,7 @@ export declare const TaskRunSession_Postgres_SessionSchema: GenMessage<TaskRunSe
  */
 export declare type PreviewTaskRunRollbackRequest = Message<"bytebase.v1.PreviewTaskRunRollbackRequest"> & {
   /**
-   * Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
+   * Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
    *
    * @generated from field: string name = 1;
    */
@@ -2073,7 +1831,7 @@ export declare const PreviewTaskRunRollbackResponseSchema: GenMessage<PreviewTas
  */
 export declare const RolloutService: GenService<{
   /**
-   * Retrieves a rollout by name.
+   * Retrieves a rollout by its plan name.
    * Permissions required: bb.rollouts.get
    *
    * @generated from rpc bytebase.v1.RolloutService.GetRollout
@@ -2095,7 +1853,7 @@ export declare const RolloutService: GenService<{
     output: typeof ListRolloutsResponseSchema;
   },
   /**
-   * Creates a new rollout from a plan.
+   * Creates a new rollout for a plan.
    * Permissions required: bb.rollouts.create
    *
    * @generated from rpc bytebase.v1.RolloutService.CreateRollout
@@ -2103,17 +1861,6 @@ export declare const RolloutService: GenService<{
   createRollout: {
     methodKind: "unary";
     input: typeof CreateRolloutRequestSchema;
-    output: typeof RolloutSchema;
-  },
-  /**
-   * Previews the rollout that would be created from a plan.
-   * Permissions required: bb.rollouts.preview
-   *
-   * @generated from rpc bytebase.v1.RolloutService.PreviewRollout
-   */
-  previewRollout: {
-    methodKind: "unary";
-    input: typeof PreviewRolloutRequestSchema;
     output: typeof RolloutSchema;
   },
   /**

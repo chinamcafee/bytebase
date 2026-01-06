@@ -4,21 +4,23 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pkg/errors"
+	"github.com/antlr4-go/antlr/v4"
 
-	"github.com/bytebase/bytebase/backend/common"
+	parser "github.com/bytebase/parser/postgresql"
+
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/parser/pg/legacy/ast"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
+	"github.com/bytebase/bytebase/backend/plugin/parser/pg"
 )
 
 var (
 	_ advisor.Advisor = (*ColumnCommentConventionAdvisor)(nil)
-	_ ast.Visitor     = (*columnCommentConventionChecker)(nil)
 )
 
 func init() {
-	advisor.Register(storepb.Engine_POSTGRES, advisor.SchemaRuleColumnCommentConvention, &ColumnCommentConventionAdvisor{})
+	advisor.Register(storepb.Engine_POSTGRES, storepb.SQLReviewRule_COLUMN_COMMENT, &ColumnCommentConventionAdvisor{})
 }
 
 // ColumnCommentConventionAdvisor is the advisor checking for column comment convention.
@@ -26,126 +28,235 @@ type ColumnCommentConventionAdvisor struct {
 }
 
 func (*ColumnCommentConventionAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.Node)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Node")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalCommentConventionRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
-	checker := &columnCommentConventionChecker{
-		level:                level,
-		title:                string(checkCtx.Rule.Type),
-		payload:              payload,
-		classificationConfig: checkCtx.ClassificationConfig,
+	commentPayload := checkCtx.Rule.GetCommentConventionPayload()
+
+	rule := &columnCommentConventionRule{
+		level:   level,
+		title:   checkCtx.Rule.Type.String(),
+		payload: commentPayload,
 	}
 
-	for _, stmt := range stmtList {
-		ast.Walk(checker, stmt)
+	checker := NewGenericChecker([]Rule{rule})
+
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
-	for _, columnName := range checker.columnNameList {
-		var commentStmt *ast.CommentStmt
-		for _, stmt := range checker.commentStmtList {
-			columnNameDef, ok := stmt.Object.(*ast.ColumnNameDef)
-			if !ok {
-				continue
-			}
-			if columnNameDef.ColumnName == columnName.ColumnName && columnNameDef.Table.Name == columnName.Table.Name {
-				commentStmt = stmt
-				// continue and find the last comment statement.
+	// Now validate all collected columns against comments
+	return rule.generateAdvice(), nil
+}
+
+type columnInfo struct {
+	schema string
+	table  string
+	column string
+	line   int
+}
+
+type commentInfo struct {
+	schema  string
+	table   string
+	column  string
+	comment string
+	line    int
+}
+
+type columnCommentConventionRule struct {
+	BaseRule
+
+	level   storepb.Advice_Status
+	title   string
+	payload *storepb.SQLReviewRule_CommentConventionRulePayload
+
+	columns  []columnInfo
+	comments []commentInfo
+}
+
+func (*columnCommentConventionRule) Name() string {
+	return "column_comment_convention"
+}
+
+func (r *columnCommentConventionRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
+	switch nodeType {
+	case "Createstmt":
+		r.handleCreatestmt(ctx.(*parser.CreatestmtContext))
+	case "Altertablestmt":
+		r.handleAltertablestmt(ctx.(*parser.AltertablestmtContext))
+	case "Commentstmt":
+		r.handleCommentstmt(ctx.(*parser.CommentstmtContext))
+	default:
+		// Do nothing for other node types
+	}
+	return nil
+}
+
+func (*columnCommentConventionRule) OnExit(_ antlr.ParserRuleContext, _ string) error {
+	return nil
+}
+
+func (r *columnCommentConventionRule) handleCreatestmt(ctx *parser.CreatestmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	tableName := r.extractTableName(ctx.AllQualified_name())
+	if tableName == "" {
+		return
+	}
+
+	// Extract all columns
+	if ctx.Opttableelementlist() != nil && ctx.Opttableelementlist().Tableelementlist() != nil {
+		allElements := ctx.Opttableelementlist().Tableelementlist().AllTableelement()
+		for _, elem := range allElements {
+			if elem.ColumnDef() != nil && elem.ColumnDef().Colid() != nil {
+				columnName := pg.NormalizePostgreSQLColid(elem.ColumnDef().Colid())
+				r.columns = append(r.columns, columnInfo{
+					schema: "public", // Default schema
+					table:  tableName,
+					column: columnName,
+					line:   elem.ColumnDef().GetStart().GetLine(),
+				})
 			}
 		}
-		if commentStmt == nil || commentStmt.Comment == "" {
-			if checker.payload.Required {
-				checker.adviceList = append(checker.adviceList, &storepb.Advice{
-					Status:        checker.level,
-					Code:          advisor.CommentEmpty.Int32(),
-					Title:         checker.title,
-					Content:       fmt.Sprintf("Comment is required for column `%s`", stringifyColumnNameDef(columnName)),
-					StartPosition: newPositionAtLineStart(columnName.LastLine()),
+	}
+}
+
+func (r *columnCommentConventionRule) handleAltertablestmt(ctx *parser.AltertablestmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	if ctx.Relation_expr() == nil || ctx.Relation_expr().Qualified_name() == nil {
+		return
+	}
+
+	tableName := ctx.Relation_expr().Qualified_name().GetText()
+	if tableName == "" {
+		return
+	}
+
+	// Check ALTER TABLE ADD COLUMN
+	if ctx.Alter_table_cmds() != nil {
+		allCmds := ctx.Alter_table_cmds().AllAlter_table_cmd()
+		for _, cmd := range allCmds {
+			// ADD COLUMN
+			if cmd.ADD_P() != nil && cmd.ColumnDef() != nil && cmd.ColumnDef().Colid() != nil {
+				columnName := pg.NormalizePostgreSQLColid(cmd.ColumnDef().Colid())
+				r.columns = append(r.columns, columnInfo{
+					schema: "public", // Default schema
+					table:  tableName,
+					column: columnName,
+					line:   cmd.ColumnDef().GetStart().GetLine(),
+				})
+			}
+		}
+	}
+}
+
+func (r *columnCommentConventionRule) handleCommentstmt(ctx *parser.CommentstmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	// Check if this is a COMMENT ON COLUMN statement
+	if ctx.COLUMN() == nil || ctx.Any_name() == nil {
+		return
+	}
+
+	// Extract table.column name from any_name
+	// any_name is like: table.column or schema.table.column
+	anyName := ctx.Any_name()
+	parts := pg.NormalizePostgreSQLAnyName(anyName)
+	if len(parts) < 2 {
+		return
+	}
+
+	tableName := parts[len(parts)-2]
+	columnName := parts[len(parts)-1]
+
+	// Extract comment text
+	comment := ""
+	if ctx.Comment_text() != nil && ctx.Comment_text().Sconst() != nil {
+		comment = extractStringConstant(ctx.Comment_text().Sconst())
+	}
+
+	r.comments = append(r.comments, commentInfo{
+		schema:  "public",
+		table:   tableName,
+		column:  columnName,
+		comment: comment,
+		line:    ctx.GetStart().GetLine(),
+	})
+}
+
+func (*columnCommentConventionRule) extractTableName(qualifiedNames []parser.IQualified_nameContext) string {
+	if len(qualifiedNames) == 0 {
+		return ""
+	}
+
+	// Return the last part (table name) from qualified name
+	return extractTableName(qualifiedNames[0])
+}
+
+func (r *columnCommentConventionRule) generateAdvice() []*storepb.Advice {
+	var adviceList []*storepb.Advice
+
+	// For each column, find its comment and validate
+	for _, col := range r.columns {
+		// Find the last matching comment for this column
+		var matchedComment *commentInfo
+		for i := range r.comments {
+			comment := &r.comments[i]
+			if comment.schema == col.schema && comment.table == col.table && comment.column == col.column {
+				matchedComment = comment
+				// Continue to find the last one
+			}
+		}
+
+		if matchedComment == nil || matchedComment.comment == "" {
+			if r.payload.Required {
+				adviceList = append(adviceList, &storepb.Advice{
+					Status:  r.level,
+					Code:    code.CommentEmpty.Int32(),
+					Title:   r.title,
+					Content: fmt.Sprintf("Comment is required for column `%s.%s`", col.table, col.column),
+					StartPosition: &storepb.Position{
+						Line:   int32(col.line),
+						Column: 0,
+					},
 				})
 			}
 		} else {
-			comment := commentStmt.Comment
-			if checker.payload.MaxLength > 0 && len(comment) > checker.payload.MaxLength {
-				checker.adviceList = append(checker.adviceList, &storepb.Advice{
-					Status:        checker.level,
-					Code:          advisor.CommentTooLong.Int32(),
-					Title:         checker.title,
-					Content:       fmt.Sprintf("Column `%s` comment is too long. The length of comment should be within %d characters", stringifyColumnNameDef(columnName), checker.payload.MaxLength),
-					StartPosition: newPositionAtLineStart(commentStmt.LastLine()),
+			comment := matchedComment.comment
+
+			// Check max length
+			if r.payload.MaxLength > 0 && int32(len(comment)) > r.payload.MaxLength {
+				adviceList = append(adviceList, &storepb.Advice{
+					Status:  r.level,
+					Code:    code.CommentTooLong.Int32(),
+					Title:   r.title,
+					Content: fmt.Sprintf("Column `%s.%s` comment is too long. The length of comment should be within %d characters", col.table, col.column, r.payload.MaxLength),
+					StartPosition: &storepb.Position{
+						Line:   int32(matchedComment.line),
+						Column: 0,
+					},
 				})
 			}
-			if checker.payload.RequiredClassification {
-				if classification, _ := common.GetClassificationAndUserComment(comment, checker.classificationConfig); classification == "" {
-					checker.adviceList = append(checker.adviceList, &storepb.Advice{
-						Status:        checker.level,
-						Code:          advisor.CommentMissingClassification.Int32(),
-						Title:         checker.title,
-						Content:       fmt.Sprintf("Column `%s` comment requires classification", stringifyColumnNameDef(columnName)),
-						StartPosition: newPositionAtLineStart(commentStmt.LastLine()),
-					})
-				}
-			}
 		}
 	}
 
-	return checker.adviceList, nil
-}
-
-type columnCommentConventionChecker struct {
-	adviceList           []*storepb.Advice
-	level                storepb.Advice_Status
-	title                string
-	payload              *advisor.CommentConventionRulePayload
-	classificationConfig *storepb.DataClassificationSetting_DataClassificationConfig
-
-	columnNameList  []*ast.ColumnNameDef
-	commentStmtList []*ast.CommentStmt
-}
-
-func (checker *columnCommentConventionChecker) Visit(node ast.Node) ast.Visitor {
-	if createTableStmt, ok := node.(*ast.CreateTableStmt); ok {
-		for _, columnDef := range createTableStmt.ColumnList {
-			columnName := &ast.ColumnNameDef{
-				Table:      createTableStmt.Name,
-				ColumnName: columnDef.ColumnName,
-			}
-			columnName.SetLastLine(createTableStmt.LastLine())
-			checker.columnNameList = append(checker.columnNameList, columnName)
-		}
-	} else if alterTableStmt, ok := node.(*ast.AlterTableStmt); ok {
-		for _, alterItem := range alterTableStmt.AlterItemList {
-			if addColumnListStmt, ok := alterItem.(*ast.AddColumnListStmt); ok {
-				for _, columnDef := range addColumnListStmt.ColumnList {
-					columnName := &ast.ColumnNameDef{
-						Table:      alterTableStmt.Table,
-						ColumnName: columnDef.ColumnName,
-					}
-					columnName.SetLastLine(alterTableStmt.LastLine())
-					checker.columnNameList = append(checker.columnNameList, columnName)
-				}
-			}
-		}
-	} else if commentStmt, ok := node.(*ast.CommentStmt); ok && commentStmt.Type == ast.ObjectTypeColumn {
-		checker.commentStmtList = append(checker.commentStmtList, commentStmt)
-	}
-	return checker
-}
-
-func stringifyColumnNameDef(columnName *ast.ColumnNameDef) string {
-	if columnName == nil {
-		return ""
-	}
-	if columnName.Table == nil {
-		return columnName.ColumnName
-	}
-	return fmt.Sprintf("%s.%s", columnName.Table.Name, columnName.ColumnName)
+	return adviceList
 }

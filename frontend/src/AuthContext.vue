@@ -8,7 +8,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch, computed } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { isAuthRelatedRoute } from "@/utils/auth";
 import InactiveRemindModal from "@/views/auth/InactiveRemindModal.vue";
@@ -16,12 +16,12 @@ import SigninModal from "@/views/auth/SigninModal.vue";
 import { t } from "./plugins/i18n";
 import { WORKSPACE_ROOT_MODULE } from "./router/dashboard/workspaceRoutes";
 import {
+  pushNotification,
   useAuthStore,
   useCurrentUserV1,
-  pushNotification,
-  useWorkspaceV1Store,
   useGroupStore,
   useRoleStore,
+  useWorkspaceV1Store,
 } from "./store";
 import { isDev } from "./utils";
 
@@ -33,8 +33,8 @@ const router = useRouter();
 const authStore = useAuthStore();
 const currentUser = useCurrentUserV1();
 const workspaceStore = useWorkspaceV1Store();
-const groupStore = useGroupStore();
 const roleStore = useRoleStore();
+const groupStore = useGroupStore();
 
 const authCheckIntervalId = ref<NodeJS.Timeout>();
 
@@ -102,7 +102,7 @@ watch(
       workspaceStore.fetchIamPolicy(),
       roleStore.fetchRoleList(),
       // we only care about the groups for the current user.
-      groupStore.batchFetchGroups(currentUser.value.groups),
+      groupStore.batchGetOrFetchGroups(currentUser.value.groups),
     ]);
   },
   {

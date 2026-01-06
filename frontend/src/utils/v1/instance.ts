@@ -1,5 +1,5 @@
 import { computed, unref } from "vue";
-import { t, locale } from "@/plugins/i18n";
+import { t } from "@/plugins/i18n";
 import { useSubscriptionV1Store } from "@/store";
 import type { MaybeRef } from "@/types";
 import {
@@ -7,16 +7,15 @@ import {
   languageOfEngineV1,
   unknownInstance,
 } from "@/types";
-import { Engine } from "@/types/proto-es/v1/common_pb";
-import { State } from "@/types/proto-es/v1/common_pb";
+import { Engine, State } from "@/types/proto-es/v1/common_pb";
 // Using proto-es types directly, no conversions needed
 import type {
   Instance,
   InstanceResource,
 } from "@/types/proto-es/v1/instance_service_pb";
 import {
-  DataSourceType,
   type DataSource,
+  DataSourceType,
 } from "@/types/proto-es/v1/instance_service_pb";
 import { PlanType } from "@/types/proto-es/v1/subscription_service_pb";
 
@@ -98,10 +97,8 @@ export const supportedEngineV1List = () => {
     Engine.COSMOSDB,
     Engine.CASSANDRA,
     Engine.TRINO,
+    Engine.DORIS,
   ];
-  if (locale.value === "zh-CN") {
-    engines.push(Engine.DORIS);
-  }
   return engines;
 };
 
@@ -146,14 +143,6 @@ export const instanceV1HasCreateDatabase = (
   return enginesSupportCreateDatabase().includes(engine);
 };
 
-export const instanceV1HasStructuredQueryResult = (
-  instanceOrEngine: Instance | InstanceResource | Engine
-): boolean => {
-  const engine = engineOfInstanceV1(instanceOrEngine);
-  if (engine === Engine.REDIS) return false;
-  return true;
-};
-
 export const instanceV1HasSSL = (
   instanceOrEngine: Instance | InstanceResource | Engine
 ): boolean => {
@@ -174,6 +163,7 @@ export const instanceV1HasSSL = (
     Engine.ELASTICSEARCH,
     Engine.MSSQL,
     Engine.CASSANDRA,
+    Engine.TRINO,
   ].includes(engine);
 };
 
@@ -254,6 +244,7 @@ export const instanceV1AllowsExplain = (
     Engine.REDSHIFT,
     Engine.SNOWFLAKE,
     Engine.STARROCKS,
+    Engine.SPANNER,
   ].includes(engine);
 };
 
@@ -317,7 +308,7 @@ export const instanceV1MaskingForNoSQL = (
   instanceOrEngine: Instance | InstanceResource | Engine
 ) => {
   const engine = engineOfInstanceV1(instanceOrEngine);
-  return [Engine.MONGODB].includes(engine);
+  return [Engine.MONGODB, Engine.COSMOSDB].includes(engine);
 };
 
 export const engineOfInstanceV1 = (

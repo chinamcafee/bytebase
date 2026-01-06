@@ -31,7 +31,8 @@ export declare type LoginRequest = Message<"bytebase.v1.LoginRequest"> & {
   password: string;
 
   /**
-   * If web is set, we will set access token, refresh token, and user to the cookie.
+   * If true, sets access token and refresh token as HTTP-only cookies instead of
+   * returning the token in the response body. Use for browser-based clients.
    *
    * @generated from field: bool web = 3;
    */
@@ -46,7 +47,7 @@ export declare type LoginRequest = Message<"bytebase.v1.LoginRequest"> & {
   idpName: string;
 
   /**
-   * The idp_context is using to get the user information from identity provider.
+   * The idp_context is used to get the user information from identity provider.
    *
    * @generated from field: bytebase.v1.IdentityProviderContext idp_context = 5;
    */
@@ -140,6 +141,12 @@ export declare const OAuth2IdentityProviderContextSchema: GenMessage<OAuth2Ident
  * @generated from message bytebase.v1.OIDCIdentityProviderContext
  */
 export declare type OIDCIdentityProviderContext = Message<"bytebase.v1.OIDCIdentityProviderContext"> & {
+  /**
+   * Authorization code from OIDC provider.
+   *
+   * @generated from field: string code = 1;
+   */
+  code: string;
 };
 
 /**
@@ -154,6 +161,7 @@ export declare const OIDCIdentityProviderContextSchema: GenMessage<OIDCIdentityP
 export declare type LoginResponse = Message<"bytebase.v1.LoginResponse"> & {
   /**
    * Access token for authenticated requests.
+   * Only returned when web=false. For web=true, the token is set as an HTTP-only cookie.
    *
    * @generated from field: string token = 1;
    */
@@ -202,6 +210,78 @@ export declare type LogoutRequest = Message<"bytebase.v1.LogoutRequest"> & {
 export declare const LogoutRequestSchema: GenMessage<LogoutRequest>;
 
 /**
+ * @generated from message bytebase.v1.ExchangeTokenRequest
+ */
+export declare type ExchangeTokenRequest = Message<"bytebase.v1.ExchangeTokenRequest"> & {
+  /**
+   * External OIDC token (JWT) from CI/CD platform.
+   *
+   * @generated from field: string token = 1;
+   */
+  token: string;
+
+  /**
+   * Workload Identity email for identifying which identity to authenticate as.
+   * Format: {name}@workload.bytebase.com
+   *
+   * @generated from field: string email = 2;
+   */
+  email: string;
+};
+
+/**
+ * Describes the message bytebase.v1.ExchangeTokenRequest.
+ * Use `create(ExchangeTokenRequestSchema)` to create a new message.
+ */
+export declare const ExchangeTokenRequestSchema: GenMessage<ExchangeTokenRequest>;
+
+/**
+ * @generated from message bytebase.v1.ExchangeTokenResponse
+ */
+export declare type ExchangeTokenResponse = Message<"bytebase.v1.ExchangeTokenResponse"> & {
+  /**
+   * Bytebase access token.
+   *
+   * @generated from field: string access_token = 1;
+   */
+  accessToken: string;
+};
+
+/**
+ * Describes the message bytebase.v1.ExchangeTokenResponse.
+ * Use `create(ExchangeTokenResponseSchema)` to create a new message.
+ */
+export declare const ExchangeTokenResponseSchema: GenMessage<ExchangeTokenResponse>;
+
+/**
+ * Request to refresh the access token.
+ *
+ * @generated from message bytebase.v1.RefreshRequest
+ */
+export declare type RefreshRequest = Message<"bytebase.v1.RefreshRequest"> & {
+};
+
+/**
+ * Describes the message bytebase.v1.RefreshRequest.
+ * Use `create(RefreshRequestSchema)` to create a new message.
+ */
+export declare const RefreshRequestSchema: GenMessage<RefreshRequest>;
+
+/**
+ * Response from refreshing the access token.
+ *
+ * @generated from message bytebase.v1.RefreshResponse
+ */
+export declare type RefreshResponse = Message<"bytebase.v1.RefreshResponse"> & {
+};
+
+/**
+ * Describes the message bytebase.v1.RefreshResponse.
+ * Use `create(RefreshResponseSchema)` to create a new message.
+ */
+export declare const RefreshResponseSchema: GenMessage<RefreshResponse>;
+
+/**
  * AuthService handles user authentication operations.
  *
  * @generated from service bytebase.v1.AuthService
@@ -228,6 +308,29 @@ export declare const AuthService: GenService<{
     methodKind: "unary";
     input: typeof LogoutRequestSchema;
     output: typeof EmptySchema;
+  },
+  /**
+   * Exchanges an external OIDC token for a Bytebase access token.
+   * Used by CI/CD pipelines with Workload Identity Federation.
+   * Permissions required: None (validates via OIDC token)
+   *
+   * @generated from rpc bytebase.v1.AuthService.ExchangeToken
+   */
+  exchangeToken: {
+    methodKind: "unary";
+    input: typeof ExchangeTokenRequestSchema;
+    output: typeof ExchangeTokenResponseSchema;
+  },
+  /**
+   * Refreshes the access token using the refresh token cookie.
+   * Permissions required: None (validates via refresh token cookie)
+   *
+   * @generated from rpc bytebase.v1.AuthService.Refresh
+   */
+  refresh: {
+    methodKind: "unary";
+    input: typeof RefreshRequestSchema;
+    output: typeof RefreshResponseSchema;
   },
 }>;
 

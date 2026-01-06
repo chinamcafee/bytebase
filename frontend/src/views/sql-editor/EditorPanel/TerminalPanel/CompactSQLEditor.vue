@@ -39,17 +39,18 @@ import type {
 } from "@/components/MonacoEditor";
 import MonacoEditor from "@/components/MonacoEditor/MonacoEditor.vue";
 import {
-  useEditorContextKey,
   formatEditorContent,
+  useEditorContextKey,
 } from "@/components/MonacoEditor/utils";
 import { useEmitteryEventListener } from "@/composables/useEmitteryEventListener";
 import {
-  useSQLEditorTabStore,
   useConnectionOfCurrentSQLEditorTab,
+  useSQLEditorTabStore,
 } from "@/store";
 import type { SQLDialect, SQLEditorQueryParams } from "@/types";
 import { dialectOfEngineV1 } from "@/types";
-import { useInstanceV1EditorLanguage, instanceV1AllowsExplain } from "@/utils";
+import { Engine } from "@/types/proto-es/v1/common_pb";
+import { instanceV1AllowsExplain, useInstanceV1EditorLanguage } from "@/utils";
 import { useSQLEditorContext } from "../../context";
 import {
   checkCursorAtFirstLine,
@@ -78,7 +79,7 @@ const tabStore = useSQLEditorTabStore();
 const { events: editorEvents } = useSQLEditorContext();
 const { connection, instance, database } = useConnectionOfCurrentSQLEditorTab();
 const language = useInstanceV1EditorLanguage(instance);
-const { currentTab, isSwitchingTab } = storeToRefs(tabStore);
+const { currentTab } = storeToRefs(tabStore);
 const pendingFormatContentCommand = ref(false);
 const dialect = computed((): SQLDialect => {
   const engine = instance.value.engine;
@@ -111,12 +112,6 @@ const debouncedEmitUpdate = debounce((value: string) => {
 }, 100);
 
 const handleChange = (value: string) => {
-  // When we are switching between tabs, the MonacoEditor emits a 'change'
-  // event, but we shouldn't update the current tab;
-  if (isSwitchingTab.value) {
-    return;
-  }
-
   // Use debounced emit to reduce excessive updates
   debouncedEmitUpdate(value);
 };
@@ -148,11 +143,24 @@ const handleEditorReady = (_: MonacoModule, editor: IStandaloneCodeEditor) => {
   watch(
     () => instance.value.engine,
     () => {
-      if (instanceV1AllowsExplain(instance.value)) {
+      const shouldShowAction =
+        instanceV1AllowsExplain(instance.value) ||
+        instance.value.engine === Engine.BIGQUERY;
+
+      if (shouldShowAction) {
+        const isBigQuery = instance.value.engine === Engine.BIGQUERY;
+        const label = isBigQuery ? "Dry Run Query" : "Explain Query";
+
+        // Remove existing action if label changed
+        if (explainQueryAction) {
+          explainQueryAction.dispose();
+          explainQueryAction = undefined;
+        }
+
         if (!editor.getAction("ExplainQuery")) {
           explainQueryAction = editor.addAction({
             id: "ExplainQuery",
-            label: "Explain Query",
+            label: label,
             keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyE],
             contextMenuGroupId: "operation",
             contextMenuOrder: 1,
@@ -162,6 +170,7 @@ const handleEditorReady = (_: MonacoModule, editor: IStandaloneCodeEditor) => {
         }
       } else {
         explainQueryAction?.dispose();
+        explainQueryAction = undefined;
       }
     },
     { immediate: true }
@@ -296,6 +305,6 @@ const EDITOR_OPTIONS = computed<Editor.IStandaloneEditorConstructionOptions>(
 
 <style lang="postcss" scoped>
 .bb-compact-sql-editor :deep(.monaco-editor .line-numbers) {
-  @apply !pr-0;
+  padding-right: 0 !important;
 }
 </style>

@@ -21,6 +21,42 @@ func (x *GetProjectRequest) Equal(y *GetProjectRequest) bool {
 	return true
 }
 
+func (x *BatchGetProjectsRequest) Equal(y *BatchGetProjectsRequest) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if len(x.Names) != len(y.Names) {
+		return false
+	}
+	for i := 0; i < len(x.Names); i++ {
+		if x.Names[i] != y.Names[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (x *BatchGetProjectsResponse) Equal(y *BatchGetProjectsResponse) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if len(x.Projects) != len(y.Projects) {
+		return false
+	}
+	for i := 0; i < len(x.Projects); i++ {
+		if !x.Projects[i].Equal(y.Projects[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 func (x *ListProjectsRequest) Equal(y *ListProjectsRequest) bool {
 	if x == y {
 		return true
@@ -38,6 +74,9 @@ func (x *ListProjectsRequest) Equal(y *ListProjectsRequest) bool {
 		return false
 	}
 	if x.Filter != y.Filter {
+		return false
+	}
+	if x.OrderBy != y.OrderBy {
 		return false
 	}
 	return true
@@ -81,6 +120,9 @@ func (x *SearchProjectsRequest) Equal(y *SearchProjectsRequest) bool {
 		return false
 	}
 	if x.PageToken != y.PageToken {
+		return false
+	}
+	if x.OrderBy != y.OrderBy {
 		return false
 	}
 	return true
@@ -199,61 +241,6 @@ func (x *BatchDeleteProjectsRequest) Equal(y *BatchDeleteProjectsRequest) bool {
 	return true
 }
 
-func (x *BatchGetIamPolicyRequest) Equal(y *BatchGetIamPolicyRequest) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Scope != y.Scope {
-		return false
-	}
-	if len(x.Names) != len(y.Names) {
-		return false
-	}
-	for i := 0; i < len(x.Names); i++ {
-		if x.Names[i] != y.Names[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func (x *BatchGetIamPolicyResponse_PolicyResult) Equal(y *BatchGetIamPolicyResponse_PolicyResult) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Project != y.Project {
-		return false
-	}
-	if !x.Policy.Equal(y.Policy) {
-		return false
-	}
-	return true
-}
-
-func (x *BatchGetIamPolicyResponse) Equal(y *BatchGetIamPolicyResponse) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if len(x.PolicyResults) != len(y.PolicyResults) {
-		return false
-	}
-	for i := 0; i < len(x.PolicyResults); i++ {
-		if !x.PolicyResults[i].Equal(y.PolicyResults[i]) {
-			return false
-		}
-	}
-	return true
-}
-
 func (x *Label) Equal(y *Label) bool {
 	if x == y {
 		return true
@@ -324,12 +311,6 @@ func (x *Project) Equal(y *Project) bool {
 	if x.ForceIssueLabels != y.ForceIssueLabels {
 		return false
 	}
-	if x.AllowModifyStatement != y.AllowModifyStatement {
-		return false
-	}
-	if x.AutoResolveIssue != y.AutoResolveIssue {
-		return false
-	}
 	if x.EnforceIssueTitle != y.EnforceIssueTitle {
 		return false
 	}
@@ -367,6 +348,12 @@ func (x *Project) Equal(y *Project) bool {
 		}
 	}
 	if x.EnforceSqlReview != y.EnforceSqlReview {
+		return false
+	}
+	if x.RequireIssueApproval != y.RequireIssueApproval {
+		return false
+	}
+	if x.RequirePlanCheckNoError != y.RequirePlanCheckNoError {
 		return false
 	}
 	return true

@@ -6,11 +6,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 )
 
 const (
@@ -23,7 +23,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleStatementNoLeadingWildcardLike, &NoLeadingWildcardLikeAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_STATEMENT_WHERE_NO_LEADING_WILDCARD_LIKE, &NoLeadingWildcardLikeAdvisor{})
 }
 
 // NoLeadingWildcardLikeAdvisor is the advisor checking for no leading wildcard LIKE.
@@ -32,9 +32,10 @@ type NoLeadingWildcardLikeAdvisor struct {
 
 // Check checks for no leading wildcard LIKE.
 func (*NoLeadingWildcardLikeAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	root, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -51,8 +52,8 @@ func (*NoLeadingWildcardLikeAdvisor) Check(_ context.Context, checkCtx advisor.C
 		if checker.leadingWildcardLike {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.StatementLeadingWildcardLike.Int32(),
-				Title:         string(checkCtx.Rule.Type),
+				Code:          code.StatementLeadingWildcardLike.Int32(),
+				Title:         checkCtx.Rule.Type.String(),
 				Content:       fmt.Sprintf("\"%s\" uses leading wildcard LIKE", checker.text),
 				StartPosition: common.ConvertANTLRLineToPosition(stmtNode.OriginTextPosition()),
 			})
@@ -76,7 +77,7 @@ func (v *noLeadingWildcardLikeChecker) Enter(in ast.Node) (ast.Node, bool) {
 		if err != nil {
 			v.adviceList = append(v.adviceList, &storepb.Advice{
 				Status:  v.level,
-				Code:    advisor.Internal.Int32(),
+				Code:    code.Internal.Int32(),
 				Title:   "Internal error for no leading wildcard LIKE rule",
 				Content: fmt.Sprintf("\"%s\" meet internal error %q", v.text, err.Error()),
 			})

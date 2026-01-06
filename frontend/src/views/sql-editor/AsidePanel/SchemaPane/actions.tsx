@@ -1,4 +1,5 @@
-import { head, cloneDeep } from "lodash-es";
+import { useClipboard } from "@vueuse/core";
+import { cloneDeep, head } from "lodash-es";
 import {
   CodeIcon,
   CopyIcon,
@@ -21,20 +22,20 @@ import { t } from "@/plugins/i18n";
 import { SQL_EDITOR_DATABASE_MODULE } from "@/router/sqlEditor";
 import {
   pushNotification,
-  useSQLEditorTabStore,
-  useTabViewStateStore,
-  useDBSchemaV1Store,
   useDatabaseV1Store,
+  useDBSchemaV1Store,
+  useSQLEditorTabStore,
 } from "@/store";
 import {
+  type ComposedDatabase,
   DEFAULT_SQL_EDITOR_TAB_MODE,
   dialectOfEngineV1,
-  languageOfEngineV1,
-  type ComposedDatabase,
-  type Position,
-  type SQLEditorConnection,
   type EditorPanelView,
   type EditorPanelViewState,
+  languageOfEngineV1,
+  type Position,
+  type SQLEditorConnection,
+  type SQLEditorTab,
   typeToView,
 } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
@@ -42,6 +43,7 @@ import { GetSchemaStringRequest_ObjectType } from "@/types/proto-es/v1/database_
 import type { DataSource } from "@/types/proto-es/v1/instance_service_pb";
 import { DataSourceType } from "@/types/proto-es/v1/instance_service_pb";
 import {
+  defaultSQLEditorTab,
   extractInstanceResourceName,
   extractProjectResourceName,
   generateSimpleDeleteStatement,
@@ -49,15 +51,13 @@ import {
   generateSimpleSelectAllStatement,
   generateSimpleUpdateStatement,
   instanceV1HasAlterSchema,
+  isSameSQLEditorConnection,
   sortByDictionary,
   supportGetStringSchema,
-  toClipboard,
-  defaultSQLEditorTab,
-  isSimilarSQLEditorTab,
 } from "@/utils";
+import { type SQLEditorEvents, useSQLEditorContext } from "../../context";
 import { keyWithPosition } from "../../EditorCommon";
 import { useCurrentTabViewStateContext } from "../../EditorPanel";
-import { useSQLEditorContext, type SQLEditorEvents } from "../../context";
 import type { NodeTarget, NodeType, TreeNode } from "./tree";
 import { readableTextForNodeTarget } from "./tree";
 
@@ -104,13 +104,12 @@ export const useActions = () => {
   };
 
   const openNewTab = (params: {
-    title?: string;
+    title: string;
     schema?: string;
     table?: string;
-    view?: EditorPanelView;
+    view: EditorPanelView;
   }) => {
     const tabStore = useSQLEditorTabStore();
-    const tabViewStateStore = useTabViewStateStore();
 
     let schema = params.schema;
     let table = params.table;
@@ -124,37 +123,39 @@ export const useActions = () => {
     }
 
     const fromTab = tabStore.currentTab;
-    const clonedTab = defaultSQLEditorTab();
+    const clonedTab: SQLEditorTab = {
+      ...defaultSQLEditorTab(),
+      status: "CLEAN",
+      title: params.title,
+    };
     if (fromTab) {
       clonedTab.connection = cloneDeep(fromTab.connection);
       clonedTab.treeState = cloneDeep(fromTab.treeState);
     }
-    clonedTab.status = "CLEAN";
-    clonedTab.title = params.title ?? "";
 
-    for (const tab of tabStore.tabList) {
-      if (tab.id === fromTab?.id) {
-        continue;
+    const findExistedTab = tabStore.openTabList.find((tab) => {
+      if (tab.status !== "CLEAN" || tab.id === fromTab?.id) {
+        return false;
       }
-      if (!isSimilarSQLEditorTab(clonedTab, tab, false)) {
-        continue;
+      if (!isSameSQLEditorConnection(tab.connection, clonedTab.connection)) {
+        return false;
       }
-      if (tab.status !== clonedTab.status) {
-        continue;
-      }
-      const viewState = tabViewStateStore.getViewState(tab.id);
+      const viewState = tab.viewState;
       if (
         viewState.view !== params.view ||
         (schema && viewState.schema !== schema)
       ) {
-        continue;
+        return false;
       }
-      tabStore.setCurrentTabId(tab.id);
-      return;
-    }
+      return true;
+    });
 
-    tabStore.addTab(clonedTab);
-    updateViewState({ view: params.view, schema, table });
+    if (findExistedTab) {
+      tabStore.setCurrentTabId(findExistedTab.id);
+    } else {
+      tabStore.addTab(clonedTab);
+      updateViewState({ view: params.view, schema, table });
+    }
   };
 
   const viewDetail = async (node: TreeNode) => {
@@ -570,7 +571,13 @@ const applyContentToCurrentTabOrCopyToClipboard = async (
 };
 
 const copyToClipboard = (content: string) => {
-  toClipboard(content).then(() => {
+  const { copy: copyTextToClipboard, isSupported } = useClipboard({
+    legacy: true,
+  });
+  if (!isSupported.value) {
+    return;
+  }
+  copyTextToClipboard(content).then(() => {
     pushNotification({
       module: "bytebase",
       style: "SUCCESS",

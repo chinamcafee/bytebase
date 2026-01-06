@@ -13,18 +13,9 @@ import (
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 )
 
-// NormalizeStatement limit the max length of the statements.
-func NormalizeStatement(statement string) string {
-	maxLength := 1000
-	if len(statement) > maxLength {
-		return statement[:maxLength] + "..."
-	}
-	return statement
-}
-
 type QueryContext struct {
-	UsePostgresDatabaseOwner bool
-	PreExecutions            []string
+	TenantMode    bool
+	PreExecutions []string
 }
 
 // Query runs the EXPLAIN or SELECT statements for advisors.
@@ -35,7 +26,7 @@ func Query(ctx context.Context, qCtx QueryContext, connection *sql.DB, engine st
 	}
 	defer tx.Rollback()
 
-	if engine == storepb.Engine_POSTGRES && qCtx.UsePostgresDatabaseOwner {
+	if engine == storepb.Engine_POSTGRES && qCtx.TenantMode {
 		const query = `
 		SELECT
 			u.rolname

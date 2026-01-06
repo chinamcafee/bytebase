@@ -5,6 +5,7 @@
       :style="style"
       :loading="state.isUpdating"
       :disabled="!allowEdit || state.isUpdating"
+      :maxlength="200"
       size="medium"
       required
       class="bb-plan-title-input"
@@ -22,20 +23,21 @@ import { NInput } from "naive-ui";
 import type { CSSProperties } from "vue";
 import { computed, reactive, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { issueServiceClientConnect, planServiceClientConnect } from "@/grpcweb";
+import { issueServiceClientConnect, planServiceClientConnect } from "@/connect";
 import {
-  pushNotification,
-  useCurrentUserV1,
   extractUserId,
+  pushNotification,
   useCurrentProjectV1,
+  useCurrentUserV1,
 } from "@/store";
 import {
   IssueSchema,
-  Issue_Type,
   UpdateIssueRequestSchema,
 } from "@/types/proto-es/v1/issue_service_pb";
-import { UpdatePlanRequestSchema } from "@/types/proto-es/v1/plan_service_pb";
-import { PlanSchema } from "@/types/proto-es/v1/plan_service_pb";
+import {
+  PlanSchema,
+  UpdatePlanRequestSchema,
+} from "@/types/proto-es/v1/plan_service_pb";
 import { hasProjectPermissionV2 } from "@/utils";
 import { usePlanContext } from "../../logic";
 
@@ -44,11 +46,13 @@ type ViewMode = "EDIT" | "VIEW";
 const { t } = useI18n();
 const currentUser = useCurrentUserV1();
 const { project } = useCurrentProjectV1();
-const { isCreating, plan, issue, readonly } = usePlanContext();
-
-const isGrantRequest = computed(
-  () => issue.value?.type === Issue_Type.GRANT_REQUEST
-);
+const {
+  isCreating,
+  plan,
+  issue,
+  readonly,
+  allowEdit: hasPermission,
+} = usePlanContext();
 
 const state = reactive({
   isEditing: false,
@@ -58,11 +62,9 @@ const state = reactive({
 
 // Watch for changes in issue/plan to update the title
 watch(
-  () => [plan.value, issue.value, isGrantRequest.value],
+  () => [plan.value, issue.value],
   () => {
-    state.title = isGrantRequest.value
-      ? issue.value?.title || ""
-      : plan.value.title;
+    state.title = issue.value ? issue.value.title : plan.value.title;
   },
   { immediate: true }
 );
@@ -96,9 +98,13 @@ const allowEdit = computed(() => {
   if (isCreating.value) {
     return true;
   }
+  // Plans with rollout should have readonly title
+  if (!issue.value && plan.value.hasRollout) {
+    return false;
+  }
 
-  // For grant requests, check issue permissions
-  if (isGrantRequest.value && issue.value) {
+  // If issue exists, check issue permissions
+  if (issue.value) {
     // Allowed if current user is the creator.
     if (extractUserId(issue.value.creator) === currentUser.value.email) {
       return true;
@@ -110,16 +116,7 @@ const allowEdit = computed(() => {
     return false;
   }
 
-  // For regular plans, check plan permissions
-  // Allowed if current user is the creator.
-  if (extractUserId(plan.value.creator) === currentUser.value.email) {
-    return true;
-  }
-  // Allowed if current user has related permission.
-  if (hasProjectPermissionV2(project.value, "bb.plans.update")) {
-    return true;
-  }
-  return false;
+  return hasPermission.value;
 });
 
 const onBlur = async () => {
@@ -133,8 +130,8 @@ const onBlur = async () => {
     return;
   }
 
-  // For grant requests, update issue title
-  if (isGrantRequest.value && issue.value) {
+  // If issue exists, update issue title
+  if (issue.value) {
     if (state.title === issue.value.title) {
       cleanup();
       return;
@@ -218,8 +215,8 @@ const onUpdateValue = (value: string) => {
   if (!isCreating.value) {
     return;
   }
-  // When creating, update issue title for grant requests, plan title otherwise
-  if (isGrantRequest.value && issue.value) {
+  // When creating, update issue title if issue exists, plan title otherwise
+  if (issue.value) {
     issue.value.title = value;
   } else {
     plan.value.title = value;

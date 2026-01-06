@@ -4,10 +4,8 @@ package auth
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -21,8 +19,8 @@ import (
 	errs "github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
+	"github.com/bytebase/bytebase/backend/component/bus"
 	"github.com/bytebase/bytebase/backend/component/config"
-	"github.com/bytebase/bytebase/backend/component/state"
 	"github.com/bytebase/bytebase/backend/enterprise"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/store"
@@ -33,21 +31,22 @@ const (
 	// Signing key section. For now, this is only used for signing, not for verifying since we only
 	// have 1 version. But it will be used to maintain backward compatibility if we change the signing mechanism.
 	keyID = "v1"
-	// AccessTokenAudienceFmt is the format of the acccess token audience.
-	AccessTokenAudienceFmt = "bb.user.access.%s"
-	// MFATempTokenAudienceFmt is the format of the MFA temp token audience.
-	MFATempTokenAudienceFmt = "bb.user.mfa-temp.%s"
-	apiTokenDuration        = 1 * time.Hour
-	// DefaultTokenDuration is the default token expiration duration.
-	DefaultTokenDuration = 7 * 24 * time.Hour
+	// AccessTokenAudience is the audience for user access tokens.
+	AccessTokenAudience = "bb.user.access"
+	// MFATempTokenAudience is the audience for MFA temporary tokens.
+	MFATempTokenAudience = "bb.user.mfa-temp"
+	// OAuth2AccessTokenAudience is the audience for OAuth2 access tokens.
+	OAuth2AccessTokenAudience = "bb.oauth2.access"
+	apiTokenDuration          = 1 * time.Hour
+	// DefaultAccessTokenDuration is the default access token expiration duration.
+	DefaultAccessTokenDuration = 1 * time.Hour
+	// DefaultRefreshTokenDuration is the default refresh token expiration duration.
+	DefaultRefreshTokenDuration = 7 * 24 * time.Hour
 
 	// AccessTokenCookieName is the cookie name of access token.
 	AccessTokenCookieName = "access-token"
-
-	// GatewayMetadataAccessTokenKey is the gateway metadata key for access token.
-	GatewayMetadataAccessTokenKey = "bytebase-access-token"
-	// GatewayMetadataRequestOriginKey is the gateway metadata key for the request origin header.
-	GatewayMetadataRequestOriginKey = "bytebase-request-origin"
+	// RefreshTokenCookieName is the cookie name of refresh token.
+	RefreshTokenCookieName = "refresh-token"
 )
 
 // APIAuthInterceptor is the auth interceptor for gRPC server.
@@ -55,7 +54,7 @@ type APIAuthInterceptor struct {
 	store          *store.Store
 	secret         string
 	licenseService *enterprise.LicenseService
-	stateCfg       *state.State
+	bus            *bus.Bus
 	profile        *config.Profile
 }
 
@@ -64,14 +63,14 @@ func New(
 	store *store.Store,
 	secret string,
 	licenseService *enterprise.LicenseService,
-	stateCfg *state.State,
+	bus *bus.Bus,
 	profile *config.Profile,
 ) *APIAuthInterceptor {
 	return &APIAuthInterceptor{
 		store:          store,
 		secret:         secret,
 		licenseService: licenseService,
-		stateCfg:       stateCfg,
+		bus:            bus,
 		profile:        profile,
 	}
 }
@@ -138,14 +137,13 @@ func (in *APIAuthInterceptor) WrapStreamingHandler(next connect.StreamingHandler
 	}
 }
 
-// authenticateConnect is a ConnectRPC-specific version that returns ConnectRPC errors.
-func (in *APIAuthInterceptor) authenticateConnect(ctx context.Context, accessTokenStr string) (*store.UserMessage, error) {
+// authenticate is the shared authentication logic that validates JWT tokens.
+// Returns the user and claims, or an error. This is the single source of truth for token validation.
+func (in *APIAuthInterceptor) authenticate(ctx context.Context, accessTokenStr string) (*store.UserMessage, *claimsMessage, error) {
 	if accessTokenStr == "" {
-		return nil, connect.NewError(connect.CodeUnauthenticated, errs.New("access token not found"))
+		return nil, nil, errs.New("access token not found")
 	}
-	if _, ok := in.stateCfg.ExpireCache.Get(accessTokenStr); ok {
-		return nil, connect.NewError(connect.CodeUnauthenticated, errs.New("access token expired"))
-	}
+
 	claims := &claimsMessage{}
 	if _, err := jwt.ParseWithClaims(accessTokenStr, claims, func(t *jwt.Token) (any, error) {
 		if t.Method.Alg() != jwt.SigningMethodHS256.Name {
@@ -159,33 +157,41 @@ func (in *APIAuthInterceptor) authenticateConnect(ctx context.Context, accessTok
 		return nil, errs.Errorf("unexpected access token kid=%v", t.Header["kid"])
 	}); err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
-			return nil, connect.NewError(connect.CodeUnauthenticated, errs.New("access token expired"))
+			return nil, nil, errs.New("access token expired")
 		}
-		return nil, connect.NewError(connect.CodeUnauthenticated, errs.New("failed to parse claim"))
-	}
-	if !audienceContains(claims.Audience, fmt.Sprintf(AccessTokenAudienceFmt, in.profile.Mode)) {
-		return nil, connect.NewError(connect.CodeUnauthenticated, errs.Errorf(
-			"invalid access token, audience mismatch, got %q, expected %q. you may send request to the wrong environment",
-			claims.Audience,
-			fmt.Sprintf(AccessTokenAudienceFmt, in.profile.Mode),
-		))
+		return nil, nil, errs.New("failed to parse claim")
 	}
 
-	principalID, err := strconv.Atoi(claims.Subject)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeUnauthenticated, errs.Errorf("malformed ID %q in the access token", claims.Subject))
+	// Accept both user access tokens (bb.user.access) and OAuth2 access tokens (bb.oauth2.access)
+	if !audienceContains(claims.Audience, AccessTokenAudience) && !audienceContains(claims.Audience, OAuth2AccessTokenAudience) {
+		return nil, nil, errs.Errorf(
+			"invalid access token, audience mismatch, got %q, expected %q or %q",
+			claims.Audience,
+			AccessTokenAudience,
+			OAuth2AccessTokenAudience,
+		)
 	}
-	user, err := in.store.GetUserByID(ctx, principalID)
+
+	user, err := in.store.GetUserByEmail(ctx, claims.Subject)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeUnauthenticated, errs.Errorf("failed to find user ID %q in the access token", principalID))
+		return nil, nil, errs.Errorf("failed to find user %q in the access token", claims.Subject)
 	}
 	if user == nil {
-		return nil, connect.NewError(connect.CodeUnauthenticated, errs.Errorf("user ID %q not exists in the access token", principalID))
+		return nil, nil, errs.Errorf("user %q not exists in the access token", claims.Subject)
 	}
 	if user.MemberDeleted {
-		return nil, connect.NewError(connect.CodeUnauthenticated, errs.Errorf("user ID %q has been deactivated by administrators", user.ID))
+		return nil, nil, errs.Errorf("user ID %q has been deactivated by administrators", user.ID)
 	}
 
+	return user, claims, nil
+}
+
+// authenticateConnect is a ConnectRPC-specific version that returns ConnectRPC errors.
+func (in *APIAuthInterceptor) authenticateConnect(ctx context.Context, accessTokenStr string) (*store.UserMessage, error) {
+	user, _, err := in.authenticate(ctx, accessTokenStr)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnauthenticated, err)
+	}
 	return user, nil
 }
 
@@ -201,8 +207,8 @@ func (in *APIAuthInterceptor) getUserConnect(ctx context.Context, accessTokenStr
 	return user, nil
 }
 
-// GetUserIDFromMFATempToken returns the user ID from the MFA temp token.
-func GetUserIDFromMFATempToken(token string, mode common.ReleaseMode, secret string) (int, error) {
+// GetUserEmailFromMFATempToken returns the user email from the MFA temp token.
+func GetUserEmailFromMFATempToken(token string, secret string) (string, error) {
 	claims := &claimsMessage{}
 	_, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (any, error) {
 		if t.Method.Alg() != jwt.SigningMethodHS256.Name {
@@ -216,16 +222,28 @@ func GetUserIDFromMFATempToken(token string, mode common.ReleaseMode, secret str
 		return nil, connect.NewError(connect.CodeUnauthenticated, errs.Errorf("unexpected MFA temp token kid=%v", t.Header["kid"]))
 	})
 	if err != nil {
-		return 0, connect.NewError(connect.CodeUnauthenticated, errs.New("failed to parse claim"))
+		return "", connect.NewError(connect.CodeUnauthenticated, errs.New("failed to parse claim"))
 	}
-	if !audienceContains(claims.Audience, fmt.Sprintf(MFATempTokenAudienceFmt, mode)) {
-		return 0, connect.NewError(connect.CodeUnauthenticated, errs.New("invalid MFA temp token, audience mismatch"))
+	if !audienceContains(claims.Audience, MFATempTokenAudience) {
+		return "", connect.NewError(connect.CodeUnauthenticated, errs.New("invalid MFA temp token, audience mismatch"))
 	}
-	userID, err := strconv.Atoi(claims.Subject)
+	return claims.Subject, nil
+}
+
+// AuthenticateToken validates a JWT access token and returns the user and token expiry.
+// This is a non-ConnectRPC version that returns regular errors instead of ConnectRPC errors.
+func (in *APIAuthInterceptor) AuthenticateToken(ctx context.Context, accessTokenStr string) (*store.UserMessage, time.Time, error) {
+	user, claims, err := in.authenticate(ctx, accessTokenStr)
 	if err != nil {
-		return 0, connect.NewError(connect.CodeUnauthenticated, errs.Errorf("malformed ID %q in the MFA temp token", claims.Subject))
+		return nil, time.Time{}, err
 	}
-	return userID, nil
+
+	var tokenExpiry time.Time
+	if claims.ExpiresAt != nil {
+		tokenExpiry = claims.ExpiresAt.Time
+	}
+
+	return user, tokenExpiry, nil
 }
 
 // GetTokenFromHeaders extracts the access token from HTTP headers for ConnectRPC.
@@ -242,7 +260,7 @@ func GetTokenFromHeaders(headers http.Header) (string, error) {
 
 	// Check HTTP cookies
 	var accessToken string
-	for _, cookieHeader := range append(headers.Values("cookie"), headers.Values("grpcgateway-cookie")...) {
+	for _, cookieHeader := range headers.Values("cookie") {
 		header := http.Header{}
 		header.Add("Cookie", cookieHeader)
 		request := http.Request{Header: header}
@@ -256,57 +274,6 @@ func GetTokenFromHeaders(headers http.Header) (string, error) {
 
 func audienceContains(audience jwt.ClaimStrings, token string) bool {
 	return slices.Contains(audience, token)
-}
-
-type claimsMessage struct {
-	Name string `json:"name"`
-	jwt.RegisteredClaims
-}
-
-// GenerateAPIToken generates an API token.
-func GenerateAPIToken(userName string, userID int, mode common.ReleaseMode, secret string) (string, error) {
-	expirationTime := time.Now().Add(apiTokenDuration)
-	return generateToken(userName, userID, fmt.Sprintf(AccessTokenAudienceFmt, mode), expirationTime, []byte(secret))
-}
-
-// GenerateAccessToken generates an access token for web.
-func GenerateAccessToken(userName string, userID int, mode common.ReleaseMode, secret string, tokenDuration time.Duration) (string, error) {
-	expirationTime := time.Now().Add(tokenDuration)
-	return generateToken(userName, userID, fmt.Sprintf(AccessTokenAudienceFmt, mode), expirationTime, []byte(secret))
-}
-
-// GenerateMFATempToken generates a temporary token for MFA.
-func GenerateMFATempToken(userName string, userID int, mode common.ReleaseMode, secret string, tokenDuration time.Duration) (string, error) {
-	expirationTime := time.Now().Add(tokenDuration)
-	return generateToken(userName, userID, fmt.Sprintf(MFATempTokenAudienceFmt, mode), expirationTime, []byte(secret))
-}
-
-// Pay attention to this function. It holds the main JWT token generation logic.
-func generateToken(userName string, userID int, aud string, expirationTime time.Time, secret []byte) (string, error) {
-	// Create the JWT claims, which includes the username and expiry time.
-	claims := &claimsMessage{
-		Name: userName,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Audience: jwt.ClaimStrings{aud},
-			// In JWT, the expiry time is expressed as unix milliseconds.
-			ExpiresAt: jwt.NewNumericDate(expirationTime),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			Issuer:    issuer,
-			Subject:   strconv.Itoa(userID),
-		},
-	}
-
-	// Declare the token with the HS256 algorithm used for signing, and the claims.
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	token.Header["kid"] = keyID
-
-	// Create the JWT string.
-	tokenString, err := token.SignedString(secret)
-	if err != nil {
-		return "", err
-	}
-
-	return tokenString, nil
 }
 
 func getAuthContext(fullMethod string) (*common.AuthContext, error) {
@@ -364,37 +331,4 @@ func getAuthContext(fullMethod string) (*common.AuthContext, error) {
 		AuthMethod:             authMethod,
 		Audit:                  audit,
 	}, nil
-}
-
-// GetAllowMissingRequiredPermission extracts the allow_missing_requires annotation
-// from the proto method descriptor. Returns empty string if not set.
-func GetAllowMissingRequiredPermission(fullMethod string) (string, error) {
-	methodTokens := strings.Split(fullMethod, "/")
-	if len(methodTokens) != 3 {
-		return "", errs.Errorf("invalid full method name %q", fullMethod)
-	}
-	rd, err := protoregistry.GlobalFiles.FindDescriptorByName(protoreflect.FullName(methodTokens[1]))
-	if err != nil {
-		return "", errs.Wrapf(err, "invalid registry service descriptor, full method name %q", fullMethod)
-	}
-	sd, ok := rd.(protoreflect.ServiceDescriptor)
-	if !ok {
-		return "", errs.Errorf("invalid service descriptor, full method name %q", fullMethod)
-	}
-	md := sd.Methods().ByName(protoreflect.Name(methodTokens[2]))
-	if md == nil {
-		return "", errs.Errorf("method not found, full method name %q", fullMethod)
-	}
-
-	// Extract allow_missing_requires annotation
-	if proto.HasExtension(md.Options(), v1pb.E_AllowMissingRequires) {
-		permissionAny := proto.GetExtension(md.Options(), v1pb.E_AllowMissingRequires)
-		permission, ok := permissionAny.(string)
-		if !ok {
-			return "", errs.Errorf("invalid allow_missing_requires extension, full method name %q", fullMethod)
-		}
-		return permission, nil
-	}
-
-	return "", nil
 }

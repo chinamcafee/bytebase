@@ -105,44 +105,32 @@ func (x *Setting) Equal(y *Setting) bool {
 	return true
 }
 
-func (x *Value) Equal(y *Value) bool {
+func (x *SettingValue) Equal(y *SettingValue) bool {
 	if x == y {
 		return true
 	}
 	if x == nil || y == nil {
 		return x == nil && y == nil
 	}
-	if x.GetStringValue() != y.GetStringValue() {
+	if !x.GetAppIm().Equal(y.GetAppIm()) {
 		return false
 	}
-	if !x.GetAppImSettingValue().Equal(y.GetAppImSettingValue()) {
+	if !x.GetWorkspaceProfile().Equal(y.GetWorkspaceProfile()) {
 		return false
 	}
-	if !x.GetWorkspaceProfileSettingValue().Equal(y.GetWorkspaceProfileSettingValue()) {
+	if !x.GetWorkspaceApproval().Equal(y.GetWorkspaceApproval()) {
 		return false
 	}
-	if !x.GetWorkspaceApprovalSettingValue().Equal(y.GetWorkspaceApprovalSettingValue()) {
+	if !x.GetDataClassification().Equal(y.GetDataClassification()) {
 		return false
 	}
-	if !x.GetSchemaTemplateSettingValue().Equal(y.GetSchemaTemplateSettingValue()) {
+	if !x.GetSemanticType().Equal(y.GetSemanticType()) {
 		return false
 	}
-	if !x.GetDataClassificationSettingValue().Equal(y.GetDataClassificationSettingValue()) {
+	if !x.GetAi().Equal(y.GetAi()) {
 		return false
 	}
-	if !x.GetSemanticTypeSettingValue().Equal(y.GetSemanticTypeSettingValue()) {
-		return false
-	}
-	if !x.GetScimSetting().Equal(y.GetScimSetting()) {
-		return false
-	}
-	if !x.GetPasswordRestrictionSetting().Equal(y.GetPasswordRestrictionSetting()) {
-		return false
-	}
-	if !x.GetAiSetting().Equal(y.GetAiSetting()) {
-		return false
-	}
-	if !x.GetEnvironmentSetting().Equal(y.GetEnvironmentSetting()) {
+	if !x.GetEnvironment().Equal(y.GetEnvironment()) {
 		return false
 	}
 	return true
@@ -154,9 +142,6 @@ func (x *AppIMSetting_Slack) Equal(y *AppIMSetting_Slack) bool {
 	}
 	if x == nil || y == nil {
 		return x == nil && y == nil
-	}
-	if x.Enabled != y.Enabled {
-		return false
 	}
 	if x.Token != y.Token {
 		return false
@@ -170,9 +155,6 @@ func (x *AppIMSetting_Feishu) Equal(y *AppIMSetting_Feishu) bool {
 	}
 	if x == nil || y == nil {
 		return x == nil && y == nil
-	}
-	if x.Enabled != y.Enabled {
-		return false
 	}
 	if x.AppId != y.AppId {
 		return false
@@ -189,9 +171,6 @@ func (x *AppIMSetting_Wecom) Equal(y *AppIMSetting_Wecom) bool {
 	}
 	if x == nil || y == nil {
 		return x == nil && y == nil
-	}
-	if x.Enabled != y.Enabled {
-		return false
 	}
 	if x.CorpId != y.CorpId {
 		return false
@@ -212,9 +191,6 @@ func (x *AppIMSetting_Lark) Equal(y *AppIMSetting_Lark) bool {
 	if x == nil || y == nil {
 		return x == nil && y == nil
 	}
-	if x.Enabled != y.Enabled {
-		return false
-	}
 	if x.AppId != y.AppId {
 		return false
 	}
@@ -231,9 +207,6 @@ func (x *AppIMSetting_DingTalk) Equal(y *AppIMSetting_DingTalk) bool {
 	if x == nil || y == nil {
 		return x == nil && y == nil
 	}
-	if x.Enabled != y.Enabled {
-		return false
-	}
 	if x.ClientId != y.ClientId {
 		return false
 	}
@@ -246,6 +219,56 @@ func (x *AppIMSetting_DingTalk) Equal(y *AppIMSetting_DingTalk) bool {
 	return true
 }
 
+func (x *AppIMSetting_Teams) Equal(y *AppIMSetting_Teams) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if x.TenantId != y.TenantId {
+		return false
+	}
+	if x.ClientId != y.ClientId {
+		return false
+	}
+	if x.ClientSecret != y.ClientSecret {
+		return false
+	}
+	return true
+}
+
+func (x *AppIMSetting_IMSetting) Equal(y *AppIMSetting_IMSetting) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if x.Type != y.Type {
+		return false
+	}
+	if !x.GetSlack().Equal(y.GetSlack()) {
+		return false
+	}
+	if !x.GetFeishu().Equal(y.GetFeishu()) {
+		return false
+	}
+	if !x.GetWecom().Equal(y.GetWecom()) {
+		return false
+	}
+	if !x.GetLark().Equal(y.GetLark()) {
+		return false
+	}
+	if !x.GetDingtalk().Equal(y.GetDingtalk()) {
+		return false
+	}
+	if !x.GetTeams().Equal(y.GetTeams()) {
+		return false
+	}
+	return true
+}
+
 func (x *AppIMSetting) Equal(y *AppIMSetting) bool {
 	if x == y {
 		return true
@@ -253,19 +276,43 @@ func (x *AppIMSetting) Equal(y *AppIMSetting) bool {
 	if x == nil || y == nil {
 		return x == nil && y == nil
 	}
-	if !x.Slack.Equal(y.Slack) {
+	if len(x.Settings) != len(y.Settings) {
 		return false
 	}
-	if !x.Feishu.Equal(y.Feishu) {
+	for i := 0; i < len(x.Settings); i++ {
+		if !x.Settings[i].Equal(y.Settings[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (x *WorkspaceProfileSetting_PasswordRestriction) Equal(y *WorkspaceProfileSetting_PasswordRestriction) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if x.MinLength != y.MinLength {
 		return false
 	}
-	if !x.Wecom.Equal(y.Wecom) {
+	if x.RequireNumber != y.RequireNumber {
 		return false
 	}
-	if !x.Lark.Equal(y.Lark) {
+	if x.RequireLetter != y.RequireLetter {
 		return false
 	}
-	if !x.Dingtalk.Equal(y.Dingtalk) {
+	if x.RequireUppercaseLetter != y.RequireUppercaseLetter {
+		return false
+	}
+	if x.RequireSpecialCharacter != y.RequireSpecialCharacter {
+		return false
+	}
+	if x.RequireResetPasswordForFirstLogin != y.RequireResetPasswordForFirstLogin {
+		return false
+	}
+	if p, q := x.PasswordRotation, y.PasswordRotation; (p == nil && q != nil) || (p != nil && (q == nil || p.Seconds != q.Seconds || p.Nanos != q.Nanos)) {
 		return false
 	}
 	return true
@@ -287,7 +334,10 @@ func (x *WorkspaceProfileSetting) Equal(y *WorkspaceProfileSetting) bool {
 	if x.Require_2Fa != y.Require_2Fa {
 		return false
 	}
-	if p, q := x.TokenDuration, y.TokenDuration; (p == nil && q != nil) || (p != nil && (q == nil || p.Seconds != q.Seconds || p.Nanos != q.Nanos)) {
+	if p, q := x.RefreshTokenDuration, y.RefreshTokenDuration; (p == nil && q != nil) || (p != nil && (q == nil || p.Seconds != q.Seconds || p.Nanos != q.Nanos)) {
+		return false
+	}
+	if p, q := x.AccessTokenDuration, y.AccessTokenDuration; (p == nil && q != nil) || (p != nil && (q == nil || p.Seconds != q.Seconds || p.Nanos != q.Nanos)) {
 		return false
 	}
 	if !x.Announcement.Equal(y.Announcement) {
@@ -317,6 +367,21 @@ func (x *WorkspaceProfileSetting) Equal(y *WorkspaceProfileSetting) bool {
 		return false
 	}
 	if p, q := x.InactiveSessionTimeout, y.InactiveSessionTimeout; (p == nil && q != nil) || (p != nil && (q == nil || p.Seconds != q.Seconds || p.Nanos != q.Nanos)) {
+		return false
+	}
+	if x.EnableAuditLogStdout != y.EnableAuditLogStdout {
+		return false
+	}
+	if x.Watermark != y.Watermark {
+		return false
+	}
+	if x.DirectorySyncToken != y.DirectorySyncToken {
+		return false
+	}
+	if x.BrandingLogo != y.BrandingLogo {
+		return false
+	}
+	if !x.PasswordRestriction.Equal(y.PasswordRestriction) {
 		return false
 	}
 	return true
@@ -356,6 +421,9 @@ func (x *WorkspaceApprovalSetting_Rule) Equal(y *WorkspaceApprovalSetting_Rule) 
 	} else if !proto.Equal(x.Condition, y.Condition) {
 		return false
 	}
+	if x.Source != y.Source {
+		return false
+	}
 	return true
 }
 
@@ -371,114 +439,6 @@ func (x *WorkspaceApprovalSetting) Equal(y *WorkspaceApprovalSetting) bool {
 	}
 	for i := 0; i < len(x.Rules); i++ {
 		if !x.Rules[i].Equal(y.Rules[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func (x *SchemaTemplateSetting_FieldTemplate) Equal(y *SchemaTemplateSetting_FieldTemplate) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Id != y.Id {
-		return false
-	}
-	if x.Engine != y.Engine {
-		return false
-	}
-	if x.Category != y.Category {
-		return false
-	}
-	if !x.Column.Equal(y.Column) {
-		return false
-	}
-	if !x.Catalog.Equal(y.Catalog) {
-		return false
-	}
-	return true
-}
-
-func (x *SchemaTemplateSetting_ColumnType) Equal(y *SchemaTemplateSetting_ColumnType) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Engine != y.Engine {
-		return false
-	}
-	if x.Enabled != y.Enabled {
-		return false
-	}
-	if len(x.Types) != len(y.Types) {
-		return false
-	}
-	for i := 0; i < len(x.Types); i++ {
-		if x.Types[i] != y.Types[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func (x *SchemaTemplateSetting_TableTemplate) Equal(y *SchemaTemplateSetting_TableTemplate) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Id != y.Id {
-		return false
-	}
-	if x.Engine != y.Engine {
-		return false
-	}
-	if x.Category != y.Category {
-		return false
-	}
-	if !x.Table.Equal(y.Table) {
-		return false
-	}
-	if !x.Catalog.Equal(y.Catalog) {
-		return false
-	}
-	return true
-}
-
-func (x *SchemaTemplateSetting) Equal(y *SchemaTemplateSetting) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if len(x.FieldTemplates) != len(y.FieldTemplates) {
-		return false
-	}
-	for i := 0; i < len(x.FieldTemplates); i++ {
-		if !x.FieldTemplates[i].Equal(y.FieldTemplates[i]) {
-			return false
-		}
-	}
-	if len(x.ColumnTypes) != len(y.ColumnTypes) {
-		return false
-	}
-	for i := 0; i < len(x.ColumnTypes); i++ {
-		if !x.ColumnTypes[i].Equal(y.ColumnTypes[i]) {
-			return false
-		}
-	}
-	if len(x.TableTemplates) != len(y.TableTemplates) {
-		return false
-	}
-	for i := 0; i < len(x.TableTemplates); i++ {
-		if !x.TableTemplates[i].Equal(y.TableTemplates[i]) {
 			return false
 		}
 	}
@@ -558,9 +518,6 @@ func (x *DataClassificationSetting_DataClassificationConfig) Equal(y *DataClassi
 		if !x.Classification[k].Equal(y.Classification[k]) {
 			return false
 		}
-	}
-	if x.ClassificationFromConfig != y.ClassificationFromConfig {
-		return false
 	}
 	return true
 }
@@ -728,50 +685,6 @@ func (x *Algorithm) Equal(y *Algorithm) bool {
 		return false
 	}
 	if !x.GetInnerOuterMask().Equal(y.GetInnerOuterMask()) {
-		return false
-	}
-	return true
-}
-
-func (x *SCIMSetting) Equal(y *SCIMSetting) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Token != y.Token {
-		return false
-	}
-	return true
-}
-
-func (x *PasswordRestrictionSetting) Equal(y *PasswordRestrictionSetting) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.MinLength != y.MinLength {
-		return false
-	}
-	if x.RequireNumber != y.RequireNumber {
-		return false
-	}
-	if x.RequireLetter != y.RequireLetter {
-		return false
-	}
-	if x.RequireUppercaseLetter != y.RequireUppercaseLetter {
-		return false
-	}
-	if x.RequireSpecialCharacter != y.RequireSpecialCharacter {
-		return false
-	}
-	if x.RequireResetPasswordForFirstLogin != y.RequireResetPasswordForFirstLogin {
-		return false
-	}
-	if p, q := x.PasswordRotation, y.PasswordRotation; (p == nil && q != nil) || (p != nil && (q == nil || p.Seconds != q.Seconds || p.Nanos != q.Nanos)) {
 		return false
 	}
 	return true

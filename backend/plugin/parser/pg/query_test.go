@@ -96,10 +96,41 @@ func TestValidateSQLForEditor(t *testing.T) {
 			valid:    false,
 			allQuery: false,
 		},
+		// Multi-statement tests
+		{
+			sql:      `SELECT * FROM t1; SELECT * FROM t2;`,
+			valid:    true,
+			allQuery: true,
+		},
+		{
+			sql:      `SELECT * FROM t1; SELECT * FROM t2; SHOW search_path;`,
+			valid:    true,
+			allQuery: true,
+		},
+		{
+			sql:      `SET work_mem = '128MB'; SELECT * FROM t1;`,
+			valid:    true,
+			allQuery: false, // SET doesn't return data
+		},
+		{
+			sql:      `SELECT * FROM t1; INSERT INTO t2 VALUES (1);`,
+			valid:    false, // INSERT not allowed
+			allQuery: false,
+		},
+		{
+			sql:      `SELECT * FROM t1; CREATE TABLE t2 (a int);`,
+			valid:    false, // DDL not allowed
+			allQuery: false,
+		},
+		{
+			sql:      `EXPLAIN SELECT * FROM t1; SELECT * FROM t2;`,
+			valid:    true,
+			allQuery: true,
+		},
 	}
 
 	for _, test := range tests {
-		gotValid, gotAllQuery, err := validateQuery(test.sql)
+		gotValid, gotAllQuery, err := validateQueryANTLR(test.sql)
 		require.NoError(t, err)
 		require.Equal(t, test.valid, gotValid, test.sql)
 		require.Equal(t, test.allQuery, gotAllQuery, test.sql)

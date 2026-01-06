@@ -54,6 +54,42 @@ func (x *UpdateWorksheetRequest) Equal(y *UpdateWorksheetRequest) bool {
 	return true
 }
 
+func (x *BatchUpdateWorksheetOrganizerRequest) Equal(y *BatchUpdateWorksheetOrganizerRequest) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if len(x.Requests) != len(y.Requests) {
+		return false
+	}
+	for i := 0; i < len(x.Requests); i++ {
+		if !x.Requests[i].Equal(y.Requests[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (x *BatchUpdateWorksheetOrganizerResponse) Equal(y *BatchUpdateWorksheetOrganizerResponse) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if len(x.WorksheetOrganizers) != len(y.WorksheetOrganizers) {
+		return false
+	}
+	for i := 0; i < len(x.WorksheetOrganizers); i++ {
+		if !x.WorksheetOrganizers[i].Equal(y.WorksheetOrganizers[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 func (x *UpdateWorksheetOrganizerRequest) Equal(y *UpdateWorksheetOrganizerRequest) bool {
 	if x == y {
 		return true
@@ -89,6 +125,14 @@ func (x *WorksheetOrganizer) Equal(y *WorksheetOrganizer) bool {
 	}
 	if x.Starred != y.Starred {
 		return false
+	}
+	if len(x.Folders) != len(y.Folders) {
+		return false
+	}
+	for i := 0; i < len(x.Folders); i++ {
+		if x.Folders[i] != y.Folders[i] {
+			return false
+		}
 	}
 	return true
 }
@@ -176,6 +220,14 @@ func (x *Worksheet) Equal(y *Worksheet) bool {
 	}
 	if x.Starred != y.Starred {
 		return false
+	}
+	if len(x.Folders) != len(y.Folders) {
+		return false
+	}
+	for i := 0; i < len(x.Folders); i++ {
+		if x.Folders[i] != y.Folders[i] {
+			return false
+		}
 	}
 	return true
 }

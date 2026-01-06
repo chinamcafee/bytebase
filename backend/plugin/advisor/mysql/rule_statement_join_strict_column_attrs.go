@@ -6,12 +6,13 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
-	"github.com/pkg/errors"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 	"github.com/bytebase/bytebase/backend/store/model"
 )
@@ -21,37 +22,39 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleStatementJoinStrictColumnAttrs, &StatementJoinStrictColumnAttrsAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_STATEMENT_JOIN_STRICT_COLUMN_ATTRS, &StatementJoinStrictColumnAttrsAdvisor{})
 }
 
 type StatementJoinStrictColumnAttrsAdvisor struct {
 }
 
 func (*StatementJoinStrictColumnAttrsAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewStatementJoinStrictColumnAttrsRule(level, string(checkCtx.Rule.Type))
+	rule := NewStatementJoinStrictColumnAttrsRule(level, checkCtx.Rule.Type.String())
 	if checkCtx.DBSchema != nil {
-		dbSchema := model.NewDatabaseSchema(checkCtx.DBSchema, nil, nil, storepb.Engine_MYSQL, checkCtx.IsObjectCaseSensitive)
-		rule.dbSchema = dbSchema
+		dbMetadata := model.NewDatabaseMetadata(checkCtx.DBSchema, nil, nil, storepb.Engine_MYSQL, checkCtx.IsObjectCaseSensitive)
+		rule.dbMetadata = dbMetadata
 	}
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -76,7 +79,7 @@ type ColumnAttr struct {
 type StatementJoinStrictColumnAttrsRule struct {
 	BaseRule
 	text           string
-	dbSchema       *model.DatabaseSchema
+	dbMetadata     *model.DatabaseMetadata
 	isSelect       bool
 	isInFromClause bool
 	sourceTables   []SourceTable
@@ -229,10 +232,10 @@ func (r *StatementJoinStrictColumnAttrsRule) checkColumnAttrs(leftColumnAttr *Co
 	if leftColumn == nil || rightColumn == nil {
 		return
 	}
-	if leftColumn.Type != rightColumn.Type || leftColumn.CharacterSet != rightColumn.CharacterSet || leftColumn.Collation != rightColumn.Collation {
+	if leftColumn.GetProto().Type != rightColumn.GetProto().Type || leftColumn.GetProto().CharacterSet != rightColumn.GetProto().CharacterSet || leftColumn.GetProto().Collation != rightColumn.GetProto().Collation {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.StatementJoinColumnAttrsNotMatch.Int32(),
+			Code:          code.StatementJoinColumnAttrsNotMatch.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("%s.%s and %s.%s column fields do not match", leftColumnAttr.Table, leftColumnAttr.Column, rightColumnAttr.Table, rightColumnAttr.Column),
 			StartPosition: common.ConvertANTLRLineToPosition(r.baseLine),
@@ -241,10 +244,10 @@ func (r *StatementJoinStrictColumnAttrsRule) checkColumnAttrs(leftColumnAttr *Co
 }
 
 func (r *StatementJoinStrictColumnAttrsRule) findTable(tableName string) *model.TableMetadata {
-	if r.dbSchema == nil {
+	if r.dbMetadata == nil {
 		return nil
 	}
-	return r.dbSchema.GetDatabaseMetadata().GetSchema("").GetTable(tableName)
+	return r.dbMetadata.GetSchemaMetadata("").GetTable(tableName)
 }
 
 func extractJoinInfoFromText(text string) *ColumnAttr {

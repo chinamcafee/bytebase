@@ -1,5 +1,5 @@
 <template>
-  <div class="min-w-[14rem] max-w-[18rem] gap-y-1">
+  <div class="min-w-56 max-w-[18rem] gap-y-1">
     <InfoItem :title="$t('common.name')">
       {{ tableMetadata.name }}
     </InfoItem>
@@ -27,7 +27,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { RichEngineName } from "@/components/v2";
-import { useDBSchemaV1Store, useDatabaseV1Store } from "@/store";
+import { useDatabaseV1Store, useDBSchemaV1Store } from "@/store";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import { bytesToString } from "@/utils";
 import InfoItem from "./InfoItem.vue";
@@ -72,6 +72,6 @@ const collation = computed(() => {
 });
 
 const comment = computed(() => {
-  return tableMetadata.value.userComment;
+  return tableMetadata.value.comment;
 });
 </script>

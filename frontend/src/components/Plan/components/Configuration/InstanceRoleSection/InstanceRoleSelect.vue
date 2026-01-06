@@ -1,14 +1,14 @@
 <template>
   <NSelect
     v-model:value="selectedRole"
-    class="!w-40"
-    consistent-menu-width
+    class="w-36!"
     size="small"
     :options="options"
     :placeholder="$t('instance.select-database-user')"
     :filterable="true"
     :virtual-scroll="true"
     :fallback-option="false"
+    :consistent-menu-width="false"
     :clearable="true"
     :disabled="!allowChange"
     :loading="loading"
@@ -20,11 +20,10 @@ import { create } from "@bufbuild/protobuf";
 import { NSelect, type SelectOption } from "naive-ui";
 import { computed, nextTick, ref, watch } from "vue";
 import {
-  usePlanContext,
   updateSpecSheetWithStatement,
+  usePlanContext,
 } from "@/components/Plan/logic";
-import { instanceRoleServiceClientConnect } from "@/grpcweb";
-import { DEFAULT_PAGE_SIZE } from "@/store/modules/common";
+import { instanceRoleServiceClientConnect } from "@/connect";
 import type { InstanceRole } from "@/types/proto-es/v1/instance_role_service_pb";
 import { ListInstanceRolesRequestSchema } from "@/types/proto-es/v1/instance_role_service_pb";
 import { setSheetStatement } from "@/utils";
@@ -42,7 +41,7 @@ const {
   databases,
   events,
 } = useInstanceRoleSettingContext();
-const selectedSpec = useSelectedSpec();
+const { selectedSpec } = useSelectedSpec();
 const { sheetStatement, sheet, sheetReady } = useSpecSheet(selectedSpec);
 const { plan, isCreating } = usePlanContext();
 
@@ -80,7 +79,6 @@ watch(
     try {
       const request = create(ListInstanceRolesRequestSchema, {
         parent: database.value.instance,
-        pageSize: DEFAULT_PAGE_SIZE,
       });
       const response =
         await instanceRoleServiceClientConnect.listInstanceRoles(request);

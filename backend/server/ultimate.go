@@ -34,10 +34,12 @@ import (
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/elasticsearch"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/partiql"
+	_ "github.com/bytebase/bytebase/backend/plugin/parser/pg"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/plsql"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/redis"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/redshift"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/snowflake"
+	_ "github.com/bytebase/bytebase/backend/plugin/parser/spanner"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/standard"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/tidb"
 	_ "github.com/bytebase/bytebase/backend/plugin/parser/trino"
@@ -48,6 +50,8 @@ import (
 	_ "github.com/bytebase/bytebase/backend/plugin/advisor/mysql"
 	_ "github.com/bytebase/bytebase/backend/plugin/advisor/oceanbase"
 	_ "github.com/bytebase/bytebase/backend/plugin/advisor/oracle"
+	_ "github.com/bytebase/bytebase/backend/plugin/advisor/pg"
+	_ "github.com/bytebase/bytebase/backend/plugin/advisor/redshift"
 	_ "github.com/bytebase/bytebase/backend/plugin/advisor/snowflake"
 	_ "github.com/bytebase/bytebase/backend/plugin/advisor/tidb"
 
@@ -63,7 +67,10 @@ import (
 
 	// IM webhooks.
 	_ "github.com/bytebase/bytebase/backend/plugin/webhook/dingtalk"
+	_ "github.com/bytebase/bytebase/backend/plugin/webhook/discord"
 	_ "github.com/bytebase/bytebase/backend/plugin/webhook/feishu"
+	_ "github.com/bytebase/bytebase/backend/plugin/webhook/lark"
 	_ "github.com/bytebase/bytebase/backend/plugin/webhook/slack"
+	_ "github.com/bytebase/bytebase/backend/plugin/webhook/teams"
 	_ "github.com/bytebase/bytebase/backend/plugin/webhook/wecom"
 )

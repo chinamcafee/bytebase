@@ -104,6 +104,18 @@ export declare type ListInstancesRequest = Message<"bytebase.v1.ListInstancesReq
    * @generated from field: string filter = 4;
    */
   filter: string;
+
+  /**
+   * The order by of instances.
+   * Support title, environment. The default sorting order is ascending.
+   * For example:
+   * - order_by = "title"
+   * - order_by = "title desc"
+   * - order_by = "title desc, environment asc"
+   *
+   * @generated from field: string order_by = 5;
+   */
+  orderBy: string;
 };
 
 /**
@@ -600,37 +612,29 @@ export declare type Instance = Message<"bytebase.v1.Instance"> & {
   /**
    * Database roles available in this instance.
    *
-   * @generated from field: repeated bytebase.v1.InstanceRole roles = 12;
+   * @generated from field: repeated bytebase.v1.InstanceRole roles = 11;
    */
   roles: InstanceRole[];
 
   /**
    * How often the instance is synced.
    *
-   * @generated from field: google.protobuf.Duration sync_interval = 13;
+   * @generated from field: google.protobuf.Duration sync_interval = 12;
    */
   syncInterval?: Duration;
-
-  /**
-   * The maximum number of connections.
-   * The default is 10 if the value is unset or zero.
-   *
-   * @generated from field: int32 maximum_connections = 14;
-   */
-  maximumConnections: number;
 
   /**
    * Enable sync for following databases.
    * Default empty, means sync all schemas & databases.
    *
-   * @generated from field: repeated string sync_databases = 15;
+   * @generated from field: repeated string sync_databases = 14;
    */
   syncDatabases: string[];
 
   /**
    * The last time the instance was synced.
    *
-   * @generated from field: google.protobuf.Timestamp last_sync_time = 16;
+   * @generated from field: google.protobuf.Timestamp last_sync_time = 15;
    */
   lastSyncTime?: Timestamp;
 
@@ -638,7 +642,7 @@ export declare type Instance = Message<"bytebase.v1.Instance"> & {
    * Labels are key-value pairs that can be attached to the instance.
    * For example, { "org_group": "infrastructure", "environment": "production" }
    *
-   * @generated from field: map<string, string> labels = 17;
+   * @generated from field: map<string, string> labels = 16;
    */
   labels: { [key: string]: string };
 };
@@ -715,6 +719,38 @@ export declare type DataSourceExternalSecret = Message<"bytebase.v1.DataSourceEx
    * @generated from field: string password_key_name = 8;
    */
   passwordKeyName: string;
+
+  /**
+   * TLS configuration for connecting to Vault server.
+   * These fields are separate from the database TLS configuration in DataSource.
+   * skip_vault_tls_verification disables TLS certificate verification for Vault connections.
+   * Default is false (verification enabled) for security.
+   * Only set to true for development or when certificates cannot be properly validated.
+   *
+   * @generated from field: bool skip_vault_tls_verification = 9;
+   */
+  skipVaultTlsVerification: boolean;
+
+  /**
+   * CA certificate for Vault server verification.
+   *
+   * @generated from field: string vault_ssl_ca = 10;
+   */
+  vaultSslCa: string;
+
+  /**
+   * Client certificate for mutual TLS authentication with Vault.
+   *
+   * @generated from field: string vault_ssl_cert = 11;
+   */
+  vaultSslCert: string;
+
+  /**
+   * Client private key for mutual TLS authentication with Vault.
+   *
+   * @generated from field: string vault_ssl_key = 12;
+   */
+  vaultSslKey: string;
 };
 
 /**
@@ -824,6 +860,13 @@ export enum DataSourceExternalSecret_SecretType {
    * @generated from enum value: GCP_SECRET_MANAGER = 3;
    */
   GCP_SECRET_MANAGER = 3,
+
+  /**
+   * ref: https://learn.microsoft.com/en-us/azure/key-vault/secrets/about-secrets
+   *
+   * @generated from enum value: AZURE_KEY_VAULT = 4;
+   */
+  AZURE_KEY_VAULT = 4,
 }
 
 /**
@@ -1034,6 +1077,13 @@ export declare type DataSource = Message<"bytebase.v1.DataSource"> & {
    * @generated from field: string authentication_private_key = 20;
    */
   authenticationPrivateKey: string;
+
+  /**
+   * Passphrase for the encrypted PKCS#8 private key. Only used when the private key is encrypted.
+   *
+   * @generated from field: string authentication_private_key_passphrase = 40;
+   */
+  authenticationPrivateKeyPassphrase: string;
 
   /**
    * @generated from field: bytebase.v1.DataSourceExternalSecret external_secret = 21;

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/plsql-parser"
+	parser "github.com/bytebase/parser/plsql"
 	"github.com/pkg/errors"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -16,16 +16,54 @@ import (
 
 func init() {
 	base.RegisterParseFunc(storepb.Engine_ORACLE, parsePLSQLForRegistry)
+	base.RegisterParseStatementsFunc(storepb.Engine_ORACLE, parsePLSQLStatements)
+	base.RegisterGetStatementTypes(storepb.Engine_ORACLE, GetStatementTypes)
 }
 
 // parsePLSQLForRegistry is the ParseFunc for PL/SQL.
-// Returns antlr.Tree on success.
-func parsePLSQLForRegistry(statement string) (any, error) {
-	tree, _, err := ParsePLSQL(statement + ";")
+// Returns []base.AST with *ANTLRAST instances.
+func parsePLSQLForRegistry(statement string) ([]base.AST, error) {
+	parseResults, err := ParsePLSQL(statement + ";")
 	if err != nil {
 		return nil, err
 	}
-	return tree, nil
+	asts := make([]base.AST, len(parseResults))
+	for i, r := range parseResults {
+		asts[i] = r
+	}
+	return asts, nil
+}
+
+// parsePLSQLStatements is the ParseStatementsFunc for Oracle (PL/SQL).
+// Returns []ParsedStatement with both text and AST populated.
+func parsePLSQLStatements(statement string) ([]base.ParsedStatement, error) {
+	// First split to get Statement with text and positions
+	stmts, err := SplitSQL(statement)
+	if err != nil {
+		return nil, err
+	}
+
+	// Then parse to get ASTs (note: ParsePLSQL adds semicolon internally)
+	parseResults, err := ParsePLSQL(statement + ";")
+	if err != nil {
+		return nil, err
+	}
+
+	// Combine: Statement provides text/positions, ANTLRAST provides AST
+	var result []base.ParsedStatement
+	astIndex := 0
+	for _, stmt := range stmts {
+		ps := base.ParsedStatement{
+			Statement: stmt,
+		}
+		if !stmt.Empty && astIndex < len(parseResults) {
+			ps.AST = parseResults[astIndex]
+			astIndex++
+		}
+		result = append(result, ps)
+	}
+
+	return result, nil
 }
 
 type Version struct {
@@ -61,22 +99,101 @@ func ParseVersion(banner string) (*Version, error) {
 	return nil, errors.Errorf("failed to parse version from banner: %s", banner)
 }
 
-// ParsePLSQL parses the given PLSQL.
-func ParsePLSQL(sql string) (antlr.Tree, *antlr.CommonTokenStream, error) {
+// ParsePLSQL parses the given PLSQL and returns a list of ANTLR ASTs.
+// It first parses the whole statement to get the AST, then splits by unit_statement
+// and sql_plus_command nodes, and re-parses each individual statement.
+func ParsePLSQL(sql string) ([]*base.ANTLRAST, error) {
 	sql = addSemicolonIfNeeded(sql)
+
+	// First pass: parse the whole statement to get the AST for splitting
+	tree, tokens, err := parsePLSQLInternal(sql, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	// Type assert to ensure we have a sql_script context
+	sqlScript, ok := tree.(*parser.Sql_scriptContext)
+	if !ok {
+		return nil, errors.Errorf("expected sql_script context, got %T", tree)
+	}
+
+	// Iterate through children in order to preserve statement ordering and re-parse each one
+	var result []*base.ANTLRAST
+	prevStopTokenIndex := -1
+	for _, child := range sqlScript.GetChildren() {
+		var stmtText string
+		var stmtBaseLine int
+		var startToken, stopToken antlr.Token
+
+		// Type assert to get the specific statement type
+		if stmt, ok := child.(parser.IUnit_statementContext); ok {
+			startToken = stmt.GetStart()
+			stopToken = stmt.GetStop()
+		} else if sqlPlusCmd, ok := child.(parser.ISql_plus_commandContext); ok {
+			startToken = sqlPlusCmd.GetStart()
+			stopToken = sqlPlusCmd.GetStop()
+		} else {
+			// Skip other node types (e.g., EOF)
+			continue
+		}
+
+		// Calculate the leading whitespace/comments before this statement (like SplitSQL does)
+		leadingContent := ""
+		if startTokenIndex := startToken.GetTokenIndex(); startTokenIndex-1 >= 0 && prevStopTokenIndex+1 <= startTokenIndex-1 {
+			leadingContent = tokens.GetTextFromTokens(tokens.Get(prevStopTokenIndex+1), tokens.Get(startTokenIndex-1))
+		}
+
+		// Include leading whitespace in the statement text
+		stmtText = leadingContent + tokens.GetTextFromTokens(startToken, stopToken)
+
+		// stmtBaseLine is where the leading content starts (for re-parsing with correct offsets).
+		// This ensures token positions in the re-parsed AST are correct when combined with SplitSQL's BaseLine.
+		// Formula: first token's line - 1 (convert to 0-based) - number of newlines in leading content
+		stmtBaseLine = startToken.GetLine() - 1 - strings.Count(leadingContent, "\n")
+
+		prevStopTokenIndex = stopToken.GetTokenIndex()
+
+		// Skip empty statements
+		if strings.TrimSpace(stmtText) == "" || stmtText == ";" {
+			continue
+		}
+
+		// Re-parse the individual statement with correct base line
+		stmtTree, stmtTokens, err := parsePLSQLInternal(stmtText, stmtBaseLine)
+		if err != nil {
+			return nil, err
+		}
+
+		// StartPosition points to the first character of Text (including leading whitespace),
+		// not the first token. This enables replacing BaseLine with Start.GetLine() - 1 in advisors.
+		result = append(result, &base.ANTLRAST{
+			StartPosition: &storepb.Position{Line: int32(stmtBaseLine) + 1},
+			Tree:          stmtTree,
+			Tokens:        stmtTokens,
+		})
+	}
+
+	return result, nil
+}
+
+// parsePLSQLInternal is the internal parsing function that parses a single SQL statement.
+func parsePLSQLInternal(sql string, baseLine int) (antlr.Tree, *antlr.CommonTokenStream, error) {
 	lexer := parser.NewPlSqlLexer(antlr.NewInputStream(sql))
 	stream := antlr.NewCommonTokenStream(lexer, 0)
 	p := parser.NewPlSqlParser(stream)
 	p.SetVersion12(true)
 
+	startPosition := &storepb.Position{Line: int32(baseLine) + 1}
 	lexerErrorListener := &base.ParseErrorListener{
-		Statement: sql,
+		Statement:     sql,
+		StartPosition: startPosition,
 	}
 	lexer.RemoveErrorListeners()
 	lexer.AddErrorListener(lexerErrorListener)
 
 	parserErrorListener := &base.ParseErrorListener{
-		Statement: sql,
+		Statement:     sql,
+		StartPosition: startPosition,
 	}
 	p.RemoveErrorListeners()
 	p.AddErrorListener(parserErrorListener)
@@ -93,6 +210,13 @@ func ParsePLSQL(sql string) (antlr.Tree, *antlr.CommonTokenStream, error) {
 	}
 
 	return tree, stream, nil
+}
+
+// ParsePLSQLForStringsManipulation parses the whole SQL without splitting.
+// This is used for strings manipulation which needs to see all statements together.
+func ParsePLSQLForStringsManipulation(sql string) (antlr.Tree, antlr.TokenStream, error) {
+	sql = addSemicolonIfNeeded(sql)
+	return parsePLSQLInternal(sql, 0)
 }
 
 func addSemicolonIfNeeded(sql string) string {
@@ -122,20 +246,6 @@ func IsOracleKeyword(text string) bool {
 	}
 
 	return oracleKeywords[strings.ToUpper(text)] || oracleReservedWords[strings.ToUpper(text)]
-}
-
-// NormalizeConstraintName returns the normalized constraint name from the given context.
-func NormalizeConstraintName(constraintName parser.IConstraint_nameContext) (string, string) {
-	if constraintName == nil {
-		return "", ""
-	}
-
-	if constraintName.Id_expression(0) != nil {
-		return NormalizeIdentifierContext(constraintName.Identifier()),
-			NormalizeIDExpression(constraintName.Id_expression(0))
-	}
-
-	return "", NormalizeIdentifierContext(constraintName.Identifier())
 }
 
 // NormalizeIdentifierContext returns the normalized identifier from the given context.
@@ -246,13 +356,16 @@ func NormalizeTableName(tableName parser.ITable_nameContext) string {
 
 // EquivalentType returns true if the given type is equivalent to the given text.
 func EquivalentType(tp parser.IDatatypeContext, text string) (bool, error) {
-	tree, _, err := ParsePLSQL(fmt.Sprintf(`CREATE TABLE t(a %s);`, text))
+	results, err := ParsePLSQL(fmt.Sprintf(`CREATE TABLE t(a %s);`, text))
 	if err != nil {
 		return false, err
 	}
+	if len(results) == 0 {
+		return false, errors.New("no parse results")
+	}
 
 	listener := &typeEquivalentListener{tp: tp, equivalent: false}
-	antlr.ParseTreeWalkerDefault.Walk(listener, tree)
+	antlr.ParseTreeWalkerDefault.Walk(listener, results[0].Tree)
 	return listener.equivalent, nil
 }
 

@@ -6,9 +6,7 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/google-sql-parser"
-
-	parsererror "github.com/bytebase/bytebase/backend/plugin/parser/errors"
+	parser "github.com/bytebase/parser/googlesql"
 
 	"github.com/pkg/errors"
 
@@ -43,7 +41,13 @@ func (q *querySpanExtractor) getQuerySpan(ctx context.Context, stmt string) (*ba
 	if err != nil {
 		return nil, err
 	}
-	tree := parseResults.Tree
+
+	if len(parseResults) != 1 {
+		return nil, errors.Errorf("expected exactly 1 statement, got %d", len(parseResults))
+	}
+
+	parseResult := parseResults[0]
+	tree := parseResult.Tree
 	q.ctx = ctx
 	accessTables, err := getAccessTables(q.defaultDatabase, tree)
 	if err != nil {
@@ -728,7 +732,7 @@ func (q *querySpanExtractor) getFieldColumnSource(tableName, fieldName string) (
 		}
 	}
 
-	return nil, &parsererror.ResourceNotFoundError{
+	return nil, &base.ResourceNotFoundError{
 		Schema: nil,
 		Table:  &tableName,
 		Column: &fieldName,
@@ -1106,9 +1110,9 @@ func (q *querySpanExtractor) findTableSchema(schemaName string, tableName string
 		return nil, errors.Errorf("database %q not found", q.defaultDatabase)
 	}
 
-	schema := databaseMetadata.GetSchema(schemaName)
+	schema := databaseMetadata.GetSchemaMetadata(schemaName)
 	if schema == nil {
-		return nil, &parsererror.ResourceNotFoundError{
+		return nil, &base.ResourceNotFoundError{
 			Database: &q.defaultDatabase,
 			Schema:   &schemaName,
 		}
@@ -1130,7 +1134,7 @@ func (q *querySpanExtractor) findTableSchema(schemaName string, tableName string
 	}
 
 	var columns []string
-	for _, column := range table.GetColumns() {
+	for _, column := range table.GetProto().GetColumns() {
 		columns = append(columns, column.Name)
 	}
 	return &base.PhysicalTable{

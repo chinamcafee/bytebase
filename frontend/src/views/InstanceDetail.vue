@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-2 px-6" v-bind="$attrs">
+  <div class="flex flex-col gap-y-2 px-6" v-bind="$attrs">
     <ArchiveBanner v-if="instance.state === State.DELETED" />
     <BBAttention
       v-if="!instance.environment"
@@ -9,40 +9,45 @@
       {{ $t("instance.no-environment") }}
     </BBAttention>
 
-    <div v-if="!embedded" class="flex items-center justify-between">
+    <div class="flex items-center justify-between">
       <div class="flex items-center gap-x-2">
-        <EngineIcon :engine="instance.engine" custom-class="!h-6" />
+        <EngineIcon :engine="instance.engine" custom-class="h-6!" />
         <span class="text-lg font-medium">{{ instanceV1Name(instance) }}</span>
       </div>
     </div>
 
-    <NTabs v-model:value="state.selectedTab">
+    <NTabs :value="state.selectedTab" @update:value="onTabChange">
       <template #suffix>
-        <div class="flex items-center space-x-2">
+        <div v-if="instance.state === State.ACTIVE" class="flex items-center gap-x-2">
           <InstanceSyncButton
-            v-if="instance.state === State.ACTIVE"
             @sync-schema="syncSchema"
           />
-          <NButton
+          <PermissionGuardWrapper
             v-if="allowCreateDatabase"
-            type="primary"
-            @click.prevent="createDatabase"
+            v-slot="slotProps"
+            :permissions="['bb.issues.create', 'bb.plans.create']"
           >
-            <template #icon>
-              <PlusIcon class="h-4 w-4" />
-            </template>
-            {{ $t("instance.new-database") }}
-          </NButton>
+            <NButton
+              type="primary"
+              :disabled="slotProps.disabled"
+              @click.prevent="createDatabase"
+            >
+              <template #icon>
+                <PlusIcon class="h-4 w-4" />
+              </template>
+              {{ $t("instance.new-database") }}
+            </NButton>
+          </PermissionGuardWrapper>
         </div>
       </template>
       <NTabPane name="overview" :tab="$t('common.overview')">
-        <InstanceForm class="-mt-2" :instance="instance">
+        <InstanceForm ref="instanceFormRef" class="-mt-2" :instance="instance">
           <InstanceFormBody :hide-archive-restore="hideArchiveRestore" />
           <InstanceFormButtons class="sticky bottom-0 z-10" />
         </InstanceForm>
       </NTabPane>
       <NTabPane name="databases" :tab="$t('common.databases')">
-        <div class="space-y-2">
+        <div class="flex flex-col gap-y-2">
           <div
             class="w-full flex flex-col sm:flex-row items-start sm:items-end justify-between gap-2"
           >
@@ -95,9 +100,9 @@ import { useTitle } from "@vueuse/core";
 import { cloneDeep } from "lodash-es";
 import { PlusIcon } from "lucide-vue-next";
 import { NButton, NTabPane, NTabs } from "naive-ui";
-import { computed, reactive, watch, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter, useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { BBAttention } from "@/bbkit";
 import AdvancedSearch from "@/components/AdvancedSearch";
 import { useCommonSearchScopeOptions } from "@/components/AdvancedSearch/useCommonSearchScopeOptions";
@@ -110,22 +115,24 @@ import {
   Form as InstanceFormBody,
   Buttons as InstanceFormButtons,
 } from "@/components/InstanceForm/";
-import { InstanceRoleTable, Drawer } from "@/components/v2";
+import PermissionGuardWrapper from "@/components/Permission/PermissionGuardWrapper.vue";
+import { Drawer, InstanceRoleTable } from "@/components/v2";
 import {
-  PagedDatabaseTable,
   DatabaseOperations,
+  PagedDatabaseTable,
 } from "@/components/v2/Model/DatabaseV1Table";
+import { useRouteChangeGuard } from "@/composables/useRouteChangeGuard";
 import { useBodyLayoutContext } from "@/layouts/common";
 import {
   pushNotification,
   useDatabaseV1Store,
-  useInstanceV1Store,
   useEnvironmentV1Store,
+  useInstanceV1Store,
 } from "@/store";
 import {
+  environmentNamePrefix,
   instanceNamePrefix,
   projectNamePrefix,
-  environmentNamePrefix,
 } from "@/store/modules/v1/common";
 import {
   type ComposedDatabase,
@@ -133,17 +140,19 @@ import {
   isValidDatabaseName,
 } from "@/types";
 import { State } from "@/types/proto-es/v1/common_pb";
+import type { SearchParams, SearchScope } from "@/utils";
 import {
+  CommonFilterScopeIdList,
+  getValueFromSearchParams,
+  getValuesFromSearchParams,
   instanceV1HasCreateDatabase,
   instanceV1Name,
-  CommonFilterScopeIdList,
 } from "@/utils";
-import type { SearchParams, SearchScope } from "@/utils";
 
 const instanceHashList = ["overview", "databases", "users"] as const;
 export type InstanceHash = (typeof instanceHashList)[number];
-const isInstanceHash = (x: any): x is InstanceHash =>
-  instanceHashList.includes(x);
+const isInstanceHash = (x: unknown): x is InstanceHash =>
+  instanceHashList.includes(x as InstanceHash);
 
 interface LocalState {
   showCreateDatabaseModal: boolean;
@@ -155,7 +164,6 @@ interface LocalState {
 
 const props = defineProps<{
   instanceId: string;
-  embedded?: boolean;
   hideArchiveRestore?: boolean;
 }>();
 
@@ -163,16 +171,26 @@ defineOptions({
   inheritAttrs: false,
 });
 
-if (!props.embedded) {
-  const { overrideMainContainerClass } = useBodyLayoutContext();
-  overrideMainContainerClass("!pb-0");
-}
+const { overrideMainContainerClass } = useBodyLayoutContext();
+overrideMainContainerClass("pb-0!");
 
 const { t } = useI18n();
 const router = useRouter();
 const instanceV1Store = useInstanceV1Store();
 const databaseStore = useDatabaseV1Store();
 const pagedDatabaseTableRef = ref<InstanceType<typeof PagedDatabaseTable>>();
+const instanceFormRef = ref<InstanceType<typeof InstanceForm>>();
+
+const onTabChange = (tab: InstanceHash) => {
+  if (instanceFormRef.value?.isEditing) {
+    if (!window.confirm(t("common.leave-without-saving"))) {
+      return;
+    }
+  }
+  state.selectedTab = tab;
+};
+
+useRouteChangeGuard(computed(() => instanceFormRef.value?.isEditing ?? false));
 
 const readonlyScopes = computed((): SearchScope[] => [
   { id: "instance", value: props.instanceId, readonly: true },
@@ -234,29 +252,19 @@ const environment = computed(() => {
 });
 
 const selectedEnvironment = computed(() => {
-  const environmentId = state.params.scopes.find(
-    (scope) => scope.id === "environment"
-  )?.value;
-  if (!environmentId) {
-    return;
-  }
-  return `${environmentNamePrefix}${environmentId}`;
+  return getValueFromSearchParams(
+    state.params,
+    "environment",
+    environmentNamePrefix
+  );
 });
 
 const selectedProject = computed(() => {
-  const projectId = state.params.scopes.find(
-    (scope) => scope.id === "project"
-  )?.value;
-  if (!projectId) {
-    return;
-  }
-  return `${projectNamePrefix}${projectId}`;
+  return getValueFromSearchParams(state.params, "project", projectNamePrefix);
 });
 
 const selectedLabels = computed(() => {
-  return state.params.scopes
-    .filter((scope) => scope.id === "label")
-    .map((scope) => scope.value);
+  return getValuesFromSearchParams(state.params, "label");
 });
 
 const filter = computed(() => ({
@@ -271,10 +279,7 @@ const instanceRoleList = computed(() => {
 });
 
 const allowCreateDatabase = computed(() => {
-  return (
-    instance.value.state === State.ACTIVE &&
-    instanceV1HasCreateDatabase(instance.value)
-  );
+  return instanceV1HasCreateDatabase(instance.value);
 });
 
 const syncSchema = async (enableFullSync: boolean) => {

@@ -3,55 +3,44 @@ import { createContextValues } from "@connectrpc/connect";
 import dayjs from "dayjs";
 import { defineStore } from "pinia";
 import { computed, reactive, ref, unref, watch } from "vue";
-import { rolloutServiceClientConnect } from "@/grpcweb";
-import { silentContextKey } from "@/grpcweb/context-key";
+import { rolloutServiceClientConnect } from "@/connect";
+import { silentContextKey } from "@/connect/context-key";
 import type { MaybeRef } from "@/types";
 import { isValidRolloutName, unknownRollout } from "@/types";
 import {
-  Task_Type,
-  type Rollout,
-} from "@/types/proto-es/v1/rollout_service_pb";
-import {
   GetRolloutRequestSchema,
   ListRolloutsRequestSchema,
+  type Rollout,
+  Task_Type,
 } from "@/types/proto-es/v1/rollout_service_pb";
 import {
   getTsRangeFromSearchParams,
   getValueFromSearchParams,
   type SearchParams,
 } from "@/utils";
-import { DEFAULT_PAGE_SIZE } from "./common";
 
 export interface RolloutFind {
   project: string;
-  taskType?: Task_Type | Task_Type[];
+  taskType?: Task_Type[];
   query?: string;
-  creator?: string;
   updatedTsAfter?: number;
   updatedTsBefore?: number;
 }
 
 export const buildRolloutFilter = (find: RolloutFind): string => {
   const filter: string[] = [];
-  if (find.taskType) {
-    if (Array.isArray(find.taskType)) {
-      const types = find.taskType.map((t) => `"${Task_Type[t]}"`).join(", ");
-      filter.push(`task_type in [${types}]`);
-    } else {
-      filter.push(`task_type == "${Task_Type[find.taskType]}"`);
-    }
-  }
-  if (find.creator) {
-    filter.push(`creator == "${find.creator}"`);
+  if (find.taskType && find.taskType.length > 0) {
+    const types = find.taskType.map((t) => `"${Task_Type[t]}"`).join(", ");
+    filter.push(`task_type in [${types}]`);
   }
   if (find.updatedTsAfter) {
     filter.push(
-      `update_time >= "${dayjs(find.updatedTsAfter).utc().format()}"`
+      `update_time >= "${dayjs(find.updatedTsAfter).utc().toISOString()}"`
     );
   }
   if (find.updatedTsBefore) {
     filter.push(
-      `update_time <= "${dayjs(find.updatedTsBefore).utc().format()}"`
+      `update_time <= "${dayjs(find.updatedTsBefore).utc().toISOString()}"`
     );
   }
   return filter.join(" && ");
@@ -61,18 +50,15 @@ export const buildRolloutFindBySearchParams = (
   params: SearchParams,
   defaultFind?: Partial<RolloutFind>
 ) => {
-  const { scopes } = params;
-  const projectScope = scopes.find((s) => s.id === "project");
-
+  const projectScope = getValueFromSearchParams(params, "project");
   const updatedTsRange = getTsRangeFromSearchParams(params, "updated");
 
   const filter: RolloutFind = {
     ...defaultFind,
-    project: `projects/${projectScope?.value ?? "-"}`,
+    project: `projects/${projectScope || "-"}`,
     query: params.query,
     updatedTsAfter: updatedTsRange?.[0],
     updatedTsBefore: updatedTsRange?.[1],
-    creator: getValueFromSearchParams(params, "creator", "users/"),
   };
   return filter;
 };
@@ -97,7 +83,7 @@ export const useRolloutStore = defineStore("rollout", () => {
   }: ListRolloutParams) => {
     const request = create(ListRolloutsRequestSchema, {
       parent: find.project,
-      pageSize: pageSize || DEFAULT_PAGE_SIZE,
+      pageSize: pageSize,
       pageToken: pageToken || "",
       filter: buildRolloutFilter(find),
     });
@@ -148,7 +134,11 @@ export const useRolloutByName = (name: MaybeRef<string>) => {
       const cached = store.getRolloutByName(name);
       if (!isValidRolloutName(cached.name)) {
         ready.value = false;
-        await store.fetchRolloutByName(name);
+        try {
+          await store.fetchRolloutByName(name);
+        } catch {
+          // ignore
+        }
         ready.value = true;
       }
     },

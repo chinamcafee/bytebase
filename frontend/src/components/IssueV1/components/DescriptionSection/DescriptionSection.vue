@@ -41,6 +41,7 @@
         :autosize="{ minRows: 3, maxRows: 10 }"
         :disabled="state.isUpdating"
         :loading="state.isUpdating"
+        :maxlength="10000"
         style="
           width: 100%;
           --n-placeholder-color: rgb(var(--color-control-placeholder));
@@ -51,7 +52,7 @@
       />
       <div
         v-else
-        class="min-h-[3rem] max-h-[16rem] whitespace-pre-wrap px-4 py-3 text-sm bg-white rounded-lg border border-gray-200 overflow-y-auto"
+        class="min-h-12 max-h-64 whitespace-pre-wrap px-4 py-3 text-sm bg-white rounded-lg border border-gray-200 overflow-y-auto"
       >
         <template v-if="issue.description">
           <iframe
@@ -71,11 +72,11 @@
 
 <script lang="ts" setup>
 import { create } from "@bufbuild/protobuf";
-import { NInput, NButton } from "naive-ui";
+import { NButton, NInput } from "naive-ui";
 import { computed, nextTick, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRenderMarkdown } from "@/components/MarkdownEditor";
-import { issueServiceClientConnect, planServiceClientConnect } from "@/grpcweb";
+import { issueServiceClientConnect, planServiceClientConnect } from "@/connect";
 import { pushNotification, useCurrentProjectV1 } from "@/store";
 import {
   IssueSchema,

@@ -1,16 +1,17 @@
 <template>
-  <div class="flex justify-end">
+  <div class="flex justify-end gap-x-2">
     <template v-if="allowEdit">
       <NPopconfirm
         v-if="allowDeleteUser"
+        :positive-button-props="{
+          type: 'error',
+        }"
         @positive-click="() => changeRowStatus(State.DELETED)"
       >
         <template #trigger>
-          <NButton quaternary circle @click.stop>
-            <template #icon>
-              <Trash2Icon class="w-4 h-auto" />
-            </template>
-          </NButton>
+          <MiniActionButton @click.stop type="error">
+            <Trash2Icon />
+          </MiniActionButton>
         </template>
 
         <template #default>
@@ -20,27 +21,21 @@
         </template>
       </NPopconfirm>
 
-      <NButton
+      <MiniActionButton
         v-if="allowUpdateUser"
-        quaternary
-        circle
         @click="(e) => $emit('click-user', user, e)"
       >
-        <template #icon>
-          <PencilIcon class="w-4 h-auto" />
-        </template>
-      </NButton>
+        <PencilIcon />
+      </MiniActionButton>
 
       <NPopconfirm
         v-if="allowReactiveUser"
         @positive-click="() => changeRowStatus(State.ACTIVE)"
       >
         <template #trigger>
-          <NButton quaternary circle @click.stop>
-            <template #icon>
-              <Undo2Icon class="w-4 h-auto" />
-            </template>
-          </NButton>
+          <MiniActionButton @click.stop>
+            <Undo2Icon />
+          </MiniActionButton>
         </template>
 
         <template #default>
@@ -55,10 +50,11 @@
 
 <script lang="ts" setup>
 import { PencilIcon, Trash2Icon, Undo2Icon } from "lucide-vue-next";
-import { NButton, NPopconfirm } from "naive-ui";
+import { NPopconfirm } from "naive-ui";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { useUserStore, pushNotification, useCurrentUserV1 } from "@/store";
+import { MiniActionButton } from "@/components/v2";
+import { pushNotification, useCurrentUserV1, useUserStore } from "@/store";
 import { State } from "@/types/proto-es/v1/common_pb";
 import { type User, UserType } from "@/types/proto-es/v1/user_service_pb";
 import { hasWorkspacePermissionV2 } from "@/utils";

@@ -5,6 +5,7 @@
       :required="true"
       :include-all-users="true"
       :include-service-account="true"
+      :include-workload-identity="true"
       :disabled="disableMemberChange"
     >
       <template #suffix>
@@ -16,7 +17,7 @@
       </template>
     </MembersBindingSelect>
 
-    <div class="w-full space-y-2">
+    <div class="w-full flex flex-col gap-y-2">
       <div class="flex items-center gap-x-1">
         <span>{{ $t("settings.members.assign-role") }}</span>
         <RequiredStar />
@@ -25,10 +26,10 @@
         v-model:value="state.role"
         :include-workspace-roles="false"
         :suffix="''"
-        :support-roles="supportRoles"
+        :filter="filterRole"
       />
     </div>
-    <div class="w-full space-y-2">
+    <div class="w-full flex flex-col gap-y-2">
       <div class="flex items-center gap-x-1">
         <span>{{ $t("common.reason") }}</span>
         <RequiredStar v-if="requireReason" />
@@ -45,14 +46,15 @@
         state.role !== PresetRoleType.PROJECT_OWNER &&
         checkRoleContainsAnyPermission(state.role, 'bb.sql.select')
       "
-      class="w-full space-y-2"
+      class="w-full flex flex-col gap-y-2"
     >
       <div class="flex items-center gap-x-1">
         <span>{{ $t("common.databases") }}</span>
         <RequiredStar />
       </div>
       <QuerierDatabaseResourceForm
-        v-model:database-resources="state.databaseResources"
+        ref="databaseResourceFormRef"
+        :database-resources="databaseResources"
         :project-name="projectName"
         :required-feature="PlanFeature.FEATURE_IAM"
         :include-cloumn="false"
@@ -75,17 +77,16 @@
 </template>
 
 <script lang="ts" setup>
-/* eslint-disable vue/no-mutating-props */
-import { isUndefined } from "lodash-es";
+import { create } from "@bufbuild/protobuf";
 import { NButton, NInput } from "naive-ui";
-import { computed, reactive, watch, ref } from "vue";
+import { computed, reactive, ref } from "vue";
 import ExpirationSelector from "@/components/ExpirationSelector.vue";
 import QuerierDatabaseResourceForm from "@/components/GrantRequestPanel/DatabaseResourceForm/index.vue";
 import MembersBindingSelect from "@/components/Member/MembersBindingSelect.vue";
 import RequiredStar from "@/components/RequiredStar.vue";
 import { RoleSelect } from "@/components/v2/Select";
-import { PresetRoleType, type DatabaseResource } from "@/types";
-import type { Binding } from "@/types/proto-es/v1/iam_policy_pb";
+import { type DatabaseResource, PresetRoleType } from "@/types";
+import { type Binding, BindingSchema } from "@/types/proto-es/v1/iam_policy_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import { checkRoleContainsAnyPermission } from "@/utils";
 import { buildConditionExpr } from "@/utils/issue/cel";
@@ -98,13 +99,12 @@ const props = withDefaults(
     requireReason?: boolean;
     disableMemberChange?: boolean;
     supportRoles?: string[];
-    databaseResource?: DatabaseResource;
+    databaseResources?: DatabaseResource[];
   }>(),
   {
     disableMemberChange: false,
     requireReason: false,
-    supportRoles: () => [],
-    databaseResource: undefined,
+    databaseResources: () => [],
   }
 );
 
@@ -117,19 +117,21 @@ interface LocalState {
   role: string;
   reason: string;
   expirationTimestampInMS?: number;
-  // Querier and exporter options.
-  databaseResources?: DatabaseResource[];
   databaseId?: string;
 }
+
+const filterRole = (role: string) => {
+  if (!props.supportRoles) {
+    return true;
+  }
+  return props.supportRoles.includes(role);
+};
 
 const getInitialState = (): LocalState => {
   const defaultState: LocalState = {
     role: props.binding.role,
     memberList: props.binding.members,
     reason: "",
-    databaseResources: props.databaseResource
-      ? [{ ...props.databaseResource }]
-      : undefined,
   };
 
   return defaultState;
@@ -137,41 +139,32 @@ const getInitialState = (): LocalState => {
 
 const state = reactive<LocalState>(getInitialState());
 const expirationSelectorRef = ref<InstanceType<typeof ExpirationSelector>>();
-
-watch(
-  () => state.role,
-  () => {
-    state.databaseResources = props.databaseResource
-      ? [{ ...props.databaseResource }]
-      : undefined;
-  },
-  {
-    immediate: true,
-  }
-);
-
-watch(
-  () => state,
-  () => {
-    props.binding.members = state.memberList;
-    if (state.role) {
-      props.binding.role = state.role;
-    }
-    props.binding.condition = buildConditionExpr({
-      role: state.role,
-      description: state.reason,
-      expirationTimestampInMS: state.expirationTimestampInMS,
-      databaseResources: state.databaseResources,
-    });
-  },
-  {
-    deep: true,
-  }
-);
+const databaseResourceFormRef =
+  ref<InstanceType<typeof QuerierDatabaseResourceForm>>();
 
 defineExpose({
   reason: computed(() => state.reason),
-  databaseResources: computed(() => state.databaseResources),
+  getDatabaseResources: async () => {
+    const resources =
+      await databaseResourceFormRef.value?.getDatabaseResources();
+    return resources;
+  },
+  getBinding: async (): Promise<Binding> => {
+    const databaseResources =
+      await databaseResourceFormRef.value?.getDatabaseResources();
+    const condition = buildConditionExpr({
+      role: state.role,
+      description: state.reason,
+      expirationTimestampInMS: state.expirationTimestampInMS,
+      databaseResources,
+    });
+
+    return create(BindingSchema, {
+      members: state.memberList,
+      role: state.role,
+      condition,
+    });
+  },
   expirationTimestampInMS: computed(() => state.expirationTimestampInMS),
   allowConfirm: computed(() => {
     if (!state.role) {
@@ -183,10 +176,10 @@ defineExpose({
     if (!expirationSelectorRef.value?.isValid) {
       return false;
     }
-    // undefined databaseResources means all databases
+    // Only check database form validity if it's rendered
     if (
-      !isUndefined(state.databaseResources) &&
-      state.databaseResources.length === 0
+      databaseResourceFormRef.value &&
+      !databaseResourceFormRef.value.isValid
     ) {
       return false;
     }

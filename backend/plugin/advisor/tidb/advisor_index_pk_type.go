@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -14,7 +16,7 @@ import (
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -23,7 +25,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleIndexPKTypeLimit, &IndexPkTypeAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_INDEX_PK_TYPE_LIMIT, &IndexPkTypeAdvisor{})
 }
 
 // IndexPkTypeAdvisor is the advisor checking for correct type of PK.
@@ -32,9 +34,10 @@ type IndexPkTypeAdvisor struct {
 
 // Check checks for correct type of PK.
 func (*IndexPkTypeAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -43,9 +46,9 @@ func (*IndexPkTypeAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([
 	}
 	checker := &indexPkTypeChecker{
 		level:            level,
-		title:            string(checkCtx.Rule.Type),
+		title:            checkCtx.Rule.Type.String(),
 		line:             make(map[string]int),
-		catalog:          checkCtx.Catalog,
+		originalMetadata: checkCtx.OriginalMetadata,
 		tablesNewColumns: make(map[string]columnNameToColumnDef),
 	}
 
@@ -86,7 +89,7 @@ type indexPkTypeChecker struct {
 	level            storepb.Advice_Status
 	title            string
 	line             map[string]int
-	catalog          *catalog.Finder
+	originalMetadata *model.DatabaseMetadata
 	tablesNewColumns tableNewColumn
 }
 
@@ -138,7 +141,7 @@ func (v *indexPkTypeChecker) Enter(in ast.Node) (ast.Node, bool) {
 	for _, pd := range pkDataList {
 		v.adviceList = append(v.adviceList, &storepb.Advice{
 			Status:        v.level,
-			Code:          advisor.IndexPKType.Int32(),
+			Code:          code.IndexPKType.Int32(),
 			Title:         v.title,
 			Content:       fmt.Sprintf("Columns in primary key must be INT/BIGINT but `%s`.`%s` is %s", pd.table, pd.column, pd.columnType),
 			StartPosition: common.ConvertANTLRLineToPosition(pd.line),
@@ -218,12 +221,9 @@ func (v *indexPkTypeChecker) getPKColumnType(tableName string, columnName string
 	if colDef, ok := v.tablesNewColumns.get(tableName, columnName); ok {
 		return v.getIntOrBigIntStr(colDef.Tp), nil
 	}
-	column := v.catalog.Origin.FindColumn(&catalog.ColumnFind{
-		TableName:  tableName,
-		ColumnName: columnName,
-	})
+	column := v.originalMetadata.GetSchemaMetadata("").GetTable(tableName).GetColumn(columnName)
 	if column != nil {
-		return column.Type(), nil
+		return column.GetProto().Type, nil
 	}
 	return "", errors.Errorf("cannot find the type of `%s`.`%s`", tableName, columnName)
 }

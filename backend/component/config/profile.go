@@ -37,9 +37,6 @@ type Profile struct {
 	GitCommit string
 	// PgURL is the optional external PostgreSQL instance connection url
 	PgURL string
-	// MetricConnectionKey is the connection key for metric.
-	// DISABLED: Metrics collection disabled to prevent communication with external servers.
-	MetricConnectionKey string // This field is kept for compatibility but will always be empty
 
 	// LastActiveTS is the service last active timestamp, any API calls will refresh this value.
 	LastActiveTS atomic.Int64
@@ -54,6 +51,9 @@ type Profile struct {
 	// can be set in runtime
 	// 0 means no threshold.
 	RuntimeMemoryProfileThreshold atomic.Uint64
+	// RuntimeEnableAuditLogStdout enables audit logging to stdout in structured JSON format.
+	// can be set in runtime via workspace setting
+	RuntimeEnableAuditLogStdout atomic.Bool
 }
 
 // UseEmbedDB returns whether to use embedDB.
@@ -62,8 +62,7 @@ func (prof *Profile) UseEmbedDB() bool {
 }
 
 var saasFeatureControlMap = map[string]bool{
-	storepb.SettingName_WORKSPACE_ID.String(): true,
-	storepb.SettingName_AI.String():           true,
+	storepb.SettingName_AI.String(): true,
 }
 
 // IsFeatureUnavailable returns if the feature is unavailable in SaaS mode.

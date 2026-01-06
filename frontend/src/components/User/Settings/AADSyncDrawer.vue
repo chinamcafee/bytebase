@@ -1,7 +1,7 @@
 <template>
   <Drawer :show="show" @close="$emit('close')">
     <DrawerContent
-      class="w-[50rem] max-w-[90vw] relative"
+      class="w-200 max-w-[90vw] relative"
       :title="$t('settings.members.entra-sync.self')"
     >
       <template #default>
@@ -14,36 +14,18 @@
             />
           </div>
 
-          <BBAttention
-            v-if="!externalUrl"
-            class="w-full border-none"
-            type="error"
-            :title="$t('banner.external-url')"
-            :description="
-              $t('settings.general.workspace.external-url.description')
-            "
-          >
-            <template #action>
-              <NButton type="primary" @click="configureSetting">
-                {{ $t("common.configure-now") }}
-              </NButton>
-            </template>
-          </BBAttention>
+          <MissingExternalURLAttention />
 
-          <div class="space-y-2">
+          <div class="flex flex-col gap-y-2">
             <div class="gap-x-2">
               <div class="font-medium">
                 {{ $t(`settings.members.entra-sync.endpoint`) }}
               </div>
               <div class="text-sm text-gray-400">
                 {{ $t(`settings.members.entra-sync.endpoint-tip`) }}
-                <LearnMoreLink
-                  url="https://aka.ms/MSEntraPortal"
-                  :text="$t('settings.members.entra-sync.goto-entra-dashboard')"
-                />
               </div>
             </div>
-            <div class="flex space-x-2">
+            <div class="flex gap-x-2">
               <NInput
                 ref="scimUrlFieldRef"
                 class="w-full"
@@ -63,20 +45,16 @@
             </div>
           </div>
 
-          <div class="space-y-2">
+          <div class="flex flex-col gap-y-2">
             <div class="gap-x-2">
               <div class="font-medium">
                 {{ $t(`settings.members.entra-sync.secret-token`) }}
               </div>
               <div class="text-sm text-gray-400">
                 {{ $t("settings.members.entra-sync.secret-token-tip") }}
-                <LearnMoreLink
-                  url="https://aka.ms/MSEntraPortal"
-                  :text="$t('settings.members.entra-sync.goto-entra-dashboard')"
-                />
               </div>
             </div>
-            <div class="flex space-x-2">
+            <div class="flex gap-x-2">
               <NInput
                 ref="scimTokenFieldRef"
                 class="w-full"
@@ -94,18 +72,19 @@
                 @click="handleSelect(scimTokenFieldRef)"
               />
             </div>
-            <NButton
-              v-if="hasPermission"
-              tertiary
-              :type="'warning'"
-              :size="'small'"
-              @click="resetToken"
-            >
-              <template #icon>
-                <ReplyIcon class="w-4" />
-              </template>
-              {{ $t("settings.members.entra-sync.reset-token") }}
-            </NButton>
+            <div v-if="hasPermission">
+              <NButton
+                tertiary
+                :type="'warning'"
+                :size="'small'"
+                @click="resetToken"
+              >
+                <template #icon>
+                  <ReplyIcon class="w-4" />
+                </template>
+                {{ $t("settings.members.entra-sync.reset-token") }}
+              </NButton>
+            </div>
           </div>
         </div>
       </template>
@@ -122,22 +101,19 @@
 
 <script setup lang="ts">
 import { create } from "@bufbuild/protobuf";
+import { FieldMaskSchema } from "@bufbuild/protobuf/wkt";
 import { ReplyIcon } from "lucide-vue-next";
 import { NButton, NInput, useDialog } from "naive-ui";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
-import { BBAttention } from "@/bbkit";
 import LearnMoreLink from "@/components/LearnMoreLink.vue";
-import { Drawer, DrawerContent } from "@/components/v2";
-import { CopyButton } from "@/components/v2";
-import { SETTING_ROUTE_WORKSPACE_GENERAL } from "@/router/dashboard/workspaceSetting";
-import { pushNotification, useSettingV1Store } from "@/store";
+import { CopyButton, Drawer, DrawerContent } from "@/components/v2";
+import { MissingExternalURLAttention } from "@/components/v2/Form";
 import {
-  Setting_SettingName,
-  SCIMSettingSchema,
-  ValueSchema as SettingValueSchema,
-} from "@/types/proto-es/v1/setting_service_pb";
+  pushNotification,
+  useActuatorV1Store,
+  useSettingV1Store,
+} from "@/store";
 import { hasWorkspacePermissionV2 } from "@/utils";
 
 defineProps<{
@@ -149,8 +125,8 @@ defineEmits<{
 }>();
 
 const settingV1Store = useSettingV1Store();
+const actuatorStore = useActuatorV1Store();
 const { t } = useI18n();
-const router = useRouter();
 const scimUrlFieldRef = ref<HTMLInputElement | null>(null);
 const scimTokenFieldRef = ref<HTMLInputElement | null>(null);
 const $dialog = useDialog();
@@ -160,12 +136,7 @@ const hasPermission = computed(() =>
 );
 
 const workspaceId = computed(() => {
-  const setting = settingV1Store.getSettingByName(
-    Setting_SettingName.WORKSPACE_ID
-  );
-  return setting?.value?.value?.case === "stringValue"
-    ? setting.value.value.value
-    : "";
+  return actuatorStore.serverInfo?.workspaceId ?? "";
 });
 
 const externalUrl = computed(() => {
@@ -180,20 +151,11 @@ const scimUrl = computed(() => {
 });
 
 const scimToken = computed(() => {
-  const setting = settingV1Store.getSettingByName(Setting_SettingName.SCIM);
-  return setting?.value?.value?.case === "scimSetting"
-    ? (setting.value.value.value.token ?? "")
-    : "";
+  return settingV1Store.workspaceProfileSetting?.directorySyncToken ?? "";
 });
 
 const handleSelect = (component: HTMLInputElement | null) => {
   component?.select();
-};
-
-const configureSetting = () => {
-  router.push({
-    name: SETTING_ROUTE_WORKSPACE_GENERAL,
-  });
 };
 
 const resetToken = () => {
@@ -207,26 +169,20 @@ const resetToken = () => {
     positiveText: t("common.continue-anyway"),
     closeOnEsc: true,
     maskClosable: true,
-    onPositiveClick: () => {
-      settingV1Store
-        .upsertSetting({
-          name: Setting_SettingName.SCIM,
-          value: create(SettingValueSchema, {
-            value: {
-              case: "scimSetting",
-              value: create(SCIMSettingSchema, {
-                token: "",
-              }),
-            },
-          }),
-        })
-        .then(() => {
-          pushNotification({
-            module: "bytebase",
-            style: "SUCCESS",
-            title: t("common.updated"),
-          });
-        });
+    onPositiveClick: async () => {
+      await settingV1Store.updateWorkspaceProfile({
+        payload: {
+          directorySyncToken: "",
+        },
+        updateMask: create(FieldMaskSchema, {
+          paths: ["value.workspace_profile.directory_sync_token"],
+        }),
+      });
+      pushNotification({
+        module: "bytebase",
+        style: "SUCCESS",
+        title: t("common.updated"),
+      });
     },
   });
 };

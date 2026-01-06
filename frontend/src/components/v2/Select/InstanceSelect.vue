@@ -1,185 +1,154 @@
 <template>
-  <ResourceSelect
+  <RemoteResourceSelector
     v-bind="$attrs"
-    :remote="true"
-    :loading="state.loading"
-    :value="instanceName"
-    :options="options"
-    :placeholder="$t('instance.select')"
-    :custom-label="renderLabel"
-    :virtual-scroll="true"
-    :fallback-option="false"
+    :multiple="false"
+    :disabled="disabled"
+    :size="size"
+    :value="value"
+    :render-label="renderLabel"
+    :render-tag="renderTag"
     :consistent-menu-width="false"
     class="bb-instance-select"
-    @search="handleSearch"
-    @update:value="(val) => $emit('update:instance-name', val)"
+    :additional-options="additionalOptions"
+    :search="handleSearch"
+    @update:value="(val) => $emit('update:value', val as (string | undefined))"
   />
 </template>
 
-<script lang="ts" setup>
-import { useDebounceFn } from "@vueuse/core";
-import { computed, h, watch, reactive } from "vue";
+<script lang="tsx" setup>
+import { computedAsync } from "@vueuse/core";
+import { ChevronRightIcon } from "lucide-vue-next";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { useInstanceV1Store } from "@/store";
+import { EnvironmentV1Name, InstanceV1Name } from "@/components/v2";
+import { useEnvironmentV1Store, useInstanceV1Store } from "@/store";
 import {
-  DEBOUNCE_SEARCH_DELAY,
-  UNKNOWN_INSTANCE_NAME,
   isValidInstanceName,
+  UNKNOWN_INSTANCE_NAME,
   unknownInstance,
 } from "@/types";
 import { type Engine } from "@/types/proto-es/v1/common_pb";
 import type { Instance } from "@/types/proto-es/v1/instance_service_pb";
-import { supportedEngineV1List, getDefaultPagination } from "@/utils";
-import { InstanceV1EngineIcon } from "../Model/Instance";
-import ResourceSelect from "./ResourceSelect.vue";
-
-interface LocalState {
-  loading: boolean;
-  rawInstanceList: Instance[];
-}
+import { supportedEngineV1List } from "@/utils";
+import RemoteResourceSelector from "./RemoteResourceSelector/index.vue";
+import type {
+  ResourceSelectOption,
+  SelectSize,
+} from "./RemoteResourceSelector/types";
+import {
+  getRenderLabelFunc,
+  getRenderTagFunc,
+} from "./RemoteResourceSelector/utils";
 
 const props = withDefaults(
   defineProps<{
-    instanceName?: string | undefined;
+    value?: string | undefined;
     environmentName?: string;
     projectName?: string;
     allowedEngineList?: Engine[];
-    autoReset?: boolean;
+    disabled?: boolean;
+    size?: SelectSize;
   }>(),
   {
-    instanceName: undefined,
-    environmentName: undefined,
     allowedEngineList: () => supportedEngineV1List(),
-    autoReset: true,
   }
 );
 
-const emit = defineEmits<{
-  (event: "update:instance-name", value: string | undefined): void;
+defineEmits<{
+  (event: "update:value", value: string | undefined): void;
 }>();
 
 const { t } = useI18n();
 const instanceStore = useInstanceV1Store();
-const state = reactive<LocalState>({
-  loading: true,
-  rawInstanceList: [],
+const environmentStore = useEnvironmentV1Store();
+
+const getOption = (instance: Instance): ResourceSelectOption<Instance> => ({
+  resource: instance,
+  value: instance.name,
+  label: instance.title,
 });
 
-const initSelectedInstance = async (instanceName: string) => {
-  if (isValidInstanceName(instanceName)) {
-    const instance = await instanceStore.getOrFetchInstanceByName(instanceName);
-    if (!state.rawInstanceList.find((ins) => ins.name === instance.name)) {
-      state.rawInstanceList.unshift(instance);
-    }
+const additionalOptions = computedAsync(async () => {
+  const options: ResourceSelectOption<Instance>[] = [];
+  if (props.value === UNKNOWN_INSTANCE_NAME) {
+    const dummyAll = {
+      ...unknownInstance(),
+      title: t("instance.all"),
+    };
+    options.push(getOption(dummyAll));
   }
-};
 
-const searchInstances = async (name: string) => {
-  const { instances } = await instanceStore.fetchInstanceList({
-    pageSize: getDefaultPagination(),
+  if (isValidInstanceName(props.value)) {
+    const instance = await instanceStore.getOrFetchInstanceByName(props.value);
+    options.push(getOption(instance));
+  }
+  return options;
+}, []);
+
+const handleSearch = async (params: {
+  search: string;
+  pageToken: string;
+  pageSize: number;
+}) => {
+  const { instances, nextPageToken } = await instanceStore.fetchInstanceList({
+    pageToken: params.pageToken,
+    pageSize: params.pageSize,
     filter: {
       engines: props.allowedEngineList,
-      query: name,
+      query: params.search,
       environment: props.environmentName,
       project: props.projectName,
     },
   });
-  return instances;
+
+  return {
+    nextPageToken,
+    options: instances.map(getOption),
+  };
 };
 
-const handleSearch = useDebounceFn(async (search: string) => {
-  state.loading = true;
-  try {
-    const instances = await searchInstances(search);
-    state.rawInstanceList = instances;
-    if (!search) {
-      if (props.instanceName === UNKNOWN_INSTANCE_NAME) {
-        const dummyAll = {
-          ...unknownInstance(),
-          title: t("instance.all"),
-        };
-        state.rawInstanceList.unshift(dummyAll);
-      } else if (props.instanceName) {
-        await initSelectedInstance(props.instanceName);
-      }
-    }
-  } finally {
-    state.loading = false;
-  }
-}, DEBOUNCE_SEARCH_DELAY);
+const customLabel = (instance: Instance, keyword: string) => {
+  const isUnknown = instance.name === UNKNOWN_INSTANCE_NAME;
+  const environment = environmentStore.getEnvironmentByName(
+    instance.environment ?? ""
+  );
 
-watch(
-  [
-    () => props.allowedEngineList,
-    () => props.environmentName,
-    () => props.projectName,
-  ],
-  () => {
-    handleSearch("");
-  },
-  {
-    immediate: true,
-  }
-);
-
-const renderLabel = (instance: Instance) => {
-  if (instance.name === UNKNOWN_INSTANCE_NAME) {
-    return t("instance.all");
-  }
-  const icon = h(InstanceV1EngineIcon, {
-    instance,
-    class: "bb-instance-select--engine-icon shrink-0",
-  });
-  const text = h("span", {}, instance.title);
-  return h(
-    "div",
-    {
-      class: "flex items-center gap-x-2",
-    },
-    [icon, text]
+  return (
+    <div class="flex items-center gap-x-1">
+      {isUnknown ? null : (
+        <EnvironmentV1Name
+          environment={environment}
+          plain={true}
+          link={false}
+        />
+      )}
+      {isUnknown ? null : <ChevronRightIcon class="w-3" />}
+      <InstanceV1Name
+        instance={instance}
+        keyword={keyword}
+        plain={true}
+        link={false}
+      />
+    </div>
   );
 };
 
-const options = computed(() => {
-  return state.rawInstanceList.map((instance) => {
-    return {
-      resource: instance,
-      value: instance.name,
-      label: instance.title,
-    };
+const renderLabel = computed(() => {
+  return getRenderLabelFunc({
+    multiple: false,
+    customLabel,
+    showResourceName: true,
   });
 });
 
-// The instance list might change if environment changes, and the previous selected id
-// might not exist in the new list. In such case, we need to reset the selection
-// and emit the event.
-const resetInvalidSelection = () => {
-  if (!props.autoReset) {
-    return;
-  }
-  if (state.loading) {
-    return;
-  }
-  if (
-    props.instanceName &&
-    !state.rawInstanceList.find((item) => item.name === props.instanceName)
-  ) {
-    emit("update:instance-name", undefined);
-  }
-};
-
-watch(
-  [
-    () => state.loading,
-    () => props.instanceName,
-    () => state.rawInstanceList,
-    () => props.projectName,
-  ],
-  resetInvalidSelection,
-  {
-    immediate: true,
-  }
-);
+const renderTag = computed(() => {
+  return getRenderTagFunc({
+    multiple: false,
+    disabled: props.disabled,
+    size: props.size,
+    customLabel,
+  });
+});
 </script>
 
 <style lang="postcss" scoped>

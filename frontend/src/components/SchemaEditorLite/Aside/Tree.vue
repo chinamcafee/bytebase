@@ -94,21 +94,21 @@
 </template>
 
 <script lang="ts" setup>
-import { useElementSize, refDebounced } from "@vueuse/core";
+import { refDebounced, useElementSize } from "@vueuse/core";
 import { MD5 } from "crypto-js";
 import { cloneDeep, debounce, escape, head } from "lodash-es";
-import { MoreHorizontalIcon, CopyIcon } from "lucide-vue-next";
+import { CopyIcon, MoreHorizontalIcon } from "lucide-vue-next";
 import type { TreeOption } from "naive-ui";
-import { NDropdown, NTree, NPerformantEllipsis } from "naive-ui";
+import { NDropdown, NPerformantEllipsis, NTree } from "naive-ui";
 import {
   computed,
-  onMounted,
-  watch,
-  ref,
   h,
-  reactive,
   nextTick,
+  onMounted,
+  reactive,
+  ref,
   type VNode,
+  watch,
 } from "vue";
 import { useI18n } from "vue-i18n";
 import { SearchBox } from "@/components/v2";
@@ -128,24 +128,24 @@ import {
   getHighlightHTMLByKeyWords,
   isDescendantOf,
 } from "@/utils";
+import { useSchemaEditorContext } from "../context";
+import { keyForResource, keyForResourceName } from "../context/common";
 import FunctionNameModal from "../Modals/FunctionNameModal.vue";
 import ProcedureNameModal from "../Modals/ProcedureNameModal.vue";
 import SchemaNameModal from "../Modals/SchemaNameModal.vue";
 import TableNameModal from "../Modals/TableNameModal.vue";
 import ViewNameModal from "../Modals/ViewNameModal.vue";
-import { useSchemaEditorContext } from "../context";
-import { keyForResource, keyForResourceName } from "../context/common";
 import { engineSupportsMultiSchema } from "../spec";
-import NodePrefix from "./NodePrefix.vue";
 import type {
   TreeNode,
+  TreeNodeForGroup,
   TreeNodeForInstance,
   TreeNodeForSchema,
   TreeNodeForTable,
-  TreeNodeForGroup,
 } from "./common";
 import { useBuildTree } from "./common";
 import { useContextMenu } from "./context-menu";
+import NodePrefix from "./NodePrefix.vue";
 
 interface LocalState {
   shouldRelocateTreeNode: boolean;
@@ -195,8 +195,6 @@ const {
   getViewStatus,
   getProcedureStatus,
   getFunctionStatus,
-  getTableCatalog,
-  upsertTableCatalog,
   queuePendingScrollToTable,
   queuePendingScrollToColumn,
 } = useSchemaEditorContext();
@@ -233,7 +231,7 @@ const handleSearch = debounce(
         targets.value.map(async (target) => {
           const metadata = await dbSchemaStore.getOrFetchDatabaseMetadata({
             database: target.database.name,
-            skipCache: true,
+            skipCache: false,
             limit: 100,
             filter: `table.matches("${search.trim()}")`,
           });
@@ -704,25 +702,6 @@ const handleDuplicateTable = (treeNode: TreeNodeForTable) => {
     );
   });
 
-  upsertTableCatalog(
-    {
-      database: db.name,
-      schema: schema.name,
-      table: newTable.name,
-    },
-    (config) => {
-      Object.assign(
-        config,
-        getTableCatalog({
-          database: db.name,
-          schema: schema.name,
-          table: table.name,
-        }),
-        { name: newTable.name }
-      );
-    }
-  );
-
   addTab({
     type: "table",
     database: db,
@@ -900,44 +879,54 @@ const handleExpandedKeysChange = (expandedKeys: string[]) => {
 
 <style lang="postcss" scoped>
 .schema-editor-tree :deep(.n-tree-node-wrapper) {
-  @apply !p-0;
+  padding: 0 !important;
 }
 .schema-editor-tree :deep(.n-tree-node-content) {
-  @apply !pl-2 text-sm;
+  padding-left: 0.5rem !important;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
 }
 .schema-editor-tree :deep(.n-tree-node-indent) {
   width: 0.25rem;
 }
 .schema-editor-tree :deep(.n-tree-node-content__prefix) {
-  @apply shrink-0 !mr-1;
+  flex-shrink: 0;
+  margin-right: 0.25rem !important;
 }
 .schema-editor-tree
   :deep(.n-tree-node-wrapper:hover .n-tree-node-content__suffix) {
-  @apply !flex;
+  display: flex !important;
 }
 .schema-editor-tree
   :deep(
     .n-tree-node-wrapper .n-tree-node--selected .n-tree-node-content__suffix
   ) {
-  @apply !flex;
+  display: flex !important;
 }
 
 .schema-editor-tree :deep(.n-tree-node-content__text) {
-  @apply truncate mr-1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 0.25rem;
 }
 .schema-editor-tree :deep(.n-tree-node-switcher) {
-  @apply px-0 !w-4 !h-7;
+  padding-left: 0;
+  padding-right: 0;
+  width: 1rem !important;
+  height: 1.75rem !important;
 }
 .schema-editor-tree:not(.disable-diff-coloring)
   :deep(.n-tree-node-content .created) {
-  @apply text-green-700;
+  color: var(--color-green-700);
 }
 .schema-editor-tree:not(.disable-diff-coloring)
   :deep(.n-tree-node-content .dropped) {
-  @apply text-red-700 line-through;
+  color: var(--color-red-700);
+  text-decoration-line: line-through;
 }
 .schema-editor-tree:not(.disable-diff-coloring)
   :deep(.n-tree-node-content .updated) {
-  @apply text-yellow-700;
+  color: var(--color-yellow-700);
 }
 </style>

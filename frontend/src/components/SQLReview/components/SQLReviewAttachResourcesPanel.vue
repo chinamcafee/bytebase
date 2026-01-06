@@ -5,7 +5,7 @@
       class="w-[40rem] max-w-[100vw] relative"
     >
       <template #default>
-        <div class="space-y-6">
+        <div class="flex flex-col gap-y-6">
           <p class="textinfolabel">
             {{ $t("sql-review.attach-resource.label") }}
           </p>
@@ -19,15 +19,15 @@
             <EnvironmentSelect
               class="mt-3"
               required
-              :environment-names="environmentNames"
+              :value="environmentNames"
               :multiple="true"
               :render-suffix="getResourceAttachedConfigName"
-              @update:environment-names="
-                onResourcesChange($event, projectNames)
+              @update:value="
+                onResourcesChange($event as string[], projectNames)
               "
             />
           </div>
-          <div class="flex items-center space-x-2">
+          <div class="flex items-center gap-x-2">
             <div class="textlabel w-10 capitalize">{{ $t("common.or") }}</div>
             <NDivider />
           </div>
@@ -42,11 +42,11 @@
               class="mt-3"
               style="width: 100%"
               required
-              :project-names="projectNames"
+              :value="projectNames"
               :multiple="true"
               :render-suffix="getResourceAttachedConfigName"
-              @update:project-names="
-                onResourcesChange($event, environmentNames)
+              @update:value="
+                onResourcesChange($event as string[], environmentNames)
               "
             />
           </div>
@@ -82,7 +82,7 @@
 <script setup lang="tsx">
 import { cloneDeep } from "lodash-es";
 import { NButton, NDivider } from "naive-ui";
-import { watch, ref, computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   Drawer,
@@ -91,7 +91,7 @@ import {
   ProjectSelect,
 } from "@/components/v2";
 import ResourceOccupiedModal from "@/components/v2/ResourceOccupiedModal/ResourceOccupiedModal.vue";
-import { useSQLReviewStore, pushNotification } from "@/store";
+import { pushNotification, useSQLReviewStore } from "@/store";
 import {
   environmentNamePrefix,
   projectNamePrefix,
@@ -196,8 +196,14 @@ const upsertReviewResource = async () => {
   emit("close");
 };
 
-const getResourceAttachedConfigName = (resource: string) => {
+const getResourceAttachedConfigName = ({
+  name: resource,
+}: {
+  name: string;
+}) => {
   const config = sqlReviewStore.getReviewPolicyByResouce(resource)?.name;
-  return config ? `(${config})` : "";
+  return config ? (
+    <span class="opacity-60 textinfolabel">{`(${config})`}</span>
+  ) : null;
 };
 </script>

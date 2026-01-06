@@ -92,6 +92,15 @@ func GetDatabaseDefinition(ctx schema.GetDefinitionContext, metadata *storepb.Da
 			if err := writeEnum(&buf, schema.Name, enum); err != nil {
 				return "", err
 			}
+			if _, err := buf.WriteString(";\n\n"); err != nil {
+				return "", err
+			}
+			// Write enum comment if present
+			if len(enum.Comment) > 0 {
+				if err := writeEnumComment(&buf, schema.Name, enum); err != nil {
+					return "", err
+				}
+			}
 		}
 	}
 
@@ -336,6 +345,17 @@ func GetDatabaseDefinition(ctx schema.GetDefinitionContext, metadata *storepb.Da
 			}
 		}
 	}
+
+	// Construct event triggers (last, as they depend on functions).
+	for _, eventTrigger := range metadata.EventTriggers {
+		if eventTrigger.SkipDump {
+			continue
+		}
+		if err := writeEventTrigger(&buf, eventTrigger); err != nil {
+			return "", err
+		}
+	}
+
 	return buf.String(), nil
 }
 
@@ -361,6 +381,15 @@ func GetSchemaDefinition(schema *storepb.SchemaMetadata) (string, error) {
 		}
 		if err := writeEnum(&buf, schema.Name, enum); err != nil {
 			return "", err
+		}
+		if _, err := buf.WriteString(";\n\n"); err != nil {
+			return "", err
+		}
+		// Write enum comment if present
+		if len(enum.Comment) > 0 {
+			if err := writeEnumComment(&buf, schema.Name, enum); err != nil {
+				return "", err
+			}
 		}
 	}
 
@@ -692,7 +721,8 @@ func filterBackupSchemaIfNecessary(ctx schema.GetDefinitionContext, metadata *st
 	}
 
 	filtered := &storepb.DatabaseSchemaMetadata{
-		Extensions: metadata.Extensions,
+		Extensions:    metadata.Extensions,
+		EventTriggers: metadata.EventTriggers,
 	}
 	for _, schema := range metadata.Schemas {
 		if schema.Name == common.BackupDatabaseNameOfEngine(storepb.Engine_POSTGRES) {
@@ -761,6 +791,117 @@ func writeTriggerComment(out io.Writer, schema string, table string, trigger *st
 	return err
 }
 
+func writeEventTrigger(out io.Writer, eventTrigger *storepb.EventTriggerMetadata) error {
+	// Use the stored definition if available
+	if eventTrigger.Definition != "" {
+		if _, err := io.WriteString(out, eventTrigger.Definition); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(out, ";\n\n"); err != nil {
+			return err
+		}
+	} else {
+		// Build the CREATE EVENT TRIGGER statement
+		if _, err := io.WriteString(out, `CREATE EVENT TRIGGER "`); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(out, eventTrigger.Name); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(out, `" ON `); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(out, eventTrigger.Event); err != nil {
+			return err
+		}
+
+		// Add WHEN TAG IN clause if tags are specified
+		if len(eventTrigger.Tags) > 0 {
+			if _, err := io.WriteString(out, "\n  WHEN TAG IN ("); err != nil {
+				return err
+			}
+			for i, tag := range eventTrigger.Tags {
+				if i > 0 {
+					if _, err := io.WriteString(out, ", "); err != nil {
+						return err
+					}
+				}
+				if _, err := io.WriteString(out, "'"); err != nil {
+					return err
+				}
+				if _, err := io.WriteString(out, tag); err != nil {
+					return err
+				}
+				if _, err := io.WriteString(out, "'"); err != nil {
+					return err
+				}
+			}
+			if _, err := io.WriteString(out, ")"); err != nil {
+				return err
+			}
+		}
+
+		// Add EXECUTE FUNCTION clause
+		if _, err := io.WriteString(out, "\n  EXECUTE FUNCTION "); err != nil {
+			return err
+		}
+		if eventTrigger.FunctionSchema != "" {
+			if _, err := io.WriteString(out, `"`); err != nil {
+				return err
+			}
+			if _, err := io.WriteString(out, eventTrigger.FunctionSchema); err != nil {
+				return err
+			}
+			if _, err := io.WriteString(out, `".`); err != nil {
+				return err
+			}
+		}
+		if _, err := io.WriteString(out, `"`); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(out, eventTrigger.FunctionName); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(out, `"();\n\n`); err != nil {
+			return err
+		}
+	}
+
+	// Write event trigger comment if present
+	if eventTrigger.Comment != "" {
+		if err := writeEventTriggerComment(out, eventTrigger); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func writeEventTriggerComment(out io.Writer, eventTrigger *storepb.EventTriggerMetadata) error {
+	if _, err := io.WriteString(out, `COMMENT ON EVENT TRIGGER "`); err != nil {
+		return err
+	}
+
+	if _, err := io.WriteString(out, eventTrigger.Name); err != nil {
+		return err
+	}
+
+	if _, err := io.WriteString(out, `" IS '`); err != nil {
+		return err
+	}
+
+	if _, err := io.WriteString(out, escapeSingleQuote(eventTrigger.Comment)); err != nil {
+		return err
+	}
+
+	if _, err := io.WriteString(out, `';`); err != nil {
+		return err
+	}
+
+	_, err := io.WriteString(out, "\n\n")
+	return err
+}
+
 func writeEnum(out io.Writer, schema string, enum *storepb.EnumTypeMetadata) error {
 	if _, err := io.WriteString(out, `CREATE TYPE "`); err != nil {
 		return err
@@ -786,7 +927,7 @@ func writeEnum(out io.Writer, schema string, enum *storepb.EnumTypeMetadata) err
 		if _, err := io.WriteString(out, `    '`); err != nil {
 			return err
 		}
-		if _, err := io.WriteString(out, value); err != nil {
+		if _, err := io.WriteString(out, escapeSingleQuote(value)); err != nil {
 			return err
 		}
 		if _, err := io.WriteString(out, `'`); err != nil {
@@ -794,14 +935,8 @@ func writeEnum(out io.Writer, schema string, enum *storepb.EnumTypeMetadata) err
 		}
 	}
 
-	if _, err := io.WriteString(out, "\n);\n\n"); err != nil {
+	if _, err := io.WriteString(out, "\n)"); err != nil {
 		return err
-	}
-
-	if len(enum.Comment) > 0 {
-		if err := writeEnumComment(out, schema, enum); err != nil {
-			return err
-		}
 	}
 
 	return nil
@@ -1290,7 +1425,7 @@ func writeUniqueKeyConstraintSDL(out io.Writer, index *storepb.IndexMetadata) er
 	return nil
 }
 
-func writeCreateTable(out io.Writer, schema string, tableName string, columns []*storepb.ColumnMetadata, checks []*storepb.CheckConstraintMetadata) error {
+func writeCreateTable(out io.Writer, schema string, tableName string, columns []*storepb.ColumnMetadata, checks []*storepb.CheckConstraintMetadata, excludes []*storepb.ExcludeConstraintMetadata) error {
 	if _, err := io.WriteString(out, `CREATE TABLE "`); err != nil {
 		return err
 	}
@@ -1363,6 +1498,14 @@ func writeCreateTable(out io.Writer, schema string, tableName string, columns []
 		_, _ = io.WriteString(out, check.Expression)
 	}
 
+	for _, exclude := range excludes {
+		_, _ = io.WriteString(out, ",\n    ")
+		_, _ = io.WriteString(out, `CONSTRAINT "`)
+		_, _ = io.WriteString(out, exclude.Name)
+		_, _ = io.WriteString(out, `" `)
+		_, _ = io.WriteString(out, exclude.Expression) // Already includes "EXCLUDE USING ..."
+	}
+
 	_, err := io.WriteString(out, "\n)")
 	return err
 }
@@ -1430,7 +1573,7 @@ func splitSequencesByIdentityOrNot(table *storepb.TableMetadata, sequences []*st
 func writeTable(out io.Writer, schema string, table *storepb.TableMetadata, sequences []*storepb.SequenceMetadata) error {
 	generationTypes, identitySequences, nonIdentitySequences := splitSequencesByIdentityOrNot(table, sequences)
 
-	if err := writeCreateTable(out, schema, table.Name, table.Columns, table.CheckConstraints); err != nil {
+	if err := writeCreateTable(out, schema, table.Name, table.Columns, table.CheckConstraints, table.ExcludeConstraints); err != nil {
 		return err
 	}
 
@@ -2040,7 +2183,7 @@ func writeAttachPartition(out io.Writer, schema string, tableName string, partit
 }
 
 func writePartitionTable(out io.Writer, schema string, columns []*storepb.ColumnMetadata, partition *storepb.TablePartitionMetadata) error {
-	if err := writeCreateTable(out, schema, partition.Name, columns, partition.CheckConstraints); err != nil {
+	if err := writeCreateTable(out, schema, partition.Name, columns, partition.CheckConstraints, partition.ExcludeConstraints); err != nil {
 		return err
 	}
 
@@ -2097,7 +2240,7 @@ func isDefinitionProcedure(definition string) bool {
 	}
 
 	// Parse the definition to get AST
-	parseResult, err := pgparser.ParsePostgreSQL(definition)
+	parseResults, err := pgparser.ParsePostgreSQL(definition)
 	if err != nil {
 		// If parsing fails, fall back to string-based detection
 		// This should rarely happen for valid definitions
@@ -2107,7 +2250,12 @@ func isDefinitionProcedure(definition string) bool {
 			strings.HasPrefix(upperDef, "CREATE OR REPLACE PROCEDURE")
 	}
 
-	tree := parseResult.Tree
+	// For function/procedure definition, we expect exactly one statement
+	if len(parseResults) != 1 {
+		return false
+	}
+
+	tree := parseResults[0].Tree
 	if tree == nil {
 		return false
 	}
@@ -2170,15 +2318,80 @@ func writeExtension(out io.Writer, extension *storepb.ExtensionMetadata) error {
 		return err
 	}
 
-	if _, err := io.WriteString(out, `" WITH SCHEMA "`); err != nil {
+	if _, err := io.WriteString(out, `"`); err != nil {
 		return err
 	}
 
-	if _, err := io.WriteString(out, extension.Schema); err != nil {
+	// Add WITH SCHEMA clause if schema is specified and not empty
+	if extension.Schema != "" {
+		if _, err := io.WriteString(out, ` WITH SCHEMA "`); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(out, extension.Schema); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(out, `"`); err != nil {
+			return err
+		}
+	}
+
+	// Add VERSION clause if version is specified
+	if extension.Version != "" {
+		if _, err := io.WriteString(out, ` VERSION '`); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(out, extension.Version); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(out, `'`); err != nil {
+			return err
+		}
+	}
+
+	if _, err := io.WriteString(out, `;`); err != nil {
 		return err
 	}
 
-	if _, err := io.WriteString(out, `";`); err != nil {
+	if _, err := io.WriteString(out, "\n"); err != nil {
+		return err
+	}
+
+	// Write extension description (comment) if present
+	if extension.Description != "" {
+		if _, err := io.WriteString(out, "\n"); err != nil {
+			return err
+		}
+		if err := writeExtensionComment(out, extension); err != nil {
+			return err
+		}
+	} else {
+		// Add blank line even if no description
+		if _, err := io.WriteString(out, "\n"); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func writeExtensionComment(out io.Writer, extension *storepb.ExtensionMetadata) error {
+	if _, err := io.WriteString(out, `COMMENT ON EXTENSION "`); err != nil {
+		return err
+	}
+
+	if _, err := io.WriteString(out, extension.Name); err != nil {
+		return err
+	}
+
+	if _, err := io.WriteString(out, `" IS '`); err != nil {
+		return err
+	}
+
+	if _, err := io.WriteString(out, escapeSingleQuote(extension.Description)); err != nil {
+		return err
+	}
+
+	if _, err := io.WriteString(out, `';`); err != nil {
 		return err
 	}
 
@@ -2203,6 +2416,13 @@ func getSDLFormat(metadata *storepb.DatabaseSchemaMetadata) (string, error) {
 			if err := writeSchemaCommentSDL(&buf, schema); err != nil {
 				return "", err
 			}
+		}
+	}
+
+	// Write extensions (before enum types and tables as they might provide types used in definitions)
+	for _, extension := range metadata.Extensions {
+		if err := writeExtension(&buf, extension); err != nil {
+			return "", err
 		}
 	}
 
@@ -2248,6 +2468,31 @@ func getSDLFormat(metadata *storepb.DatabaseSchemaMetadata) (string, error) {
 							break
 						}
 					}
+				}
+			}
+		}
+	}
+
+	// Write all enum types before sequences and tables
+	for _, schema := range metadata.Schemas {
+		if schema.SkipDump {
+			continue
+		}
+		for _, enumType := range schema.EnumTypes {
+			if enumType.SkipDump {
+				continue
+			}
+			if err := writeEnum(&buf, schema.Name, enumType); err != nil {
+				return "", err
+			}
+			if _, err := buf.WriteString(";\n\n"); err != nil {
+				return "", err
+			}
+
+			// Write enum type comment if present
+			if len(enumType.Comment) > 0 {
+				if err := writeEnumComment(&buf, schema.Name, enumType); err != nil {
+					return "", err
 				}
 			}
 		}
@@ -2366,6 +2611,20 @@ func getSDLFormat(metadata *storepb.DatabaseSchemaMetadata) (string, error) {
 					}
 				}
 			}
+
+			// Write CREATE TRIGGER statements
+			if err := writeTriggersSDL(&buf, schema.Name, table); err != nil {
+				return "", err
+			}
+
+			// Write trigger comments if present
+			for _, trigger := range table.Triggers {
+				if len(trigger.Comment) > 0 {
+					if err := writeTriggerCommentSDL(&buf, schema.Name, table.Name, trigger); err != nil {
+						return "", err
+					}
+				}
+			}
 		}
 
 		// Write ALTER SEQUENCE OWNED BY statements for sequences that have owners
@@ -2409,7 +2668,51 @@ func getSDLFormat(metadata *storepb.DatabaseSchemaMetadata) (string, error) {
 			}
 		}
 
-		// Write functions and procedures after views
+		// Write materialized views after views
+		for _, materializedView := range schema.MaterializedViews {
+			if materializedView.SkipDump {
+				continue
+			}
+
+			if err := writeMaterializedViewSDL(&buf, schema.Name, materializedView); err != nil {
+				return "", err
+			}
+
+			if _, err := buf.WriteString(";\n\n"); err != nil {
+				return "", err
+			}
+
+			// Write materialized view comment if present
+			if len(materializedView.Comment) > 0 {
+				if err := writeMaterializedViewCommentSDL(&buf, schema.Name, materializedView); err != nil {
+					return "", err
+				}
+			}
+
+			// Write indexes on materialized view
+			for _, index := range materializedView.Indexes {
+				// Skip constraint-based indexes as they are part of table definition
+				if index.Primary || index.IsConstraint {
+					continue
+				}
+
+				if err := writeIndexSDL(&buf, schema.Name, materializedView.Name, index); err != nil {
+					return "", err
+				}
+				if _, err := buf.WriteString(";\n\n"); err != nil {
+					return "", err
+				}
+
+				// Write index comment if present
+				if len(index.Comment) > 0 {
+					if err := writeIndexCommentSDL(&buf, schema.Name, index); err != nil {
+						return "", err
+					}
+				}
+			}
+		}
+
+		// Write functions and procedures after materialized views
 		for _, function := range schema.Functions {
 			if function.SkipDump {
 				continue
@@ -2429,6 +2732,16 @@ func getSDLFormat(metadata *storepb.DatabaseSchemaMetadata) (string, error) {
 					return "", err
 				}
 			}
+		}
+	}
+
+	// Write event triggers (last, as they depend on functions)
+	for _, eventTrigger := range metadata.EventTriggers {
+		if eventTrigger.SkipDump {
+			continue
+		}
+		if err := writeEventTrigger(&buf, eventTrigger); err != nil {
+			return "", err
 		}
 	}
 
@@ -2809,6 +3122,16 @@ func writeTableConstraintsSDL(out io.Writer, table *storepb.TableMetadata) error
 		}
 	}
 
+	// Write EXCLUDE constraints
+	for _, exclude := range table.ExcludeConstraints {
+		if _, err := io.WriteString(out, ",\n    "); err != nil {
+			return err
+		}
+		if err := writeExcludeConstraintSDL(out, exclude); err != nil {
+			return err
+		}
+	}
+
 	// Write foreign key constraints
 	for _, fk := range table.ForeignKeys {
 		if _, err := io.WriteString(out, ",\n    "); err != nil {
@@ -2942,6 +3265,36 @@ func writeViewSDL(out io.Writer, schemaName string, view *storepb.ViewMetadata) 
 	return err
 }
 
+func writeMaterializedViewSDL(out io.Writer, schemaName string, view *storepb.MaterializedViewMetadata) error {
+	if _, err := io.WriteString(out, `CREATE MATERIALIZED VIEW "`); err != nil {
+		return err
+	}
+
+	if _, err := io.WriteString(out, schemaName); err != nil {
+		return err
+	}
+
+	if _, err := io.WriteString(out, `"."`); err != nil {
+		return err
+	}
+
+	if _, err := io.WriteString(out, view.Name); err != nil {
+		return err
+	}
+
+	if _, err := io.WriteString(out, `" AS `); err != nil {
+		return err
+	}
+
+	// The materialized view definition should already include the SELECT statement
+	definition := strings.TrimSpace(view.Definition)
+	// Remove trailing semicolon if present
+	definition = strings.TrimSuffix(definition, ";")
+
+	_, err := io.WriteString(out, definition)
+	return err
+}
+
 func writeFunctionSDL(out io.Writer, _ string, function *storepb.FunctionMetadata) error {
 	// The function definition should already include the complete CREATE FUNCTION statement
 	definition := strings.TrimSpace(function.Definition)
@@ -3047,6 +3400,23 @@ func writeCheckConstraintSDL(out io.Writer, check *storepb.CheckConstraintMetada
 		return err
 	}
 	if _, err := io.WriteString(out, check.Expression); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeExcludeConstraintSDL(out io.Writer, exclude *storepb.ExcludeConstraintMetadata) error {
+	if _, err := io.WriteString(out, `CONSTRAINT "`); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, exclude.Name); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, `" `); err != nil {
+		return err
+	}
+	// Expression already includes "EXCLUDE USING ..." prefix
+	if _, err := io.WriteString(out, exclude.Expression); err != nil {
 		return err
 	}
 	return nil
@@ -3242,6 +3612,20 @@ func GetMultiFileDatabaseDefinition(ctx schema.GetDefinitionContext, metadata *s
 				}
 			}
 
+			// Write CREATE TRIGGER statements
+			if err := writeTriggersSDL(&buf, schemaName, table); err != nil {
+				return nil, errors.Wrapf(err, "failed to generate triggers SDL for %s.%s", schemaName, table.Name)
+			}
+
+			// Write trigger comments if present
+			for _, trigger := range table.Triggers {
+				if len(trigger.Comment) > 0 {
+					if err := writeTriggerCommentSDL(&buf, schemaName, table.Name, trigger); err != nil {
+						return nil, errors.Wrapf(err, "failed to generate trigger comment for %s.%s.%s", schemaName, table.Name, trigger.Name)
+					}
+				}
+			}
+
 			// Write owned sequences (non-serial/non-identity) for this table
 			for _, sequence := range tableSequences {
 				// Skip sequences that belong to serial or identity columns
@@ -3306,6 +3690,54 @@ func GetMultiFileDatabaseDefinition(ctx schema.GetDefinitionContext, metadata *s
 			})
 		}
 
+		// Generate materialized view files
+		for _, materializedView := range schemaMetadata.MaterializedViews {
+			if materializedView.SkipDump {
+				continue
+			}
+
+			var buf strings.Builder
+			if err := writeMaterializedViewSDL(&buf, schemaName, materializedView); err != nil {
+				return nil, errors.Wrapf(err, "failed to generate materialized view SDL for %s.%s", schemaName, materializedView.Name)
+			}
+			buf.WriteString(";\n")
+
+			// Write materialized view comment if present
+			if len(materializedView.Comment) > 0 {
+				buf.WriteString("\n")
+				if err := writeMaterializedViewCommentSDL(&buf, schemaName, materializedView); err != nil {
+					return nil, errors.Wrapf(err, "failed to generate materialized view comment for %s.%s", schemaName, materializedView.Name)
+				}
+			}
+
+			// Write indexes on materialized view
+			for _, index := range materializedView.Indexes {
+				// Skip constraint-based indexes
+				if index.Primary || index.IsConstraint {
+					continue
+				}
+
+				buf.WriteString("\n")
+				if err := writeIndexSDL(&buf, schemaName, materializedView.Name, index); err != nil {
+					return nil, errors.Wrapf(err, "failed to generate index SDL for %s.%s", schemaName, index.Name)
+				}
+				buf.WriteString(";\n")
+
+				// Write index comment if present
+				if len(index.Comment) > 0 {
+					buf.WriteString("\n")
+					if err := writeIndexCommentSDL(&buf, schemaName, index); err != nil {
+						return nil, errors.Wrapf(err, "failed to generate index comment for %s.%s", schemaName, index.Name)
+					}
+				}
+			}
+
+			files = append(files, schema.File{
+				Name:    fmt.Sprintf("schemas/%s/materialized_views/%s.sql", schemaName, materializedView.Name),
+				Content: buf.String(),
+			})
+		}
+
 		// Generate function files
 		for _, function := range schemaMetadata.Functions {
 			if function.SkipDump {
@@ -3326,10 +3758,56 @@ func GetMultiFileDatabaseDefinition(ctx schema.GetDefinitionContext, metadata *s
 				}
 			}
 
+			// Determine if this is a PROCEDURE or FUNCTION to use different folder
+			folderName := "functions"
+			if isDefinitionProcedure(function.Definition) {
+				folderName = "procedures"
+			}
+
 			files = append(files, schema.File{
-				Name:    fmt.Sprintf("schemas/%s/functions/%s.sql", schemaName, function.Name),
+				Name:    fmt.Sprintf("schemas/%s/%s/%s.sql", schemaName, folderName, function.Name),
 				Content: buf.String(),
 			})
+		}
+
+		// Generate a single file for all enum types in this schema
+		if len(schemaMetadata.EnumTypes) > 0 {
+			var buf strings.Builder
+			hasEnumTypes := false
+			for i, enumType := range schemaMetadata.EnumTypes {
+				if enumType.SkipDump {
+					continue
+				}
+
+				if hasEnumTypes {
+					buf.WriteString("\n")
+				}
+				hasEnumTypes = true
+
+				if i > 0 {
+					buf.WriteString("\n")
+				}
+
+				if err := writeEnum(&buf, schemaName, enumType); err != nil {
+					return nil, errors.Wrapf(err, "failed to generate enum type SDL for %s.%s", schemaName, enumType.Name)
+				}
+				buf.WriteString(";\n")
+
+				// Add enum type comment if present
+				if len(enumType.Comment) > 0 {
+					buf.WriteString("\n")
+					if err := writeEnumComment(&buf, schemaName, enumType); err != nil {
+						return nil, errors.Wrapf(err, "failed to generate enum type comment for %s.%s", schemaName, enumType.Name)
+					}
+				}
+			}
+
+			if hasEnumTypes {
+				files = append(files, schema.File{
+					Name:    fmt.Sprintf("schemas/%s/types.sql", schemaName),
+					Content: buf.String(),
+				})
+			}
 		}
 
 		// Generate a single file for all independent sequences (no owner) in this schema
@@ -3356,6 +3834,49 @@ func GetMultiFileDatabaseDefinition(ctx schema.GetDefinitionContext, metadata *s
 
 			files = append(files, schema.File{
 				Name:    fmt.Sprintf("schemas/%s/sequences.sql", schemaName),
+				Content: buf.String(),
+			})
+		}
+	}
+
+	// Generate extensions.sql file if there are any extensions
+	if len(metadata.Extensions) > 0 {
+		var buf strings.Builder
+		for i, extension := range metadata.Extensions {
+			if i > 0 {
+				buf.WriteString("\n")
+			}
+
+			if err := writeExtension(&buf, extension); err != nil {
+				return nil, errors.Wrapf(err, "failed to generate extension SDL for %s", extension.Name)
+			}
+		}
+
+		files = append(files, schema.File{
+			Name:    "extensions.sql",
+			Content: buf.String(),
+		})
+	}
+
+	// Generate event_triggers.sql file if there are any event triggers
+	if len(metadata.EventTriggers) > 0 {
+		var buf strings.Builder
+		for i, eventTrigger := range metadata.EventTriggers {
+			if eventTrigger.SkipDump {
+				continue
+			}
+			if i > 0 {
+				buf.WriteString("\n")
+			}
+
+			if err := writeEventTrigger(&buf, eventTrigger); err != nil {
+				return nil, errors.Wrapf(err, "failed to generate event trigger SDL for %s", eventTrigger.Name)
+			}
+		}
+
+		if buf.Len() > 0 {
+			files = append(files, schema.File{
+				Name:    "event_triggers.sql",
 				Content: buf.String(),
 			})
 		}
@@ -3428,6 +3949,32 @@ func buildTableSequencesMap(metadata *storepb.DatabaseSchemaMetadata) map[string
 		}
 	}
 	return tableSequencesMap
+}
+
+func writeMaterializedViewCommentSDL(out io.Writer, schemaName string, view *storepb.MaterializedViewMetadata) error {
+	if _, err := io.WriteString(out, `COMMENT ON MATERIALIZED VIEW "`); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, schemaName); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, `"."`); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, view.Name); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, `" IS '`); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, escapeSingleQuote(view.Comment)); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, `';`); err != nil {
+		return err
+	}
+	_, err := io.WriteString(out, "\n\n")
+	return err
 }
 
 // SDL Comment Functions
@@ -3616,6 +4163,67 @@ func writeIndexCommentSDL(out io.Writer, schemaName string, index *storepb.Index
 	if _, err := io.WriteString(out, `';`); err != nil {
 		return err
 	}
+	_, err := io.WriteString(out, "\n\n")
+	return err
+}
+
+func writeTriggersSDL(out io.Writer, schemaName string, table *storepb.TableMetadata) error {
+	for _, trigger := range table.Triggers {
+		if trigger.SkipDump {
+			continue
+		}
+
+		if err := writeTriggerSDL(out, schemaName, table.Name, trigger); err != nil {
+			return err
+		}
+
+		if _, err := io.WriteString(out, ";\n\n"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeTriggerSDL(out io.Writer, _ /* schemaName */, _ /* tableName */ string, trigger *storepb.TriggerMetadata) error {
+	// For PostgreSQL, trigger.Body contains the complete CREATE TRIGGER statement
+	// built by buildTriggerDefinition in get_database_metadata.go
+	_, err := io.WriteString(out, trigger.Body)
+	return err
+}
+
+func writeTriggerCommentSDL(out io.Writer, schemaName, tableName string, trigger *storepb.TriggerMetadata) error {
+	if len(trigger.Comment) == 0 {
+		return nil
+	}
+
+	if _, err := io.WriteString(out, `COMMENT ON TRIGGER "`); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, trigger.Name); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, `" ON "`); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, schemaName); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, `"."`); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, tableName); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, `" IS '`); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, escapeSingleQuote(trigger.Comment)); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(out, `';`); err != nil {
+		return err
+	}
+
 	_, err := io.WriteString(out, "\n\n")
 	return err
 }

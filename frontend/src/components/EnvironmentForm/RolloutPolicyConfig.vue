@@ -18,112 +18,12 @@
         />
         <div class="flex flex-col">
           <span class="textlabel">
-            {{ $t("policy.rollout.auto") }}
+            {{ t("policy.rollout.auto") }}
           </span>
           <div class="textinfolabel">
-            {{ $t("policy.rollout.auto-info") }}
+            {{ t("policy.rollout.auto-info") }}
           </div>
         </div>
-      </div>
-    </div>
-
-    <!-- Requirements Section -->
-    <div class="flex flex-col gap-y-2">
-      <div class="textlabel font-medium">
-        {{ $t("policy.rollout.checkers.self") }}
-      </div>
-
-      <!-- Required Issue Approval -->
-      <div class="w-full inline-flex items-start gap-x-2">
-        <Switch
-          :value="isRequiredIssueApprovalChecked"
-          :text="true"
-          :disabled="disabled"
-          @update:value="toggleRequiredIssueApproval($event)"
-        />
-        <div class="flex flex-col">
-          <span class="textlabel">
-            {{ $t("policy.rollout.checkers.required-issue-approval.self") }}
-          </span>
-          <div class="textinfolabel">
-            {{
-              $t("policy.rollout.checkers.required-issue-approval.description")
-            }}
-          </div>
-        </div>
-      </div>
-
-      <!-- Plan Check Enforcement -->
-      <div class="w-full inline-flex items-start gap-x-2">
-        <Switch
-          :value="isPlanCheckEnforcementEnabled"
-          :text="true"
-          :disabled="disabled"
-          @update:value="togglePlanCheckEnforcement($event)"
-        />
-        <div class="flex flex-col">
-          <span class="textlabel">
-            {{ $t("policy.rollout.checkers.plan-check-enforcement.self") }}
-          </span>
-          <div class="textinfolabel">
-            {{
-              $t("policy.rollout.checkers.plan-check-enforcement.description")
-            }}
-          </div>
-        </div>
-      </div>
-
-      <!-- Plan Check Enforcement Options (shown when enabled) -->
-      <div
-        v-if="isPlanCheckEnforcementEnabled"
-        class="flex flex-col gap-y-2 ml-12"
-      >
-        <NRadioGroup
-          :value="planCheckEnforcementLevel"
-          :disabled="disabled"
-          @update:value="updatePlanCheckEnforcementLevel($event)"
-        >
-          <div class="flex flex-col gap-y-2">
-            <NRadio
-              :value="RolloutPolicy_Checkers_PlanCheckEnforcement.ERROR_ONLY"
-            >
-              <div class="flex flex-col">
-                <div>
-                  {{
-                    $t(
-                      "policy.rollout.checkers.plan-check-enforcement.error-only.self"
-                    )
-                  }}
-                </div>
-                <div class="textinfolabel">
-                  {{
-                    $t(
-                      "policy.rollout.checkers.plan-check-enforcement.error-only.description"
-                    )
-                  }}
-                </div>
-              </div>
-            </NRadio>
-            <NRadio :value="RolloutPolicy_Checkers_PlanCheckEnforcement.STRICT">
-              <div class="flex flex-col">
-                <div>
-                  {{
-                    $t(
-                      "policy.rollout.checkers.plan-check-enforcement.strict.self"
-                    )
-                  }}
-                </div>
-                <div class="textinfolabel">
-                  {{
-                    $t(
-                      "policy.rollout.checkers.plan-check-enforcement.strict.description"
-                    )
-                  }}
-                </div>
-              </div>
-            </NRadio>
-          </div>
-        </NRadioGroup>
       </div>
     </div>
   </div>
@@ -132,19 +32,16 @@
 <script setup lang="ts">
 import { create } from "@bufbuild/protobuf";
 import { cloneDeep } from "lodash-es";
-import { NRadioGroup, NRadio } from "naive-ui";
-import { ref, watch, computed } from "vue";
+import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import type {
   Policy,
   RolloutPolicy,
 } from "@/types/proto-es/v1/org_policy_service_pb";
-import {
-  RolloutPolicySchema,
-  RolloutPolicy_CheckersSchema,
-  RolloutPolicy_Checkers_RequiredStatusChecksSchema,
-  RolloutPolicy_Checkers_PlanCheckEnforcement,
-} from "@/types/proto-es/v1/org_policy_service_pb";
+import { RolloutPolicySchema } from "@/types/proto-es/v1/org_policy_service_pb";
 import { RoleSelect, Switch } from "../v2";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   policy: Policy;
@@ -165,27 +62,6 @@ const rolloutPolicy = ref<RolloutPolicy>(
 
 const isAutomaticRolloutChecked = computed(() => {
   return rolloutPolicy.value.automatic;
-});
-
-const isRequiredIssueApprovalChecked = computed(() => {
-  return rolloutPolicy.value.checkers?.requiredIssueApproval ?? false;
-});
-
-const isPlanCheckEnforcementEnabled = computed(() => {
-  const enforcement =
-    rolloutPolicy.value.checkers?.requiredStatusChecks?.planCheckEnforcement;
-  return (
-    enforcement !== undefined &&
-    enforcement !==
-      RolloutPolicy_Checkers_PlanCheckEnforcement.PLAN_CHECK_ENFORCEMENT_UNSPECIFIED
-  );
-});
-
-const planCheckEnforcementLevel = computed(() => {
-  return (
-    rolloutPolicy.value.checkers?.requiredStatusChecks?.planCheckEnforcement ??
-    RolloutPolicy_Checkers_PlanCheckEnforcement.ERROR_ONLY
-  );
 });
 
 const update = (rp: RolloutPolicy) => {
@@ -210,82 +86,6 @@ const updateRoles = (roles: string[]) => {
     create(RolloutPolicySchema, {
       ...rolloutPolicy.value,
       roles: roles,
-    })
-  );
-};
-
-// Checkers methods
-const toggleRequiredIssueApproval = (checked: boolean) => {
-  const currentCheckers = rolloutPolicy.value.checkers;
-  const updatedCheckers = create(RolloutPolicy_CheckersSchema, {
-    requiredIssueApproval: checked,
-    requiredStatusChecks: currentCheckers?.requiredStatusChecks,
-  });
-
-  update(
-    create(RolloutPolicySchema, {
-      ...rolloutPolicy.value,
-      checkers: updatedCheckers,
-    })
-  );
-};
-
-const togglePlanCheckEnforcement = (enabled: boolean) => {
-  const currentCheckers = rolloutPolicy.value.checkers;
-  let updatedStatusChecks;
-
-  if (enabled) {
-    // When enabling, default to ERROR_ONLY
-    updatedStatusChecks = create(
-      RolloutPolicy_Checkers_RequiredStatusChecksSchema,
-      {
-        planCheckEnforcement:
-          RolloutPolicy_Checkers_PlanCheckEnforcement.ERROR_ONLY,
-      }
-    );
-  } else {
-    // When disabling, set to UNSPECIFIED (no enforcement)
-    updatedStatusChecks = create(
-      RolloutPolicy_Checkers_RequiredStatusChecksSchema,
-      {
-        planCheckEnforcement:
-          RolloutPolicy_Checkers_PlanCheckEnforcement.PLAN_CHECK_ENFORCEMENT_UNSPECIFIED,
-      }
-    );
-  }
-
-  const updatedCheckers = create(RolloutPolicy_CheckersSchema, {
-    requiredIssueApproval: currentCheckers?.requiredIssueApproval ?? false,
-    requiredStatusChecks: updatedStatusChecks,
-  });
-
-  update(
-    create(RolloutPolicySchema, {
-      ...rolloutPolicy.value,
-      checkers: updatedCheckers,
-    })
-  );
-};
-
-const updatePlanCheckEnforcementLevel = (
-  enforcement: RolloutPolicy_Checkers_PlanCheckEnforcement
-) => {
-  const currentCheckers = rolloutPolicy.value.checkers;
-  const updatedStatusChecks = create(
-    RolloutPolicy_Checkers_RequiredStatusChecksSchema,
-    {
-      planCheckEnforcement: enforcement,
-    }
-  );
-  const updatedCheckers = create(RolloutPolicy_CheckersSchema, {
-    requiredIssueApproval: currentCheckers?.requiredIssueApproval ?? false,
-    requiredStatusChecks: updatedStatusChecks,
-  });
-
-  update(
-    create(RolloutPolicySchema, {
-      ...rolloutPolicy.value,
-      checkers: updatedCheckers,
     })
   );
 };

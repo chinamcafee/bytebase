@@ -6,9 +6,12 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pkg/errors"
+
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -21,7 +24,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleColumnMaximumCharacterLength, &ColumnMaximumCharacterLengthAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_COLUMN_MAXIMUM_CHARACTER_LENGTH, &ColumnMaximumCharacterLengthAdvisor{})
 }
 
 // ColumnMaximumCharacterLengthAdvisor is the advisor checking for max character length.
@@ -30,23 +33,24 @@ type ColumnMaximumCharacterLengthAdvisor struct {
 
 // Check checks for maximum character length.
 func (*ColumnMaximumCharacterLengthAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalNumberTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	numberPayload := checkCtx.Rule.GetNumberPayload()
+	if numberPayload == nil {
+		return nil, errors.New("number_payload is required for column maximum character length rule")
 	}
 	checker := &columnMaximumCharacterLengthChecker{
 		level:   level,
-		title:   string(checkCtx.Rule.Type),
-		maximum: payload.Number,
+		title:   checkCtx.Rule.Type.String(),
+		maximum: int(numberPayload.Number),
 	}
 
 	for _, stmt := range stmtList {
@@ -112,7 +116,7 @@ func (checker *columnMaximumCharacterLengthChecker) Enter(in ast.Node) (ast.Node
 	if tableName != "" {
 		checker.adviceList = append(checker.adviceList, &storepb.Advice{
 			Status:        checker.level,
-			Code:          advisor.CharLengthExceedsLimit.Int32(),
+			Code:          code.CharLengthExceedsLimit.Int32(),
 			Title:         checker.title,
 			Content:       fmt.Sprintf("The length of the CHAR column `%s` is bigger than %d, please use VARCHAR instead", columnName, checker.maximum),
 			StartPosition: common.ConvertANTLRLineToPosition(line),

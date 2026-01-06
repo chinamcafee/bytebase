@@ -21,14 +21,14 @@
 </template>
 
 <script setup lang="tsx">
-import { NCheckbox, NDataTable, type DataTableColumn } from "naive-ui";
+import { type DataTableColumn, NCheckbox, NDataTable } from "naive-ui";
 import { computed, h, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { ComposedDatabase } from "@/types";
 import type {
   DatabaseMetadata,
-  SequenceMetadata,
   SchemaMetadata,
+  SequenceMetadata,
 } from "@/types/proto-es/v1/database_service_pb";
 import { useAutoHeightDataTable } from "@/utils";
 import { keyWithPosition } from "@/views/sql-editor/EditorCommon";
@@ -204,9 +204,13 @@ watch(
 
 <style lang="postcss" scoped>
 :deep(.n-data-table-th .n-data-table-resize-button::after) {
-  @apply bg-control-bg h-2/3;
+  background-color: rgb(var(--color-control-bg));
+  height: 66.666667%;
 }
 :deep(.n-data-table-td.input-cell) {
-  @apply pl-0.5 pr-1 py-0;
+  padding-left: 0.125rem;
+  padding-right: 0.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 </style>

@@ -6,13 +6,14 @@ import (
 	"fmt"
 
 	"github.com/antlr4-go/antlr/v4"
-	"github.com/pkg/errors"
 
-	parser "github.com/bytebase/plsql-parser"
+	parser "github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	"github.com/bytebase/bytebase/backend/plugin/parser/plsql"
 )
 
@@ -21,28 +22,34 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_ORACLE, advisor.SchemaRuleStatementDMLDryRun, &StatementDmlDryRunAdvisor{})
+	advisor.Register(storepb.Engine_ORACLE, storepb.SQLReviewRule_STATEMENT_DML_DRY_RUN, &StatementDmlDryRunAdvisor{})
 }
 
 type StatementDmlDryRunAdvisor struct {
 }
 
 func (*StatementDmlDryRunAdvisor) Check(ctx context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	rule := NewStatementDmlDryRunRule(ctx, level, string(checkCtx.Rule.Type), checkCtx.Driver)
+	rule := NewStatementDmlDryRunRule(ctx, level, checkCtx.Rule.Type.String(), checkCtx.Driver)
 	checker := NewGenericChecker([]Rule{rule})
 
 	if checkCtx.Driver != nil {
-		antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+		for _, stmt := range checkCtx.ParsedStatements {
+			if stmt.AST == nil {
+				continue
+			}
+			antlrAST, ok := base.GetANTLRAST(stmt.AST)
+			if !ok {
+				continue
+			}
+			rule.SetBaseLine(stmt.BaseLine())
+			checker.SetBaseLine(stmt.BaseLine())
+			antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+		}
 	}
 
 	return checker.GetAdviceList()
@@ -94,25 +101,25 @@ func (*StatementDmlDryRunRule) OnExit(_ antlr.ParserRuleContext, _ string) error
 
 func (r *StatementDmlDryRunRule) handleInsertStatement(ctx *parser.Insert_statementContext) {
 	if plsql.IsTopLevelStatement(ctx.GetParent()) {
-		r.handleStmt(ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx), ctx.GetStart().GetLine())
+		r.handleStmt(ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx), r.baseLine+ctx.GetStart().GetLine())
 	}
 }
 
 func (r *StatementDmlDryRunRule) handleUpdateStatement(ctx *parser.Update_statementContext) {
 	if plsql.IsTopLevelStatement(ctx.GetParent()) {
-		r.handleStmt(ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx), ctx.GetStart().GetLine())
+		r.handleStmt(ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx), r.baseLine+ctx.GetStart().GetLine())
 	}
 }
 
 func (r *StatementDmlDryRunRule) handleDeleteStatement(ctx *parser.Delete_statementContext) {
 	if plsql.IsTopLevelStatement(ctx.GetParent()) {
-		r.handleStmt(ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx), ctx.GetStart().GetLine())
+		r.handleStmt(ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx), r.baseLine+ctx.GetStart().GetLine())
 	}
 }
 
 func (r *StatementDmlDryRunRule) handleMergeStatement(ctx *parser.Merge_statementContext) {
 	if plsql.IsTopLevelStatement(ctx.GetParent()) {
-		r.handleStmt(ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx), ctx.GetStart().GetLine())
+		r.handleStmt(ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx), r.baseLine+ctx.GetStart().GetLine())
 	}
 }
 
@@ -124,7 +131,7 @@ func (r *StatementDmlDryRunRule) handleStmt(text string, lineNumber int) {
 	if _, err := advisor.Query(r.ctx, advisor.QueryContext{}, r.driver, storepb.Engine_ORACLE, fmt.Sprintf("EXPLAIN PLAN FOR %s", text)); err != nil {
 		r.AddAdvice(
 			r.level,
-			advisor.StatementDMLDryRunFailed.Int32(),
+			code.StatementDMLDryRunFailed.Int32(),
 			fmt.Sprintf("Failed to dry run statement at line %d: %v", lineNumber, err),
 			common.ConvertANTLRLineToPosition(lineNumber),
 		)

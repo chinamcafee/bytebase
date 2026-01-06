@@ -5,6 +5,7 @@ package bytebase.store;
 import "google/protobuf/duration.proto";
 import "google/type/expr.proto";
 import "store/approval.proto";
+import "store/common.proto";
 
 option go_package = "generated-go/store";
 
@@ -38,6 +39,8 @@ message Issue {
   GrantRequest grant_request = 2;
   // Labels attached to categorize and filter the issue.
   repeated string labels = 3;
+  // Risk level for the issue, calculated from statement types.
+  RiskLevel risk_level = 4;
 }
 
 // GrantRequest contains details for requesting database access permissions.
@@ -46,7 +49,7 @@ message GrantRequest {
   // Format: roles/EXPORTER.
   string role = 1;
   // The user who will receive the role.
-  // Format: users/{userUID}.
+  // Format: users/{email}.
   string user = 2;
   // Optional conditional expression that limits when the grant applies.
   google.type.Expr condition = 3;

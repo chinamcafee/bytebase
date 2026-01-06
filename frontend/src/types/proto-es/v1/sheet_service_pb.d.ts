@@ -2,10 +2,8 @@
 // @generated from file v1/sheet_service.proto (package bytebase.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
-import type { FieldMask, Timestamp } from "@bufbuild/protobuf/wkt";
-import type { Engine } from "./common_pb";
 
 /**
  * Describes the file v1/sheet_service.proto.
@@ -105,47 +103,6 @@ export declare type GetSheetRequest = Message<"bytebase.v1.GetSheetRequest"> & {
 export declare const GetSheetRequestSchema: GenMessage<GetSheetRequest>;
 
 /**
- * @generated from message bytebase.v1.UpdateSheetRequest
- */
-export declare type UpdateSheetRequest = Message<"bytebase.v1.UpdateSheetRequest"> & {
-  /**
-   * The sheet to update.
-   *
-   * The sheet's `name` field is used to identify the sheet to update.
-   * Format: projects/{project}/sheets/{sheet}
-   *
-   * @generated from field: bytebase.v1.Sheet sheet = 1;
-   */
-  sheet?: Sheet;
-
-  /**
-   * The list of fields to be updated.
-   * Fields are specified relative to the sheet.
-   * (e.g., `title`, `statement`; *not* `sheet.title` or `sheet.statement`)
-   * Only support update the following fields for now:
-   * - `title`
-   * - `statement`
-   *
-   * @generated from field: google.protobuf.FieldMask update_mask = 2;
-   */
-  updateMask?: FieldMask;
-
-  /**
-   * If set to true, and the sheet is not found, a new sheet will be created.
-   * In this situation, `update_mask` is ignored.
-   *
-   * @generated from field: bool allow_missing = 3;
-   */
-  allowMissing: boolean;
-};
-
-/**
- * Describes the message bytebase.v1.UpdateSheetRequest.
- * Use `create(UpdateSheetRequestSchema)` to create a new message.
- */
-export declare const UpdateSheetRequestSchema: GenMessage<UpdateSheetRequest>;
-
-/**
  * @generated from message bytebase.v1.Sheet
  */
 export declare type Sheet = Message<"bytebase.v1.Sheet"> & {
@@ -159,56 +116,20 @@ export declare type Sheet = Message<"bytebase.v1.Sheet"> & {
   name: string;
 
   /**
-   * The title of the sheet.
-   *
-   * @generated from field: string title = 3;
-   */
-  title: string;
-
-  /**
-   * The creator of the Sheet.
-   * Format: users/{email}
-   *
-   * @generated from field: string creator = 4;
-   */
-  creator: string;
-
-  /**
-   * The create time of the sheet.
-   *
-   * @generated from field: google.protobuf.Timestamp create_time = 5;
-   */
-  createTime?: Timestamp;
-
-  /**
    * The content of the sheet.
    * By default, it will be cut off, if it doesn't match the `content_size`, you can
    * set the `raw` to true in GetSheet request to retrieve the full content.
    *
-   * @generated from field: bytes content = 7;
+   * @generated from field: bytes content = 2;
    */
   content: Uint8Array;
 
   /**
    * content_size is the full size of the content, may not match the size of the `content` field.
    *
-   * @generated from field: int64 content_size = 8;
+   * @generated from field: int64 content_size = 3;
    */
   contentSize: bigint;
-
-  /**
-   * Additional metadata and configuration for the sheet.
-   *
-   * @generated from field: bytebase.v1.SheetPayload payload = 13;
-   */
-  payload?: SheetPayload;
-
-  /**
-   * The SQL dialect.
-   *
-   * @generated from field: bytebase.v1.Engine engine = 14;
-   */
-  engine: Engine;
 };
 
 /**
@@ -216,72 +137,6 @@ export declare type Sheet = Message<"bytebase.v1.Sheet"> & {
  * Use `create(SheetSchema)` to create a new message.
  */
 export declare const SheetSchema: GenMessage<Sheet>;
-
-/**
- * @generated from message bytebase.v1.SheetPayload
- */
-export declare type SheetPayload = Message<"bytebase.v1.SheetPayload"> & {
-  /**
-   * @generated from field: bytebase.v1.SheetPayload.Type type = 1;
-   */
-  type: SheetPayload_Type;
-
-  /**
-   * The start and end position of each command in the sheet statement.
-   *
-   * @generated from field: repeated bytebase.v1.SheetCommand commands = 4;
-   */
-  commands: SheetCommand[];
-};
-
-/**
- * Describes the message bytebase.v1.SheetPayload.
- * Use `create(SheetPayloadSchema)` to create a new message.
- */
-export declare const SheetPayloadSchema: GenMessage<SheetPayload>;
-
-/**
- * Type of the SheetPayload.
- *
- * @generated from enum bytebase.v1.SheetPayload.Type
- */
-export enum SheetPayload_Type {
-  /**
-   * @generated from enum value: TYPE_UNSPECIFIED = 0;
-   */
-  TYPE_UNSPECIFIED = 0,
-
-  /**
-   * @generated from enum value: SCHEMA_DESIGN = 1;
-   */
-  SCHEMA_DESIGN = 1,
-}
-
-/**
- * Describes the enum bytebase.v1.SheetPayload.Type.
- */
-export declare const SheetPayload_TypeSchema: GenEnum<SheetPayload_Type>;
-
-/**
- * @generated from message bytebase.v1.SheetCommand
- */
-export declare type SheetCommand = Message<"bytebase.v1.SheetCommand"> & {
-  /**
-   * @generated from field: int32 start = 1;
-   */
-  start: number;
-
-  /**
-   * @generated from field: int32 end = 2;
-   */
-  end: number;
-};
-
-/**
- * Describes the message bytebase.v1.SheetCommand.
- * Use `create(SheetCommandSchema)` to create a new message.
- */
-export declare const SheetCommandSchema: GenMessage<SheetCommand>;
 
 /**
  * SheetService manages SQL scripts and saved queries.
@@ -320,17 +175,6 @@ export declare const SheetService: GenService<{
   getSheet: {
     methodKind: "unary";
     input: typeof GetSheetRequestSchema;
-    output: typeof SheetSchema;
-  },
-  /**
-   * Updates a SQL sheet's title or content.
-   * Permissions required: bb.sheets.update
-   *
-   * @generated from rpc bytebase.v1.SheetService.UpdateSheet
-   */
-  updateSheet: {
-    methodKind: "unary";
-    input: typeof UpdateSheetRequestSchema;
     output: typeof SheetSchema;
   },
 }>;

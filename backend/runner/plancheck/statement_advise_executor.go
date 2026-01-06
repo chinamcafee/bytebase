@@ -3,22 +3,20 @@ package plancheck
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/bytebase/bytebase/backend/common"
-	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/component/dbfactory"
 	"github.com/bytebase/bytebase/backend/component/sheet"
 
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
 	"github.com/bytebase/bytebase/backend/plugin/db"
 	parserbase "github.com/bytebase/bytebase/backend/plugin/parser/base"
 	"github.com/bytebase/bytebase/backend/store"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 // NewStatementAdviseExecutor creates a plan check statement advise executor.
@@ -26,37 +24,31 @@ func NewStatementAdviseExecutor(
 	store *store.Store,
 	sheetManager *sheet.Manager,
 	dbFactory *dbfactory.DBFactory,
-	licenseService *enterprise.LicenseService,
 ) Executor {
 	return &StatementAdviseExecutor{
-		store:          store,
-		sheetManager:   sheetManager,
-		dbFactory:      dbFactory,
-		licenseService: licenseService,
+		store:        store,
+		sheetManager: sheetManager,
+		dbFactory:    dbFactory,
 	}
 }
 
 // StatementAdviseExecutor is the plan check statement advise executor.
 type StatementAdviseExecutor struct {
-	store          *store.Store
-	sheetManager   *sheet.Manager
-	dbFactory      *dbfactory.DBFactory
-	licenseService *enterprise.LicenseService
+	store        *store.Store
+	sheetManager *sheet.Manager
+	dbFactory    *dbfactory.DBFactory
 }
 
-// Run will run the plan check statement advise executor once, and run its sub-advisors one-by-one.
-func (e *StatementAdviseExecutor) Run(ctx context.Context, config *storepb.PlanCheckRunConfig) ([]*storepb.PlanCheckRunResult_Result, error) {
-	changeType := config.ChangeDatabaseType
-
-	sheetUID := int(config.SheetUid)
-	sheet, err := e.store.GetSheet(ctx, &store.FindSheetMessage{UID: &sheetUID})
+// RunForTarget runs the statement advise check for a single target.
+func (e *StatementAdviseExecutor) RunForTarget(ctx context.Context, target *CheckTarget) ([]*storepb.PlanCheckRunResult_Result, error) {
+	fullSheet, err := e.store.GetSheetFull(ctx, target.SheetSha256)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get sheet %d", sheetUID)
+		return nil, err
 	}
-	if sheet == nil {
-		return nil, errors.Errorf("sheet %d not found", sheetUID)
+	if fullSheet == nil {
+		return nil, errors.Errorf("sheet full %s not found", target.SheetSha256)
 	}
-	if sheet.Size > common.MaxSheetCheckSize {
+	if fullSheet.Size > common.MaxSheetCheckSize {
 		return []*storepb.PlanCheckRunResult_Result{
 			{
 				Status:  storepb.Advice_WARNING,
@@ -66,18 +58,20 @@ func (e *StatementAdviseExecutor) Run(ctx context.Context, config *storepb.PlanC
 			},
 		}, nil
 	}
-	statement, err := e.store.GetSheetStatementByID(ctx, sheetUID)
-	if err != nil {
-		return nil, err
-	}
-	enablePriorBackup := config.EnablePriorBackup
+	enablePriorBackup := target.EnablePriorBackup
+	enableGhost := target.EnableGhost
 
-	instance, err := e.store.GetInstanceV2(ctx, &store.FindInstanceMessage{ResourceID: &config.InstanceId})
+	instanceID, databaseName, err := common.GetInstanceDatabaseID(target.Target)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get instance %s", config.InstanceId)
+		return nil, errors.Wrapf(err, "failed to parse target %s", target.Target)
+	}
+
+	instance, err := e.store.GetInstance(ctx, &store.FindInstanceMessage{ResourceID: &instanceID})
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get instance %s", instanceID)
 	}
 	if instance == nil {
-		return nil, errors.Errorf("instance %s not found", config.InstanceId)
+		return nil, errors.Errorf("instance %s not found", instanceID)
 	}
 	if !common.EngineSupportStatementAdvise(instance.Metadata.GetEngine()) {
 		return []*storepb.PlanCheckRunResult_Result{
@@ -90,15 +84,15 @@ func (e *StatementAdviseExecutor) Run(ctx context.Context, config *storepb.PlanC
 		}, nil
 	}
 
-	database, err := e.store.GetDatabaseV2(ctx, &store.FindDatabaseMessage{InstanceID: &instance.ResourceID, DatabaseName: &config.DatabaseName})
+	database, err := e.store.GetDatabase(ctx, &store.FindDatabaseMessage{InstanceID: &instance.ResourceID, DatabaseName: &databaseName})
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get database %q", config.DatabaseName)
+		return nil, errors.Wrapf(err, "failed to get database %q", databaseName)
 	}
 	if database == nil {
-		return nil, errors.Errorf("database not found %q", config.DatabaseName)
+		return nil, errors.Errorf("database not found %q", databaseName)
 	}
 
-	results, err := e.runReview(ctx, instance, database, changeType, statement, enablePriorBackup)
+	results, err := e.runReview(ctx, instance, database, fullSheet.Statement, enablePriorBackup, enableGhost)
 	if err != nil {
 		return nil, err
 	}
@@ -121,21 +115,21 @@ func (e *StatementAdviseExecutor) runReview(
 	ctx context.Context,
 	instance *store.InstanceMessage,
 	database *store.DatabaseMessage,
-	changeType storepb.PlanCheckRunConfig_ChangeDatabaseType,
 	statement string,
 	enablePriorBackup bool,
+	enableGhost bool,
 ) ([]*storepb.PlanCheckRunResult_Result, error) {
-	dbSchema, err := e.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
+	dbMetadata, err := e.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
 		InstanceID:   database.InstanceID,
 		DatabaseName: database.DatabaseName,
 	})
 	if err != nil {
 		return nil, err
 	}
-	if dbSchema == nil {
+	if dbMetadata == nil {
 		return nil, errors.Errorf("database schema %s not found", database.String())
 	}
-	if dbSchema.GetMetadata() == nil {
+	if dbMetadata.GetProto() == nil {
 		return nil, errors.Errorf("database schema metadata %s not found", database.String())
 	}
 
@@ -149,41 +143,39 @@ func (e *StatementAdviseExecutor) runReview(
 		}
 	}
 
-	catalog, err := catalog.NewCatalog(ctx, e.store, database.InstanceID, database.DatabaseName, instance.Metadata.GetEngine(), store.IsObjectCaseSensitive(instance), nil /* Override Metadata */)
-	if err != nil {
-		return nil, common.Wrapf(err, common.Internal, "failed to create a catalog")
-	}
+	// Create original metadata as read-only
+	originMetadata := model.NewDatabaseMetadata(dbMetadata.GetProto(), nil, nil, instance.Metadata.GetEngine(), store.IsObjectCaseSensitive(instance))
 
-	useDatabaseOwner, err := getUseDatabaseOwner(ctx, e.store, instance, database)
-	if err != nil {
-		return nil, common.Wrapf(err, common.Internal, "failed to get use database owner")
+	// Clone metadata for final to avoid modifying the original
+	clonedMetadata, ok := proto.Clone(dbMetadata.GetProto()).(*storepb.DatabaseSchemaMetadata)
+	if !ok {
+		return nil, common.Wrapf(errors.New("failed to clone database schema metadata"), common.Internal, "failed to create a catalog")
 	}
-	driver, err := e.dbFactory.GetAdminDatabaseDriver(ctx, instance, database, db.ConnectionContext{UseDatabaseOwner: useDatabaseOwner})
+	finalMetadata := model.NewDatabaseMetadata(clonedMetadata, nil, nil, instance.Metadata.GetEngine(), store.IsObjectCaseSensitive(instance))
+
+	project, err := e.store.GetProject(ctx, &store.FindProjectMessage{ResourceID: &database.ProjectID})
+	if err != nil {
+		return nil, common.Wrapf(err, common.Internal, "failed to get project")
+	}
+	driver, err := e.dbFactory.GetAdminDatabaseDriver(ctx, instance, database, db.ConnectionContext{TenantMode: project.Setting.GetPostgresDatabaseTenantMode()})
 	if err != nil {
 		return nil, err
 	}
 	defer driver.Close(ctx)
 	connection := driver.GetDB()
 
-	// Database secrets feature has been removed
-	// To avoid leaking the rendered statement, the error message should use the original statement and not the rendered statement.
-	// Database secrets feature removed - using original statement directly
-	classificationConfig := getClassificationByProject(ctx, e.store, database.ProjectID)
-
-	adviceList, err := advisor.SQLReviewCheck(ctx, e.sheetManager, statement, reviewConfig.SqlReviewRules, advisor.SQLReviewCheckContext{
-		Charset:                  dbSchema.GetMetadata().CharacterSet,
-		Collation:                dbSchema.GetMetadata().Collation,
-		DBSchema:                 dbSchema.GetMetadata(),
-		ChangeType:               changeType,
-		DBType:                   instance.Metadata.GetEngine(),
-		Catalog:                  catalog,
-		Driver:                   connection,
-		EnablePriorBackup:        enablePriorBackup,
-		ClassificationConfig:     classificationConfig,
-		UsePostgresDatabaseOwner: useDatabaseOwner,
-		ListDatabaseNamesFunc:    e.buildListDatabaseNamesFunc(),
-		InstanceID:               instance.ResourceID,
-		IsObjectCaseSensitive:    store.IsObjectCaseSensitive(instance),
+	adviceList, err := advisor.SQLReviewCheck(ctx, e.sheetManager, statement, reviewConfig.SqlReviewRules, advisor.Context{
+		DBSchema:              dbMetadata.GetProto(),
+		DBType:                instance.Metadata.GetEngine(),
+		OriginalMetadata:      originMetadata,
+		FinalMetadata:         finalMetadata,
+		Driver:                connection,
+		EnablePriorBackup:     enablePriorBackup,
+		EnableGhost:           enableGhost,
+		TenantMode:            project.Setting.GetPostgresDatabaseTenantMode(),
+		ListDatabaseNamesFunc: e.buildListDatabaseNamesFunc(),
+		InstanceID:            instance.ResourceID,
+		IsObjectCaseSensitive: store.IsObjectCaseSensitive(instance),
 	})
 	if err != nil {
 		return nil, err
@@ -246,26 +238,4 @@ func (e *StatementAdviseExecutor) buildListDatabaseNamesFunc() parserbase.ListDa
 		}
 		return names, nil
 	}
-}
-
-func getClassificationByProject(ctx context.Context, stores *store.Store, projectID string) *storepb.DataClassificationSetting_DataClassificationConfig {
-	project, err := stores.GetProjectV2(ctx, &store.FindProjectMessage{
-		ResourceID: &projectID,
-	})
-	if err != nil {
-		slog.Warn("failed to find project", slog.String("project", projectID), log.BBError(err))
-		return nil
-	}
-	if project == nil {
-		return nil
-	}
-	if project.DataClassificationConfigID == "" {
-		return nil
-	}
-	classificationConfig, err := stores.GetDataClassificationConfigByID(ctx, project.DataClassificationConfigID)
-	if err != nil {
-		slog.Warn("failed to find classification", slog.String("project", projectID), slog.String("classification", project.DataClassificationConfigID), log.BBError(err))
-		return nil
-	}
-	return classificationConfig
 }

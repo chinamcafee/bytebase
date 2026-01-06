@@ -1,17 +1,12 @@
 import Emittery from "emittery";
-import type { InjectionKey, Ref } from "vue";
+import type { ComputedRef, InjectionKey, Ref } from "vue";
 import { computed, inject, provide, ref } from "vue";
 import { targetsForSpec } from "@/components/Plan/logic";
 import { useDatabaseV1Store } from "@/store";
 import { isValidDatabaseName } from "@/types";
-import { DatabaseChangeType } from "@/types/proto-es/v1/common_pb";
-import type { Issue } from "@/types/proto-es/v1/issue_service_pb";
-import { IssueStatus } from "@/types/proto-es/v1/issue_service_pb";
 import { type Plan, type Plan_Spec } from "@/types/proto-es/v1/plan_service_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
-import type { Rollout } from "@/types/proto-es/v1/rollout_service_pb";
-import { Task_Status } from "@/types/proto-es/v1/rollout_service_pb";
-import { flattenTaskV1List, instanceV1SupportsTransactionMode } from "@/utils";
+import { instanceV1SupportsTransactionMode } from "@/utils";
 
 export const KEY = Symbol(
   "bb.plan.setting.transaction-mode"
@@ -26,13 +21,11 @@ export const provideTransactionModeSettingContext = (refs: {
   project: Ref<Project>;
   plan: Ref<Plan>;
   selectedSpec: Ref<Plan_Spec | undefined>;
-  issue?: Ref<Issue | undefined>;
-  rollout?: Ref<Rollout | undefined>;
-  readonly?: Ref<boolean>;
+  allowChange: ComputedRef<boolean>;
 }) => {
   const databaseStore = useDatabaseV1Store();
 
-  const { isCreating, plan, selectedSpec, issue, rollout, readonly } = refs;
+  const { isCreating, plan, selectedSpec, allowChange } = refs;
 
   const events = new Emittery<{
     update: never;
@@ -63,42 +56,9 @@ export const provideTransactionModeSettingContext = (refs: {
       return false;
     }
     const config = selectedSpec.value.config.value;
-    // Show for all MIGRATE types (DDL, DML, Ghost), but not SDL
-    return config.type === DatabaseChangeType.MIGRATE;
-  });
-
-  const allowChange = computed(() => {
-    // If readonly mode, disallow changes
-    if (readonly?.value) {
-      return false;
-    }
-
-    // Allow changes when creating
-    if (isCreating.value) {
-      return true;
-    }
-
-    // If issue is not open, disallow
-    if (issue?.value && issue.value.status !== IssueStatus.OPEN) {
-      return false;
-    }
-
-    const tasks = flattenTaskV1List(rollout?.value) || [];
-    // If any task is running/done/etc, disallow
-    if (
-      tasks.some((task) => {
-        return [
-          Task_Status.PENDING,
-          Task_Status.RUNNING,
-          Task_Status.DONE,
-          Task_Status.SKIPPED,
-        ].includes(task.status);
-      })
-    ) {
-      return false;
-    }
-
-    return true;
+    // Show for sheet-based migrations only (not release-based).
+    // Release-based migrations don't support transaction mode configuration.
+    return !config.release;
   });
 
   const context = {

@@ -1,5 +1,5 @@
 <template>
-  <div class="flex flex-col relative space-y-4">
+  <div class="flex flex-col relative gap-y-4">
     <div
       class="w-full px-4 flex flex-col sm:flex-row items-start sm:items-end justify-between gap-2"
     >
@@ -9,16 +9,21 @@
         :placeholder="$t('database.filter-database')"
         :scope-options="scopeOptions"
       />
-      <NButton
-        v-if="allowToCreateDB"
-        type="primary"
-        @click="state.showCreateDrawer = true"
+      <PermissionGuardWrapper
+        v-slot="slotProps"
+        :permissions="['bb.instances.list', 'bb.issues.create', 'bb.plans.create']"
       >
-        <template #icon>
-          <PlusIcon class="h-4 w-4" />
-        </template>
-        {{ $t("quick-action.new-db") }}
-      </NButton>
+        <NButton
+          type="primary"
+          :disabled="slotProps.disabled"
+          @click="state.showCreateDrawer = true"
+        >
+          <template #icon>
+            <PlusIcon class="h-4 w-4" />
+          </template>
+          {{ $t("quick-action.new-db") }}
+        </NButton>
+      </PermissionGuardWrapper>
     </div>
 
     <div>
@@ -57,16 +62,17 @@ import { computed, onMounted, reactive, ref } from "vue";
 import AdvancedSearch from "@/components/AdvancedSearch";
 import { useCommonSearchScopeOptions } from "@/components/AdvancedSearch/useCommonSearchScopeOptions";
 import { CreateDatabasePrepPanel } from "@/components/CreateDatabasePrepForm";
+import PermissionGuardWrapper from "@/components/Permission/PermissionGuardWrapper.vue";
 import { Drawer } from "@/components/v2";
 import {
-  PagedDatabaseTable,
   DatabaseOperations,
+  PagedDatabaseTable,
 } from "@/components/v2/Model/DatabaseV1Table";
 import { useDatabaseV1Store, useUIStateStore } from "@/store";
 import {
+  environmentNamePrefix,
   instanceNamePrefix,
   projectNamePrefix,
-  environmentNamePrefix,
 } from "@/store/modules/v1/common";
 import type { ComposedDatabase } from "@/types";
 import { DEFAULT_PROJECT_NAME, isValidDatabaseName } from "@/types";
@@ -75,7 +81,8 @@ import type { SearchParams } from "@/utils";
 import {
   CommonFilterScopeIdList,
   extractProjectResourceName,
-  hasWorkspacePermissionV2,
+  getValueFromSearchParams,
+  getValuesFromSearchParams,
 } from "@/utils";
 
 interface LocalState {
@@ -112,13 +119,6 @@ const state = reactive<LocalState>({
   params: defaultSearchParams(),
 });
 
-const allowToCreateDB = computed(() => {
-  return (
-    hasWorkspacePermissionV2("bb.instances.list") &&
-    hasWorkspacePermissionV2("bb.issues.create")
-  );
-});
-
 const scopeOptions = useCommonSearchScopeOptions([
   ...CommonFilterScopeIdList,
   "project",
@@ -127,52 +127,29 @@ const scopeOptions = useCommonSearchScopeOptions([
 ]);
 
 const selectedLabels = computed(() => {
-  return state.params.scopes
-    .filter((scope) => scope.id === "label")
-    .map((scope) => scope.value);
+  return getValuesFromSearchParams(state.params, "label");
 });
 
 const selectedProject = computed(() => {
-  const projectId = state.params.scopes.find(
-    (scope) => scope.id === "project"
-  )?.value;
-  if (!projectId) {
-    return;
-  }
-  return `${projectNamePrefix}${projectId}`;
+  return getValueFromSearchParams(state.params, "project", projectNamePrefix);
 });
 
 const selectedInstance = computed(() => {
-  const instanceId = state.params.scopes.find(
-    (scope) => scope.id === "instance"
-  )?.value;
-  if (!instanceId) {
-    return;
-  }
-  return `${instanceNamePrefix}${instanceId}`;
+  return getValueFromSearchParams(state.params, "instance", instanceNamePrefix);
 });
 
 const selectedEnvironment = computed(() => {
-  const environmentId = state.params.scopes.find(
-    (scope) => scope.id === "environment"
-  )?.value;
-  if (!environmentId) {
-    return;
-  }
-  return `${environmentNamePrefix}${environmentId}`;
+  return getValueFromSearchParams(
+    state.params,
+    "environment",
+    environmentNamePrefix
+  );
 });
 
 const selectedEngines = computed(() => {
-  return state.params.scopes
-    .filter((scope) => scope.id === "engine")
-    .map((scope) => {
-      // Convert string scope value to Engine enum
-      const engineKey = scope.value.toUpperCase();
-      const engineValue = Engine[engineKey as keyof typeof Engine];
-      return typeof engineValue === "number"
-        ? engineValue
-        : Engine.ENGINE_UNSPECIFIED;
-    });
+  return getValuesFromSearchParams(state.params, "engine").map(
+    (engine) => Engine[engine as keyof typeof Engine]
+  );
 });
 
 const filter = computed(() => ({

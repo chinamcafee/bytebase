@@ -1,7 +1,7 @@
 <template>
   <div id="account" class="py-6 lg:flex">
     <div class="text-left lg:w-1/4">
-      <div class="flex items-center space-x-2">
+      <div class="flex items-center gap-x-2">
         <h1 class="text-2xl font-bold">
           {{ title }}
         </h1>
@@ -104,8 +104,8 @@
       </div>
       <NDivider />
 
-      <SignInFrequencySetting
-        ref="signInFrequencySettingRef"
+      <TokenDurationSetting
+        ref="tokenDurationSettingRef"
         :allow-edit="allowEdit"
       />
     </div>
@@ -137,7 +137,7 @@ import { type WorkspaceProfileSetting } from "@/types/proto-es/v1/setting_servic
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import { FeatureBadge, FeatureModal } from "../FeatureGuard";
 import PasswordRestrictionSetting from "./PasswordRestrictionSetting.vue";
-import SignInFrequencySetting from "./SignInFrequencySetting.vue";
+import TokenDurationSetting from "./TokenDurationSetting.vue";
 
 interface LocalState {
   featureNameForModal?: PlanFeature;
@@ -156,8 +156,8 @@ const actuatorStore = useActuatorV1Store();
 const idpStore = useIdentityProviderStore();
 const passwordRestrictionSettingRef =
   ref<InstanceType<typeof PasswordRestrictionSetting>>();
-const signInFrequencySettingRef =
-  ref<InstanceType<typeof SignInFrequencySetting>>();
+const tokenDurationSettingRef =
+  ref<InstanceType<typeof TokenDurationSetting>>();
 
 const getInitialState = (): LocalState => {
   return {
@@ -193,7 +193,7 @@ const existActiveIdentityProvider = computed(() => {
 const isDirty = computed(() => {
   return (
     passwordRestrictionSettingRef.value?.isDirty ||
-    signInFrequencySettingRef.value?.isDirty ||
+    tokenDurationSettingRef.value?.isDirty ||
     !isEqual(state, getInitialState())
   );
 });
@@ -202,8 +202,8 @@ const onUpdate = async () => {
   if (passwordRestrictionSettingRef.value?.isDirty) {
     await passwordRestrictionSettingRef.value.update();
   }
-  if (signInFrequencySettingRef.value?.isDirty) {
-    await signInFrequencySettingRef.value.update();
+  if (tokenDurationSettingRef.value?.isDirty) {
+    await tokenDurationSettingRef.value.update();
   }
 
   const updateMaskPaths = [];
@@ -216,20 +216,16 @@ const onUpdate = async () => {
     state.disallowSignup !==
     settingV1Store.workspaceProfileSetting?.disallowSignup
   ) {
-    updateMaskPaths.push(
-      "value.workspace_profile_setting_value.disallow_signup"
-    );
+    updateMaskPaths.push("value.workspace_profile.disallow_signup");
   }
   if (state.require2fa !== settingV1Store.workspaceProfileSetting?.require2fa) {
-    updateMaskPaths.push("value.workspace_profile_setting_value.require_2fa");
+    updateMaskPaths.push("value.workspace_profile.require_2fa");
   }
   if (
     state.disallowPasswordSignin !==
     settingV1Store.workspaceProfileSetting?.disallowPasswordSignin
   ) {
-    updateMaskPaths.push(
-      "value.workspace_profile_setting_value.disallow_password_signin"
-    );
+    updateMaskPaths.push("value.workspace_profile.disallow_password_signin");
   }
 
   if (updateMaskPaths.length > 0) {
@@ -249,7 +245,7 @@ defineExpose({
   revert: () => {
     Object.assign(state, getInitialState());
     passwordRestrictionSettingRef.value?.revert();
-    signInFrequencySettingRef.value?.revert();
+    tokenDurationSettingRef.value?.revert();
   },
 });
 </script>

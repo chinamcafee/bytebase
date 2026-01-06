@@ -6,12 +6,14 @@ import (
 	"regexp"
 
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/bytebase/parser/mysql"
 	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -20,9 +22,9 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleAutoIncrementColumnNaming, &NamingAutoIncrementColumnAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleAutoIncrementColumnNaming, &NamingAutoIncrementColumnAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleAutoIncrementColumnNaming, &NamingAutoIncrementColumnAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_NAMING_COLUMN_AUTO_INCREMENT, &NamingAutoIncrementColumnAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_NAMING_COLUMN_AUTO_INCREMENT, &NamingAutoIncrementColumnAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_NAMING_COLUMN_AUTO_INCREMENT, &NamingAutoIncrementColumnAdvisor{})
 }
 
 // NamingAutoIncrementColumnAdvisor is the advisor checking for auto-increment naming convention.
@@ -31,30 +33,42 @@ type NamingAutoIncrementColumnAdvisor struct {
 
 // Check checks for auto-increment naming convention.
 func (*NamingAutoIncrementColumnAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parser result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	format, maxLength, err := advisor.UnmarshalNamingRulePayloadAsRegexp(checkCtx.Rule.Payload)
+	namingPayload := checkCtx.Rule.GetNamingPayload()
+	if namingPayload == nil {
+		return nil, errors.New("naming_payload is required for this rule")
+	}
+
+	format, err := regexp.Compile(namingPayload.Format)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to compile regex format %q", namingPayload.Format)
+	}
+
+	maxLength := int(namingPayload.MaxLength)
+	if maxLength == 0 {
+		maxLength = advisor.DefaultNameLengthLimit
 	}
 
 	// Create the rule
-	rule := NewNamingAutoIncrementColumnRule(level, string(checkCtx.Rule.Type), format, maxLength)
+	rule := NewNamingAutoIncrementColumnRule(level, checkCtx.Rule.Type.String(), format, maxLength)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -185,7 +199,7 @@ func (r *NamingAutoIncrementColumnRule) checkFieldDefinition(tableName, columnNa
 	if !r.format.MatchString(columnName) {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.NamingAutoIncrementColumnConventionMismatch.Int32(),
+			Code:          code.NamingAutoIncrementColumnConventionMismatch.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("`%s`.`%s` mismatches auto_increment column naming convention, naming format should be %q", tableName, columnName, r.format),
 			StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),
@@ -194,7 +208,7 @@ func (r *NamingAutoIncrementColumnRule) checkFieldDefinition(tableName, columnNa
 	if r.maxLength > 0 && len(columnName) > r.maxLength {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.NamingAutoIncrementColumnConventionMismatch.Int32(),
+			Code:          code.NamingAutoIncrementColumnConventionMismatch.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("`%s`.`%s` mismatches auto_increment column naming convention, its length should be within %d characters", tableName, columnName, r.maxLength),
 			StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),

@@ -3,17 +3,24 @@ package v1
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/pkg/errors"
+
+	"google.golang.org/protobuf/proto"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	advisorpg "github.com/bytebase/bytebase/backend/plugin/advisor/pg"
 	"github.com/bytebase/bytebase/backend/plugin/db"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	"github.com/bytebase/bytebase/backend/plugin/parser/pg"
+	"github.com/bytebase/bytebase/backend/plugin/schema"
 	"github.com/bytebase/bytebase/backend/runner/plancheck"
 	"github.com/bytebase/bytebase/backend/store"
 	"github.com/bytebase/bytebase/backend/store/model"
@@ -30,7 +37,7 @@ func (s *ReleaseService) CheckRelease(ctx context.Context, req *connect.Request[
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	project, err := s.store.GetProjectV2(ctx, &store.FindProjectMessage{
+	project, err := s.store.GetProject(ctx, &store.FindProjectMessage{
 		ResourceID:  &projectID,
 		ShowDeleted: true,
 	})
@@ -44,12 +51,15 @@ func (s *ReleaseService) CheckRelease(ctx context.Context, req *connect.Request[
 	var targetDatabases []*store.DatabaseMessage
 	for _, target := range request.Targets {
 		// Handle database target.
-		if _, _, err := common.GetInstanceDatabaseID(target); err == nil {
-			database, err := getDatabaseMessage(ctx, s.store, target)
+		if instanceID, databaseName, err := common.GetInstanceDatabaseID(target); err == nil {
+			database, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+				InstanceID:   &instanceID,
+				DatabaseName: &databaseName,
+			})
 			if err != nil {
 				return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to found database %v", target))
 			}
-			if database == nil || database.Deleted {
+			if database == nil {
 				return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("database %v not found", target))
 			}
 			targetDatabases = append(targetDatabases, database)
@@ -57,7 +67,7 @@ func (s *ReleaseService) CheckRelease(ctx context.Context, req *connect.Request[
 
 		// Handle database group target. Extract all matched databases in the database group.
 		if projectResourceID, databaseGroupResourceID, err := common.GetProjectIDDatabaseGroupID(target); err == nil {
-			project, err := s.store.GetProjectV2(ctx, &store.FindProjectMessage{
+			project, err := s.store.GetProject(ctx, &store.FindProjectMessage{
 				ResourceID: &projectResourceID,
 			})
 			if err != nil {
@@ -99,7 +109,7 @@ func (s *ReleaseService) CheckRelease(ctx context.Context, req *connect.Request[
 	}
 
 	// Validate and sanitize release files.
-	sanitizedFiles, err := validateAndSanitizeReleaseFiles(ctx, s.store, request.Release.Files, false)
+	sanitizedFiles, err := validateAndSanitizeReleaseFiles(ctx, s.store, request.Release.Files, request.Release.Type)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrapf(err, "invalid release files"))
 	}
@@ -107,38 +117,32 @@ func (s *ReleaseService) CheckRelease(ctx context.Context, req *connect.Request[
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("release files cannot be empty"))
 	}
 
-	releaseFileType := sanitizedFiles[0].Type
+	releaseType := request.Release.Type
 
 	var response *v1pb.CheckReleaseResponse
-	switch releaseFileType {
-	case v1pb.Release_File_DECLARATIVE:
-		resp, err := s.checkReleaseDeclarative(ctx, sanitizedFiles, targetDatabases)
+	switch releaseType {
+	case v1pb.Release_DECLARATIVE:
+		resp, err := s.checkReleaseDeclarative(ctx, sanitizedFiles, targetDatabases, request.CustomRules)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to check release declarative"))
 		}
 		response = resp
-	case v1pb.Release_File_VERSIONED:
-		resp, err := s.checkReleaseVersioned(ctx, sanitizedFiles, targetDatabases)
+	case v1pb.Release_VERSIONED:
+		resp, err := s.checkReleaseVersioned(ctx, project, sanitizedFiles, targetDatabases, request.CustomRules)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to check release versioned"))
 		}
 		response = resp
 	default:
-		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("unexpected release file type %q", releaseFileType.String()))
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("unexpected release type %q", releaseType.String()))
 	}
 
 	return connect.NewResponse(response), nil
 }
 
-func (s *ReleaseService) checkReleaseVersioned(ctx context.Context, files []*v1pb.Release_File, databases []*store.DatabaseMessage) (*v1pb.CheckReleaseResponse, error) {
+func (s *ReleaseService) checkReleaseVersioned(ctx context.Context, project *store.ProjectMessage, files []*v1pb.Release_File, databases []*store.DatabaseMessage, customRules string) (*v1pb.CheckReleaseResponse, error) {
 	resp := &v1pb.CheckReleaseResponse{}
 	var errorAdviceCount, warningAdviceCount int
-	var maxRiskLevel storepb.RiskLevel
-
-	risks, err := s.store.ListRisks(ctx)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to list risks"))
-	}
 
 	releaseFileVersions := make([]string, 0, len(files))
 	for _, file := range files {
@@ -147,7 +151,7 @@ func (s *ReleaseService) checkReleaseVersioned(ctx context.Context, files []*v1p
 
 loop:
 	for _, database := range databases {
-		instance, err := s.store.GetInstanceV2(ctx, &store.FindInstanceMessage{
+		instance, err := s.store.GetInstance(ctx, &store.FindInstanceMessage{
 			ResourceID: &database.InstanceID,
 		})
 		if err != nil {
@@ -158,10 +162,26 @@ loop:
 		}
 
 		engine := instance.Metadata.GetEngine()
-		catalog, err := catalog.NewCatalog(ctx, s.store, database.InstanceID, database.DatabaseName, engine, store.IsObjectCaseSensitive(instance), nil)
+		// Get the database metadata
+		dbMetadata, err := s.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
+			InstanceID:   database.InstanceID,
+			DatabaseName: database.DatabaseName,
+		})
 		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to create catalog"))
+			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get database schema"))
 		}
+		if dbMetadata == nil {
+			return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("database schema not found for %s", database.DatabaseName))
+		}
+		// Create original metadata as read-only
+		originMetadata := model.NewDatabaseMetadata(dbMetadata.GetProto(), nil, nil, engine, store.IsObjectCaseSensitive(instance))
+
+		// Clone metadata for final to avoid modifying the original
+		clonedMetadata, ok := proto.Clone(dbMetadata.GetProto()).(*storepb.DatabaseSchemaMetadata)
+		if !ok {
+			return nil, connect.NewError(connect.CodeInternal, errors.New("failed to clone database schema metadata"))
+		}
+		finalMetadata := model.NewDatabaseMetadata(clonedMetadata, nil, nil, engine, store.IsObjectCaseSensitive(instance))
 		// Batch fetch all revisions for this database
 		revisions, err := s.store.ListRevisions(ctx, &store.FindRevisionMessage{
 			InstanceID:   &database.InstanceID,
@@ -180,6 +200,32 @@ loop:
 			revisionMap[revision.Version] = revision
 		}
 
+		// Batch AI linting for all files in this database (if custom rules provided)
+		var aiAdvicesMap map[string][]*v1pb.Advice
+		if customRules != "" {
+			var filesToLint []fileSchema
+			for _, file := range files {
+				// Skip files that have already been applied
+				if _, ok := revisionMap[file.Version]; !ok {
+					filesToLint = append(filesToLint, fileSchema{
+						Path:    file.Path,
+						Content: string(file.Statement),
+					})
+				}
+			}
+			if len(filesToLint) > 0 {
+				slog.Info("Running batch AI-powered linting for versioned files", "database", database.DatabaseName, "filesCount", len(filesToLint))
+				var err error
+				aiAdvicesMap, err = s.runAIPoweredLintBatch(ctx, filesToLint, customRules)
+				if err != nil {
+					slog.Error("Batch AI linting failed for versioned files", "database", database.DatabaseName, "error", err)
+					// Continue processing even if AI linting fails
+				} else {
+					slog.Info("Batch AI linting completed for versioned files", "database", database.DatabaseName, "filesWithAdvices", len(aiAdvicesMap))
+				}
+			}
+		}
+
 		for _, file := range files {
 			// Check if file has been applied to database.
 			if appliedRevision, ok := revisionMap[file.Version]; ok {
@@ -192,7 +238,7 @@ loop:
 						Advices: []*v1pb.Advice{
 							{
 								Status:  v1pb.Advice_WARNING,
-								Code:    advisor.Internal.Int32(),
+								Code:    code.Internal.Int32(),
 								Title:   "Applied file has been modified",
 								Content: fmt.Sprintf("The file %q with version %q has already been applied to the database, but its content has been modified. Applied SHA256: %s, Release SHA256: %s", file.Path, file.Version, appliedRevision.Payload.SheetSha256, file.SheetSha256),
 							},
@@ -214,7 +260,7 @@ loop:
 				statement := string(file.Statement)
 				// Check if any syntax error in the statement.
 				if common.EngineSupportSyntaxCheck(engine) {
-					_, syntaxAdvices := s.sheetManager.GetASTsForChecks(engine, statement)
+					_, syntaxAdvices := s.sheetManager.GetStatementsForChecks(engine, statement)
 					if len(syntaxAdvices) > 0 {
 						for _, advice := range syntaxAdvices {
 							checkResult.Advices = append(checkResult.Advices, convertToV1Advice(advice))
@@ -223,15 +269,6 @@ loop:
 					}
 				}
 
-				changeType := storepb.PlanCheckRunConfig_DDL
-				switch file.MigrationType {
-				case v1pb.Release_File_DDL_GHOST:
-					changeType = storepb.PlanCheckRunConfig_DDL_GHOST
-				case v1pb.Release_File_DML:
-					changeType = storepb.PlanCheckRunConfig_DML
-				default:
-					// Keep DDL as default change type
-				}
 				// Get SQL summary report for the statement and target database.
 				// Including affected rows.
 				summaryReport, err := plancheck.GetSQLSummaryReport(ctx, s.store, s.sheetManager, s.dbFactory, database, statement)
@@ -241,42 +278,30 @@ loop:
 				if summaryReport != nil {
 					checkResult.AffectedRows = summaryReport.AffectedRows
 					resp.AffectedRows += summaryReport.AffectedRows
-
-					environmentID := ""
-					if database.EffectiveEnvironmentID != nil {
-						environmentID = *database.EffectiveEnvironmentID
-					}
-					commonArgs := map[string]any{
-						common.CELAttributeResourceEnvironmentID: environmentID,
-						common.CELAttributeResourceProjectID:     database.ProjectID,
-						common.CELAttributeResourceInstanceID:    instance.ResourceID,
-						common.CELAttributeResourceDatabaseName:  database.DatabaseName,
-						common.CELAttributeResourceDBEngine:      engine.String(),
-						common.CELAttributeStatementText:         statement,
-					}
-					riskLevel, err := CalculateRiskLevelWithOptionalSummaryReport(ctx, risks, commonArgs, getRiskSourceFromChangeType(changeType), summaryReport)
-					if err != nil {
-						return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to calculate risk level"))
-					}
-					if riskLevel > maxRiskLevel {
-						maxRiskLevel = riskLevel
-					}
-					riskLevelEnum, err := convertRiskLevel(riskLevel)
-					if err != nil {
-						return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to convert risk level"))
-					}
-					checkResult.RiskLevel = riskLevelEnum
 				}
 				if common.EngineSupportSQLReview(engine) {
-					adviceStatus, sqlReviewAdvices, err := s.runSQLReviewCheckForFile(ctx, catalog, instance, database, changeType, statement)
+					adviceStatus, sqlReviewAdvices, err := s.runSQLReviewCheckForFile(ctx, project, originMetadata, finalMetadata, instance, database, statement)
 					if err != nil {
 						return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to check SQL review"))
 					}
 					// If the advice status is not SUCCESS, we will add the file and advices to the response.
 					if adviceStatus != storepb.Advice_SUCCESS {
-						checkResult.Advices = sqlReviewAdvices
+						// Mark parser-based advices
+						for _, advice := range sqlReviewAdvices {
+							advice.RuleType = v1pb.Advice_PARSER_BASED
+						}
+						checkResult.Advices = append(checkResult.Advices, sqlReviewAdvices...)
 					}
 				}
+
+				// Add AI-powered linting results from batch processing (if available)
+				if aiAdvicesMap != nil {
+					if aiAdvices, ok := aiAdvicesMap[file.Path]; ok && len(aiAdvices) > 0 {
+						slog.Info("Adding AI linting results for versioned file", "file", file.Path, "advicesCount", len(aiAdvices))
+						checkResult.Advices = append(checkResult.Advices, aiAdvices...)
+					}
+				}
+
 				return checkResult, nil
 			}()
 
@@ -287,7 +312,7 @@ loop:
 					Advices: []*v1pb.Advice{
 						{
 							Status:  v1pb.Advice_ERROR,
-							Code:    advisor.Internal.Int32(),
+							Code:    code.Internal.Int32(),
 							Title:   "Failed to check",
 							Content: err.Error(),
 						},
@@ -317,20 +342,14 @@ loop:
 		}
 	}
 
-	riskLevelEnum, err := convertRiskLevel(maxRiskLevel)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to convert risk level"))
-	}
-	resp.RiskLevel = riskLevelEnum
-
 	return resp, nil
 }
 
-func (s *ReleaseService) checkReleaseDeclarative(ctx context.Context, files []*v1pb.Release_File, databases []*store.DatabaseMessage) (*v1pb.CheckReleaseResponse, error) {
+func (s *ReleaseService) checkReleaseDeclarative(ctx context.Context, files []*v1pb.Release_File, databases []*store.DatabaseMessage, customRules string) (*v1pb.CheckReleaseResponse, error) {
 	var results []*v1pb.CheckReleaseResponse_CheckResult
 	var errorAdviceCount, warningAdviceCount int
 	for _, database := range databases {
-		instance, err := s.store.GetInstanceV2(ctx, &store.FindInstanceMessage{
+		instance, err := s.store.GetInstance(ctx, &store.FindInstanceMessage{
 			ResourceID: &database.InstanceID,
 		})
 		if err != nil {
@@ -368,7 +387,7 @@ func (s *ReleaseService) checkReleaseDeclarative(ctx context.Context, files []*v
 						Advices: []*v1pb.Advice{
 							{
 								Status:  v1pb.Advice_WARNING,
-								Code:    advisor.Internal.Int32(),
+								Code:    code.Internal.Int32(),
 								Title:   "Applied file has been modified",
 								Content: fmt.Sprintf("The file %q has version %q, but there is an equal or higher version %q applied", file.Path, file.Version, revisions[0].Version),
 							},
@@ -376,6 +395,105 @@ func (s *ReleaseService) checkReleaseDeclarative(ctx context.Context, files []*v
 					}
 					results = append(results, checkResult)
 					warningAdviceCount++
+				}
+			}
+		}
+
+		// Perform SDL style and integrity checks for PostgreSQL
+		var sdlStyleAdvices map[string][]*storepb.Advice
+		var sdlIntegrityAdvices map[string][]*storepb.Advice
+		var sdlDropAdvices []*storepb.Advice
+		if engine == storepb.Engine_POSTGRES {
+			fileContents := make(map[string]string)
+			for _, file := range files {
+				fileContents[file.Path] = string(file.Statement)
+			}
+
+			// Run SDL style checks (schema name requirements, index naming, etc.)
+			sdlStyleAdvices = make(map[string][]*storepb.Advice)
+			for filePath, content := range fileContents {
+				advices, err := advisorpg.CheckSDLStyle(content)
+				if err != nil {
+					// Continue with other checks even if style check fails
+					sdlStyleAdvices[filePath] = []*storepb.Advice{{
+						Status:  storepb.Advice_ERROR,
+						Code:    code.Internal.Int32(),
+						Title:   "Failed to check SDL style",
+						Content: err.Error(),
+					}}
+				} else {
+					sdlStyleAdvices[filePath] = advices
+				}
+			}
+
+			// Run SDL integrity checks (handles cross-file validation)
+			var err error
+			sdlIntegrityAdvices, err = advisorpg.CheckSDLIntegrity(fileContents)
+			if err != nil {
+				return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to check SDL integrity"))
+			}
+
+			// Run SDL DROP operation checks
+			// This checks for data loss risks from DROP operations by analyzing the schema diff
+			pengine, err := common.ConvertToParserEngine(engine)
+			if err == nil {
+				// Get current database schema
+				dbMetadata, err := s.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
+					InstanceID:   database.InstanceID,
+					DatabaseName: database.DatabaseName,
+				})
+				if err == nil && dbMetadata != nil {
+					// Get previous SDL from latest revision
+					var previousUserSDL string
+					if len(revisions) > 0 {
+						// Get sheet statement from revision
+						sheetSha256 := revisions[0].Payload.SheetSha256
+						if sheetSha256 != "" {
+							if sheet, err := s.store.GetSheetFull(ctx, sheetSha256); err == nil {
+								previousUserSDL = sheet.Statement
+							}
+						}
+					}
+
+					// Combine all SDL files into single text
+					var combinedCurrentSDL strings.Builder
+					for _, file := range files {
+						combinedCurrentSDL.Write(file.Statement)
+						combinedCurrentSDL.WriteString("\n\n")
+					}
+
+					// Generate diff
+					schemaDiff, err := schema.GetSDLDiff(pengine, combinedCurrentSDL.String(), previousUserSDL, dbMetadata, nil)
+					if err == nil {
+						// Filter out bbdataarchive schema changes for Postgres
+						schemaDiff = schema.FilterPostgresArchiveSchema(schemaDiff)
+
+						// Check for DROP operations in the diff
+						sdlDropAdvices = advisorpg.CheckSDLDropOperations(schemaDiff)
+					}
+				}
+			}
+		}
+
+		// Batch AI linting for all declarative files (if custom rules provided)
+		var aiAdvicesMap map[string][]*v1pb.Advice
+		if customRules != "" {
+			var filesToLint []fileSchema
+			for _, file := range files {
+				filesToLint = append(filesToLint, fileSchema{
+					Path:    file.Path,
+					Content: string(file.Statement),
+				})
+			}
+			if len(filesToLint) > 0 {
+				slog.Info("Running batch AI-powered linting for declarative files", "database", database.DatabaseName, "filesCount", len(filesToLint))
+				var err error
+				aiAdvicesMap, err = s.runAIPoweredLintBatch(ctx, filesToLint, customRules)
+				if err != nil {
+					slog.Error("Batch AI linting failed for declarative files", "database", database.DatabaseName, "error", err)
+					// Continue processing even if AI linting fails
+				} else {
+					slog.Info("Batch AI linting completed for declarative files", "database", database.DatabaseName, "filesWithAdvices", len(aiAdvicesMap))
 				}
 			}
 		}
@@ -392,18 +510,19 @@ func (s *ReleaseService) checkReleaseDeclarative(ctx context.Context, files []*v
 
 			// Check if any syntax error in the statement.
 			if common.EngineSupportSyntaxCheck(engine) {
-				asts, syntaxAdvices := s.sheetManager.GetASTsForChecks(engine, statement)
+				stmts, syntaxAdvices := s.sheetManager.GetStatementsForChecks(engine, statement)
 				if len(syntaxAdvices) > 0 {
 					for _, advice := range syntaxAdvices {
 						checkResult.Advices = append(checkResult.Advices, convertToV1Advice(advice))
 					}
 				} else {
 					// Only check statement types if there are no syntax errors
+					asts := base.ExtractASTs(stmts)
 					statementsWithPos, err := getStatementTypesWithPositionsForEngine(engine, asts)
 					if err != nil {
 						checkResult.Advices = append(checkResult.Advices, &v1pb.Advice{
 							Status:  v1pb.Advice_ERROR,
-							Code:    advisor.Internal.Int32(),
+							Code:    code.Internal.Int32(),
 							Title:   "Failed to parse statement types",
 							Content: err.Error(),
 						})
@@ -414,7 +533,7 @@ func (s *ReleaseService) checkReleaseDeclarative(ctx context.Context, files []*v
 								// Create a separate advice for each disallowed statement with position
 								advice := &v1pb.Advice{
 									Status: v1pb.Advice_ERROR,
-									Code:   advisor.StatementDisallowedInSDL.Int32(),
+									Code:   code.StatementDisallowedInSDL.Int32(),
 									Title:  "Disallowed statement in SDL file",
 									Content: fmt.Sprintf(
 										"Statement type '%s' is not allowed in SDL files.\n\n"+
@@ -439,6 +558,43 @@ func (s *ReleaseService) checkReleaseDeclarative(ctx context.Context, files []*v
 							}
 						}
 					}
+
+					// Add SDL style and integrity check results for this file (PostgreSQL only)
+					if engine == storepb.Engine_POSTGRES && len(checkResult.Advices) == 0 {
+						// Add SDL style check results
+						if advices, exists := sdlStyleAdvices[file.Path]; exists {
+							for _, advice := range advices {
+								checkResult.Advices = append(checkResult.Advices, convertToV1Advice(advice))
+							}
+						}
+						// Add SDL integrity check results
+						if advices, exists := sdlIntegrityAdvices[file.Path]; exists {
+							for _, advice := range advices {
+								checkResult.Advices = append(checkResult.Advices, convertToV1Advice(advice))
+							}
+						}
+						// Add SDL DROP operation warnings (only to first file since they apply to entire migration)
+						if file.Path == files[0].Path && len(sdlDropAdvices) > 0 {
+							for _, advice := range sdlDropAdvices {
+								checkResult.Advices = append(checkResult.Advices, convertToV1Advice(advice))
+							}
+						}
+					}
+				}
+			}
+
+			// Mark parser-based advices
+			for _, advice := range checkResult.Advices {
+				if advice.RuleType == v1pb.Advice_RULE_TYPE_UNSPECIFIED {
+					advice.RuleType = v1pb.Advice_PARSER_BASED
+				}
+			}
+
+			// Add AI-powered linting results from batch processing (if available)
+			if aiAdvicesMap != nil {
+				if aiAdvices, ok := aiAdvicesMap[file.Path]; ok && len(aiAdvices) > 0 {
+					slog.Info("Adding AI linting results for declarative file", "file", file.Path, "advicesCount", len(aiAdvices))
+					checkResult.Advices = append(checkResult.Advices, aiAdvices...)
 				}
 			}
 
@@ -473,40 +629,25 @@ func (s *ReleaseService) checkReleaseDeclarative(ctx context.Context, files []*v
 
 func (s *ReleaseService) runSQLReviewCheckForFile(
 	ctx context.Context,
-	catalog *catalog.Catalog,
+	project *store.ProjectMessage,
+	originMetadata *model.DatabaseMetadata,
+	finalMetadata *model.DatabaseMetadata,
 	instance *store.InstanceMessage,
 	database *store.DatabaseMessage,
-	changeType storepb.PlanCheckRunConfig_ChangeDatabaseType,
 	statement string,
 ) (storepb.Advice_Status, []*v1pb.Advice, error) {
-	dbSchema, err := s.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
+	dbMetadata, err := s.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
 		InstanceID:   database.InstanceID,
 		DatabaseName: database.DatabaseName,
 	})
 	if err != nil {
 		return storepb.Advice_ERROR, nil, errors.Wrapf(err, "failed to fetch database schema for database %s", database.String())
 	}
-	if dbSchema == nil {
-		if err := s.schemaSyncer.SyncDatabaseSchema(ctx, database); err != nil {
-			return storepb.Advice_ERROR, nil, errors.Wrapf(err, "failed to sync database schema for database %s", database.String())
-		}
-		dbSchema, err = s.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
-			InstanceID:   database.InstanceID,
-			DatabaseName: database.DatabaseName,
-		})
-		if err != nil {
-			return storepb.Advice_ERROR, nil, errors.Wrapf(err, "failed to fetch database schema for database %s", database.String())
-		}
-		if dbSchema == nil {
-			return storepb.Advice_ERROR, nil, errors.Wrapf(err, "cannot found schema for database %s", database.String())
-		}
+	if dbMetadata == nil {
+		return storepb.Advice_ERROR, nil, errors.Wrapf(err, "cannot found schema for database %s", database.String())
 	}
 
-	dbMetadata := dbSchema.GetMetadata()
-	useDatabaseOwner, err := getUseDatabaseOwner(ctx, s.store, instance, database)
-	if err != nil {
-		return storepb.Advice_ERROR, nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get use database owner"))
-	}
+	dbMetadataProto := dbMetadata.GetProto()
 	driver, err := s.dbFactory.GetAdminDatabaseDriver(ctx, instance, database, db.ConnectionContext{})
 	if err != nil {
 		return storepb.Advice_ERROR, nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get database driver"))
@@ -514,21 +655,17 @@ func (s *ReleaseService) runSQLReviewCheckForFile(
 	defer driver.Close(ctx)
 	connection := driver.GetDB()
 
-	classificationConfig := getClassificationByProject(ctx, s.store, database.ProjectID)
-	context := advisor.SQLReviewCheckContext{
-		Charset:                  dbMetadata.CharacterSet,
-		Collation:                dbMetadata.Collation,
-		ChangeType:               changeType,
-		DBSchema:                 dbMetadata,
-		DBType:                   instance.Metadata.GetEngine(),
-		Catalog:                  catalog,
-		Driver:                   connection,
-		CurrentDatabase:          database.DatabaseName,
-		ClassificationConfig:     classificationConfig,
-		UsePostgresDatabaseOwner: useDatabaseOwner,
-		ListDatabaseNamesFunc:    BuildListDatabaseNamesFunc(s.store),
-		InstanceID:               instance.ResourceID,
-		IsObjectCaseSensitive:    store.IsObjectCaseSensitive(instance),
+	context := advisor.Context{
+		DBSchema:              dbMetadataProto,
+		DBType:                instance.Metadata.GetEngine(),
+		OriginalMetadata:      originMetadata,
+		FinalMetadata:         finalMetadata,
+		Driver:                connection,
+		CurrentDatabase:       database.DatabaseName,
+		TenantMode:            project.Setting.GetPostgresDatabaseTenantMode(),
+		ListDatabaseNamesFunc: BuildListDatabaseNamesFunc(s.store),
+		InstanceID:            instance.ResourceID,
+		IsObjectCaseSensitive: store.IsObjectCaseSensitive(instance),
 	}
 
 	reviewConfig, err := s.store.GetReviewConfigForDatabase(ctx, database)
@@ -566,34 +703,9 @@ func (s *ReleaseService) runSQLReviewCheckForFile(
 	return adviceLevel, advices, nil
 }
 
-func getRiskSourceFromChangeType(changeType storepb.PlanCheckRunConfig_ChangeDatabaseType) store.RiskSource {
-	switch changeType {
-	case storepb.PlanCheckRunConfig_DDL, storepb.PlanCheckRunConfig_DDL_GHOST:
-		return store.RiskSourceDatabaseSchemaUpdate
-	case storepb.PlanCheckRunConfig_DML:
-		return store.RiskSourceDatabaseDataUpdate
-	default:
-		return store.RiskSourceUnknown
-	}
-}
-
-func convertRiskLevel(riskLevel storepb.RiskLevel) (v1pb.RiskLevel, error) {
-	switch riskLevel {
-	case storepb.RiskLevel_RISK_LEVEL_UNSPECIFIED:
-		return v1pb.RiskLevel_RISK_LEVEL_UNSPECIFIED, nil
-	case storepb.RiskLevel_LOW:
-		return v1pb.RiskLevel_LOW, nil
-	case storepb.RiskLevel_MODERATE:
-		return v1pb.RiskLevel_MODERATE, nil
-	case storepb.RiskLevel_HIGH:
-		return v1pb.RiskLevel_HIGH, nil
-	default:
-		return v1pb.RiskLevel_RISK_LEVEL_UNSPECIFIED, errors.Errorf("unexpected risk level %v", riskLevel)
-	}
-}
-
 // allowedSDLStatementTypes defines the whitelist of statement types allowed in SDL files.
 // SDL files should only contain CREATE and COMMENT statements to declare the desired schema.
+// ALTER SEQUENCE is allowed for setting ownership (OWNED BY).
 var allowedSDLStatementTypes = map[string]bool{
 	// CREATE statements - declare new objects
 	"CREATE_TABLE":     true,
@@ -603,6 +715,9 @@ var allowedSDLStatementTypes = map[string]bool{
 	"CREATE_FUNCTION":  true,
 	"CREATE_PROCEDURE": true,
 	"CREATE_SCHEMA":    true,
+
+	// ALTER statements - limited to specific cases
+	"ALTER_SEQUENCE": true, // Allowed for OWNED BY and sequence options
 
 	// COMMENT - metadata annotations
 	"COMMENT": true,
@@ -624,10 +739,10 @@ type statementTypeWithPosition struct {
 // getStatementTypesWithPositionsForEngine returns statement types with position info for the given engine and ASTs.
 // The line numbers are one-based.
 // Currently only PostgreSQL is supported.
-func getStatementTypesWithPositionsForEngine(engine storepb.Engine, asts any) ([]statementTypeWithPosition, error) {
+func getStatementTypesWithPositionsForEngine(engine storepb.Engine, asts []base.AST) ([]statementTypeWithPosition, error) {
 	switch engine {
 	case storepb.Engine_POSTGRES, storepb.Engine_COCKROACHDB, storepb.Engine_REDSHIFT:
-		pgStmts, err := pg.GetStatementTypesWithPositions(asts)
+		pgStmts, err := pg.GetStatementTypes(asts)
 		if err != nil {
 			return nil, err
 		}

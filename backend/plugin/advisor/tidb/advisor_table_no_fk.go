@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -18,7 +19,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleTableNoFK, &TableNoFKAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_TABLE_NO_FOREIGN_KEY, &TableNoFKAdvisor{})
 }
 
 // TableNoFKAdvisor is the advisor checking table disallow foreign key.
@@ -27,9 +28,10 @@ type TableNoFKAdvisor struct {
 
 // Check checks table disallow foreign key.
 func (*TableNoFKAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	root, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
@@ -38,7 +40,7 @@ func (*TableNoFKAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*
 
 	checker := &tableNoFKChecker{
 		level: level,
-		title: string(checkCtx.Rule.Type),
+		title: checkCtx.Rule.Type.String(),
 	}
 	for _, stmtNode := range root {
 		(stmtNode).Accept(checker)
@@ -61,7 +63,7 @@ func (checker *tableNoFKChecker) Enter(in ast.Node) (ast.Node, bool) {
 			if constraint.Tp == ast.ConstraintForeignKey {
 				checker.adviceList = append(checker.adviceList, &storepb.Advice{
 					Status:        checker.level,
-					Code:          advisor.TableHasFK.Int32(),
+					Code:          code.TableHasFK.Int32(),
 					Title:         checker.title,
 					Content:       fmt.Sprintf("Foreign key is not allowed in the table `%s`", node.Table.Name),
 					StartPosition: common.ConvertANTLRLineToPosition(constraint.OriginTextPosition()),
@@ -73,7 +75,7 @@ func (checker *tableNoFKChecker) Enter(in ast.Node) (ast.Node, bool) {
 			if spec.Tp == ast.AlterTableAddConstraint && spec.Constraint.Tp == ast.ConstraintForeignKey {
 				checker.adviceList = append(checker.adviceList, &storepb.Advice{
 					Status:        checker.level,
-					Code:          advisor.TableHasFK.Int32(),
+					Code:          code.TableHasFK.Int32(),
 					Title:         checker.title,
 					Content:       fmt.Sprintf("Foreign key is not allowed in the table `%s`", node.Table.Name),
 					StartPosition: common.ConvertANTLRLineToPosition(in.OriginTextPosition()),

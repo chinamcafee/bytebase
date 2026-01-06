@@ -1,8 +1,7 @@
 <template>
   <div class="flex flex-col gap-y-2">
     <div
-      class="grid gap-x-1 gap-y-2"
-      style="grid-template-columns: 1fr 1fr auto"
+      class="flex flex-wrap gap-x-2 gap-y-2"
     >
       <LabelEditorRow
         v-for="(kv, i) in kvList"
@@ -17,8 +16,8 @@
       />
     </div>
 
-    <div v-if="!readonly">
-      <NButton size="small" :disabled="!allowAddLabel" @click="handleAdd">
+    <div>
+      <NButton size="small" :disabled="readonly || !allowAddLabel" @click="handleAdd">
         <template #icon>
           <heroicons:plus />
         </template>

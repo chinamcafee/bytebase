@@ -3,43 +3,31 @@ package v1
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"connectrpc.com/connect"
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/bytebase/bytebase/backend/common"
-	"github.com/bytebase/bytebase/backend/component/state"
+	"github.com/bytebase/bytebase/backend/component/bus"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/store"
 )
 
-const (
-	// emptyStageID is the placeholder used for stages without environment or with deleted environments.
-	emptyStageID = "-"
-)
-
-// formatStageIDFromEnvironment returns the stage ID, using emptyStageID placeholder if environment is empty.
-func formatStageIDFromEnvironment(environment string) string {
-	if environment == "" {
-		return emptyStageID
-	}
-	return environment
-}
-
-// formatEnvironmentFromStageID converts stage ID back to environment, handling the emptyStageID placeholder.
+// formatEnvironmentFromStageID converts stage ID back to environment, handling the EmptyStageID placeholder.
 func formatEnvironmentFromStageID(stageID string) string {
-	if stageID == emptyStageID {
+	if stageID == common.EmptyStageID {
 		return ""
 	}
 	return stageID
 }
 
-func convertToTaskRuns(ctx context.Context, s *store.Store, stateCfg *state.State, taskRuns []*store.TaskRunMessage) ([]*v1pb.TaskRun, error) {
+func convertToTaskRuns(ctx context.Context, s *store.Store, bus *bus.Bus, taskRuns []*store.TaskRunMessage) ([]*v1pb.TaskRun, error) {
 	var taskRunsV1 []*v1pb.TaskRun
 	for _, taskRun := range taskRuns {
-		taskRunV1, err := convertToTaskRun(ctx, s, stateCfg, taskRun)
+		taskRunV1, err := convertToTaskRun(ctx, s, bus, taskRun)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to convert task run")
 		}
@@ -48,18 +36,15 @@ func convertToTaskRuns(ctx context.Context, s *store.Store, stateCfg *state.Stat
 	return taskRunsV1, nil
 }
 
-func convertToTaskRun(ctx context.Context, s *store.Store, stateCfg *state.State, taskRun *store.TaskRunMessage) (*v1pb.TaskRun, error) {
-	stageID := formatStageIDFromEnvironment(taskRun.Environment)
+func convertToTaskRun(ctx context.Context, s *store.Store, bus *bus.Bus, taskRun *store.TaskRunMessage) (*v1pb.TaskRun, error) {
+	stageID := common.FormatStageID(taskRun.Environment)
 	t := &v1pb.TaskRun{
-		Name:          common.FormatTaskRun(taskRun.ProjectID, taskRun.PipelineUID, stageID, taskRun.TaskUID, taskRun.ID),
-		Creator:       common.FormatUserEmail(taskRun.Creator.Email),
-		CreateTime:    timestamppb.New(taskRun.CreatedAt),
-		UpdateTime:    timestamppb.New(taskRun.UpdatedAt),
-		Status:        convertToTaskRunStatus(taskRun.Status),
-		Detail:        taskRun.ResultProto.Detail,
-		Changelog:     taskRun.ResultProto.Changelog,
-		SchemaVersion: taskRun.ResultProto.Version,
-		Sheet:         "",
+		Name:       common.FormatTaskRun(taskRun.ProjectID, taskRun.PlanUID, stageID, taskRun.TaskUID, taskRun.ID),
+		Creator:    common.FormatUserEmail(taskRun.CreatorEmail),
+		CreateTime: timestamppb.New(taskRun.CreatedAt),
+		UpdateTime: timestamppb.New(taskRun.UpdatedAt),
+		Status:     convertToTaskRunStatus(taskRun.Status),
+		Detail:     taskRun.ResultProto.Detail,
 	}
 	if taskRun.StartedAt != nil {
 		t.StartTime = timestamppb.New(*taskRun.StartedAt)
@@ -68,24 +53,9 @@ func convertToTaskRun(ctx context.Context, s *store.Store, stateCfg *state.State
 		t.RunTime = timestamppb.New(*taskRun.RunAt)
 	}
 
-	if taskRun.SheetUID != nil && *taskRun.SheetUID != 0 {
-		sheet, err := s.GetSheet(ctx, &store.FindSheetMessage{UID: taskRun.SheetUID})
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to get sheet")
-		}
-		if sheet == nil {
-			return nil, errors.Errorf("sheet not found for uid %d", *taskRun.SheetUID)
-		}
-		t.Sheet = common.FormatSheet(taskRun.ProjectID, sheet.UID)
-	}
-
-	if v, ok := stateCfg.TaskRunSchedulerInfo.Load(taskRun.ID); ok {
+	if v, ok := bus.TaskRunSchedulerInfo.Load(taskRun.ID); ok {
 		if info, ok := v.(*storepb.SchedulerInfo); ok {
-			si, err := convertToSchedulerInfo(ctx, s, info)
-			if err != nil {
-				return nil, errors.Wrapf(err, "failed to convert to scheduler info")
-			}
-			t.SchedulerInfo = si
+			t.SchedulerInfo = convertToSchedulerInfo(info)
 		}
 	}
 
@@ -101,81 +71,35 @@ func convertToTaskRun(ctx context.Context, s *store.Store, stateCfg *state.State
 		}
 	}
 
-	if taskRun.ResultProto.PriorBackupDetail != nil {
-		t.PriorBackupDetail = convertToTaskRunPriorBackupDetail(taskRun.ResultProto.PriorBackupDetail)
-	}
+	t.HasPriorBackup = taskRun.ResultProto.HasPriorBackup
 
 	return t, nil
 }
 
-func convertToSchedulerInfo(ctx context.Context, s *store.Store, si *storepb.SchedulerInfo) (*v1pb.TaskRun_SchedulerInfo, error) {
+func convertToSchedulerInfo(si *storepb.SchedulerInfo) *v1pb.TaskRun_SchedulerInfo {
 	if si == nil {
-		return nil, nil
-	}
-
-	cause, err := convertToSchedulerInfoWaitingCause(ctx, s, si.WaitingCause)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to convert to scheduler info waiting cause")
+		return nil
 	}
 
 	return &v1pb.TaskRun_SchedulerInfo{
 		ReportTime:   si.ReportTime,
-		WaitingCause: cause,
-	}, nil
+		WaitingCause: convertToSchedulerInfoWaitingCause(si.WaitingCause),
+	}
 }
 
-func convertToSchedulerInfoWaitingCause(ctx context.Context, s *store.Store, c *storepb.SchedulerInfo_WaitingCause) (*v1pb.TaskRun_SchedulerInfo_WaitingCause, error) {
+func convertToSchedulerInfoWaitingCause(c *storepb.SchedulerInfo_WaitingCause) *v1pb.TaskRun_SchedulerInfo_WaitingCause {
 	if c == nil {
-		return nil, nil
+		return nil
 	}
 	switch cause := c.Cause.(type) {
-	case *storepb.SchedulerInfo_WaitingCause_ConnectionLimit:
-		return &v1pb.TaskRun_SchedulerInfo_WaitingCause{
-			Cause: &v1pb.TaskRun_SchedulerInfo_WaitingCause_ConnectionLimit{
-				ConnectionLimit: cause.ConnectionLimit,
-			},
-		}, nil
-	case *storepb.SchedulerInfo_WaitingCause_TaskUid:
-		taskUID := cause.TaskUid
-		task, err := s.GetTaskV2ByID(ctx, int(taskUID))
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to get task %v", taskUID)
-		}
-		if task == nil {
-			return nil, errors.Errorf("task %v not found", taskUID)
-		}
-		pipeline, err := s.GetPipelineV2ByID(ctx, task.PipelineID)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to get pipeline %v", task.PipelineID)
-		}
-		if pipeline == nil {
-			return nil, errors.Errorf("pipeline %d not found", task.PipelineID)
-		}
-		issue, err := s.GetIssueV2(ctx, &store.FindIssueMessage{PipelineID: &task.PipelineID})
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to get issue by pipeline %v", task.PipelineID)
-		}
-		var issueName string
-		if issue != nil {
-			issueName = common.FormatIssue(issue.Project.ResourceID, issue.UID)
-		}
-		stageID := formatStageIDFromEnvironment(task.Environment)
-		return &v1pb.TaskRun_SchedulerInfo_WaitingCause{
-			Cause: &v1pb.TaskRun_SchedulerInfo_WaitingCause_Task_{
-				Task: &v1pb.TaskRun_SchedulerInfo_WaitingCause_Task{
-					Task:  common.FormatTask(pipeline.ProjectID, task.PipelineID, stageID, task.ID),
-					Issue: issueName,
-				},
-			},
-		}, nil
 	case *storepb.SchedulerInfo_WaitingCause_ParallelTasksLimit:
 		return &v1pb.TaskRun_SchedulerInfo_WaitingCause{
 			Cause: &v1pb.TaskRun_SchedulerInfo_WaitingCause_ParallelTasksLimit{
 				ParallelTasksLimit: cause.ParallelTasksLimit,
 			},
-		}, nil
+		}
 	default:
-		return nil, nil
+		return nil
 	}
 }
 
@@ -198,140 +122,113 @@ func convertToTaskRunStatus(status storepb.TaskRun_Status) v1pb.TaskRun_Status {
 	}
 }
 
-func convertToTaskRunPriorBackupDetail(priorBackupDetail *storepb.PriorBackupDetail) *v1pb.TaskRun_PriorBackupDetail {
+func convertToTaskRunLogPriorBackupDetail(priorBackupDetail *storepb.PriorBackupDetail) *v1pb.TaskRunLogEntry_PriorBackup_PriorBackupDetail {
 	if priorBackupDetail == nil {
 		return nil
 	}
-	convertTable := func(table *storepb.PriorBackupDetail_Item_Table) *v1pb.TaskRun_PriorBackupDetail_Item_Table {
-		return &v1pb.TaskRun_PriorBackupDetail_Item_Table{
+	convertTable := func(table *storepb.PriorBackupDetail_Item_Table) *v1pb.TaskRunLogEntry_PriorBackup_PriorBackupDetail_Item_Table {
+		return &v1pb.TaskRunLogEntry_PriorBackup_PriorBackupDetail_Item_Table{
 			Database: table.Database,
 			Schema:   table.Schema,
 			Table:    table.Table,
 		}
 	}
 
-	items := []*v1pb.TaskRun_PriorBackupDetail_Item{}
+	items := []*v1pb.TaskRunLogEntry_PriorBackup_PriorBackupDetail_Item{}
 	for _, item := range priorBackupDetail.Items {
-		items = append(items, &v1pb.TaskRun_PriorBackupDetail_Item{
+		items = append(items, &v1pb.TaskRunLogEntry_PriorBackup_PriorBackupDetail_Item{
 			SourceTable:   convertTable(item.SourceTable),
 			TargetTable:   convertTable(item.TargetTable),
 			StartPosition: convertToPosition(item.StartPosition),
 			EndPosition:   convertToPosition(item.EndPosition),
 		})
 	}
-	return &v1pb.TaskRun_PriorBackupDetail{
+	return &v1pb.TaskRunLogEntry_PriorBackup_PriorBackupDetail{
 		Items: items,
 	}
 }
 
-func convertToRollout(ctx context.Context, s *store.Store, project *store.ProjectMessage, rollout *store.PipelineMessage) (*v1pb.Rollout, error) {
-	rolloutV1 := &v1pb.Rollout{
-		Name:       common.FormatRollout(project.ResourceID, rollout.ID),
-		Plan:       "",
-		Title:      "",
-		Stages:     nil,
-		CreateTime: timestamppb.New(rollout.CreatedAt),
-		UpdateTime: timestamppb.New(rollout.UpdatedAt),
-	}
-
-	creator, err := s.GetUserByID(ctx, rollout.CreatorUID)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get rollout creator")
-	}
-	// For preview rollout, creator could be nil.
-	if creator != nil {
-		rolloutV1.Creator = common.FormatUserEmail(creator.Email)
-	}
-
-	plan, err := s.GetPlan(ctx, &store.FindPlanMessage{PipelineID: &rollout.ID})
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get plan")
-	}
-	if plan != nil {
-		rolloutV1.Plan = common.FormatPlan(project.ResourceID, plan.UID)
-		rolloutV1.Title = plan.Name
-	}
-
-	if rollout.IssueID != nil {
-		rolloutV1.Issue = common.FormatIssue(project.ResourceID, *rollout.IssueID)
-	}
-
-	// Get environment order from plan deployment config or global settings
-	var environmentOrder []string
-	if plan != nil && len(plan.Config.GetDeployment().GetEnvironments()) > 0 {
-		environmentOrder = plan.Config.Deployment.GetEnvironments()
-	} else {
-		// Use global environment setting order
-		var err error
-		environmentOrder, err = getAllEnvironmentIDs(ctx, s)
-		if err != nil {
-			return nil, err
+func convertToRollout(project *store.ProjectMessage, plan *store.PlanMessage, tasks []*store.TaskMessage, environmentOrderMap map[string]int) (*v1pb.Rollout, error) {
+	// Calculate rollout times.
+	// CreateTime: When the rollout/plan was created.
+	// UpdateTime: Latest task update time (which reflects the latest task run update).
+	createTime := plan.CreatedAt
+	updateTime := plan.UpdatedAt
+	for _, task := range tasks {
+		// task.UpdatedAt is the updated_at of latest task run for this task.
+		if task.UpdatedAt != nil && task.UpdatedAt.After(updateTime) {
+			updateTime = *task.UpdatedAt
 		}
+	}
+
+	rolloutV1 := &v1pb.Rollout{
+		Name:       common.FormatRollout(project.ResourceID, plan.UID),
+		Title:      plan.Name,
+		Stages:     nil,
+		CreateTime: timestamppb.New(createTime),
+		UpdateTime: timestamppb.New(updateTime),
 	}
 
 	// Group tasks by environment.
-	tasksByEnv := map[string][]*v1pb.Task{}
-	for _, task := range rollout.Tasks {
-		rolloutTask, err := convertToTask(ctx, s, project, task)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to convert task"))
-		}
-
-		tasksByEnv[task.Environment] = append(tasksByEnv[task.Environment], rolloutTask)
+	tasksByEnv := make(map[string][]*store.TaskMessage)
+	for _, task := range tasks {
+		tasksByEnv[task.Environment] = append(tasksByEnv[task.Environment], task)
 	}
 
+	// Collect environments that have tasks and are in the environment order map.
+	var envs []string
+	for env := range tasksByEnv {
+		if _, exists := environmentOrderMap[env]; exists {
+			envs = append(envs, env)
+		}
+	}
+	// Sort environments by their order.
+	slices.SortFunc(envs, func(a, b string) int {
+		return environmentOrderMap[a] - environmentOrderMap[b]
+	})
+
+	// Create stages for known environments only.
 	var stages []*v1pb.Stage
-	for _, environment := range environmentOrder {
-		tasks := tasksByEnv[environment]
-		if len(tasks) > 0 {
-			stageID := formatStageIDFromEnvironment(environment)
-			stages = append(stages, &v1pb.Stage{
-				Name:        common.FormatStage(project.ResourceID, rollout.ID, stageID),
-				Id:          stageID,
-				Environment: common.FormatEnvironment(stageID),
-				Tasks:       tasks,
-			})
-		}
-		delete(tasksByEnv, environment)
-	}
+	for _, env := range envs {
+		stageID := common.FormatStageID(env)
+		envTasks := tasksByEnv[env]
+		// Sort tasks by ID within each stage.
+		slices.SortFunc(envTasks, func(a, b *store.TaskMessage) int {
+			return a.ID - b.ID
+		})
 
-	for environment, tasks := range tasksByEnv {
-		if len(tasks) > 0 {
-			stageID := formatStageIDFromEnvironment(environment)
-			stages = append([]*v1pb.Stage{
-				{
-					Name:        common.FormatStage(project.ResourceID, rollout.ID, stageID),
-					Id:          stageID,
-					Environment: common.FormatEnvironment(stageID),
-					Tasks:       tasks,
-				},
-			}, stages...)
+		// Convert tasks to v1pb.Task.
+		var v1Tasks []*v1pb.Task
+		for _, task := range envTasks {
+			v1Task, err := convertToTask(project, task)
+			if err != nil {
+				return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to convert task"))
+			}
+			v1Tasks = append(v1Tasks, v1Task)
 		}
+
+		stages = append(stages, &v1pb.Stage{
+			Name:        common.FormatStage(project.ResourceID, plan.UID, stageID),
+			Id:          stageID,
+			Environment: common.FormatEnvironment(stageID),
+			Tasks:       v1Tasks,
+		})
 	}
 
 	rolloutV1.Stages = stages
 	return rolloutV1, nil
 }
 
-func convertToTask(ctx context.Context, s *store.Store, project *store.ProjectMessage, task *store.TaskMessage) (*v1pb.Task, error) {
+func convertToTask(project *store.ProjectMessage, task *store.TaskMessage) (*v1pb.Task, error) {
 	//exhaustive:enforce
 	switch task.Type {
 	case storepb.Task_DATABASE_CREATE:
-		return convertToTaskFromDatabaseCreate(ctx, s, project, task)
+		return convertToTaskFromDatabaseCreate(project, task)
 	case storepb.Task_DATABASE_MIGRATE:
-		// Handle DATABASE_MIGRATE based on migrate_type
-		switch task.Payload.GetMigrateType() {
-		case storepb.MigrationType_DDL, storepb.MigrationType_GHOST, storepb.MigrationType_MIGRATION_TYPE_UNSPECIFIED:
-			return convertToTaskFromSchemaUpdate(ctx, s, project, task)
-		case storepb.MigrationType_DML:
-			return convertToTaskFromDataUpdate(ctx, s, project, task)
-		default:
-			return nil, errors.Errorf("unsupported migrate type %v", task.Payload.GetMigrateType())
-		}
-	case storepb.Task_DATABASE_SDL:
-		return convertToTaskFromSchemaUpdate(ctx, s, project, task)
+		// All DATABASE_MIGRATE tasks are treated as schema updates (DDL or GHOST)
+		return convertToTaskFromSchemaUpdate(project, task)
 	case storepb.Task_DATABASE_EXPORT:
-		return convertToTaskFromDatabaseDataExport(ctx, s, project, task)
+		return convertToTaskFromDatabaseDataExport(project, task)
 	case storepb.Task_TASK_TYPE_UNSPECIFIED:
 		return nil, errors.Errorf("task type %v is not supported", task.Type)
 	default:
@@ -339,30 +236,18 @@ func convertToTask(ctx context.Context, s *store.Store, project *store.ProjectMe
 	}
 }
 
-func convertToTaskFromDatabaseCreate(ctx context.Context, s *store.Store, project *store.ProjectMessage, task *store.TaskMessage) (*v1pb.Task, error) {
-	instance, err := s.GetInstanceV2(ctx, &store.FindInstanceMessage{
-		ResourceID: &task.InstanceID,
-	})
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get instance %s", task.InstanceID)
-	}
-	stageID := formatStageIDFromEnvironment(task.Environment)
+func convertToTaskFromDatabaseCreate(project *store.ProjectMessage, task *store.TaskMessage) (*v1pb.Task, error) {
+	stageID := common.FormatStageID(task.Environment)
 	v1pbTask := &v1pb.Task{
-		Name:          common.FormatTask(project.ResourceID, task.PipelineID, stageID, task.ID),
+		Name:          common.FormatTask(project.ResourceID, task.PlanID, stageID, task.ID),
 		SpecId:        task.Payload.GetSpecId(),
 		Type:          convertToTaskType(task),
 		Status:        convertToTaskStatus(task.LatestTaskRunStatus, task.Payload.GetSkipped()),
 		SkippedReason: task.Payload.GetSkippedReason(),
-		Target:        common.FormatInstance(instance.ResourceID),
+		Target:        common.FormatInstance(task.InstanceID),
 		Payload: &v1pb.Task_DatabaseCreate_{
 			DatabaseCreate: &v1pb.Task_DatabaseCreate{
-				Project:      "",
-				Database:     task.Payload.GetDatabaseName(),
-				Table:        task.Payload.GetTableName(),
-				Sheet:        common.FormatSheet(project.ResourceID, int(task.Payload.GetSheetId())),
-				CharacterSet: task.Payload.GetCharacterSet(),
-				Collation:    task.Payload.GetCollation(),
-				Environment:  common.FormatEnvironment(task.Payload.GetEnvironmentId()),
+				Sheet: common.FormatSheet(project.ResourceID, task.Payload.GetSheetSha256()),
 			},
 		},
 	}
@@ -375,53 +260,36 @@ func convertToTaskFromDatabaseCreate(ctx context.Context, s *store.Store, projec
 	return v1pbTask, nil
 }
 
-func convertToTaskFromSchemaUpdate(ctx context.Context, s *store.Store, project *store.ProjectMessage, task *store.TaskMessage) (*v1pb.Task, error) {
+func convertToTaskFromSchemaUpdate(project *store.ProjectMessage, task *store.TaskMessage) (*v1pb.Task, error) {
 	if task.DatabaseName == nil {
 		return nil, errors.Errorf("schema update task database is nil")
 	}
-	database, err := s.GetDatabaseV2(ctx, &store.FindDatabaseMessage{InstanceID: &task.InstanceID, DatabaseName: task.DatabaseName, ShowDeleted: true})
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get database")
-	}
-	if database == nil {
-		return nil, errors.Errorf("database not found")
-	}
 
-	// Determine DatabaseChangeType and MigrationType based on task type
-	var databaseChangeType v1pb.DatabaseChangeType
-	var migrationType v1pb.MigrationType
-	switch task.Type {
-	case storepb.Task_DATABASE_MIGRATE:
-		databaseChangeType = v1pb.DatabaseChangeType_MIGRATE
-		switch task.Payload.GetMigrateType() {
-		case storepb.MigrationType_DDL:
-			migrationType = v1pb.MigrationType_DDL
-		case storepb.MigrationType_GHOST:
-			migrationType = v1pb.MigrationType_GHOST
-		default:
-			migrationType = v1pb.MigrationType_DDL
+	stageID := common.FormatStageID(task.Environment)
+
+	// Build DatabaseUpdate payload
+	databaseUpdate := &v1pb.Task_DatabaseUpdate{}
+
+	// Set source: either sheet or release
+	if releaseName := task.Payload.GetRelease(); releaseName != "" {
+		databaseUpdate.Source = &v1pb.Task_DatabaseUpdate_Release{
+			Release: releaseName,
 		}
-	case storepb.Task_DATABASE_SDL:
-		databaseChangeType = v1pb.DatabaseChangeType_SDL
-	default:
-		databaseChangeType = v1pb.DatabaseChangeType_DATABASE_CHANGE_TYPE_UNSPECIFIED
+	} else if sheetSha256 := task.Payload.GetSheetSha256(); sheetSha256 != "" {
+		databaseUpdate.Source = &v1pb.Task_DatabaseUpdate_Sheet{
+			Sheet: common.FormatSheet(project.ResourceID, sheetSha256),
+		}
 	}
 
-	stageID := formatStageIDFromEnvironment(task.Environment)
 	v1pbTask := &v1pb.Task{
-		Name:          common.FormatTask(project.ResourceID, task.PipelineID, stageID, task.ID),
+		Name:          common.FormatTask(project.ResourceID, task.PlanID, stageID, task.ID),
 		SpecId:        task.Payload.GetSpecId(),
 		Type:          convertToTaskType(task),
 		Status:        convertToTaskStatus(task.LatestTaskRunStatus, task.Payload.GetSkipped()),
 		SkippedReason: task.Payload.GetSkippedReason(),
-		Target:        fmt.Sprintf("%s%s/%s%s", common.InstanceNamePrefix, database.InstanceID, common.DatabaseIDPrefix, database.DatabaseName),
+		Target:        fmt.Sprintf("%s%s/%s%s", common.InstanceNamePrefix, task.InstanceID, common.DatabaseIDPrefix, *(task.DatabaseName)),
 		Payload: &v1pb.Task_DatabaseUpdate_{
-			DatabaseUpdate: &v1pb.Task_DatabaseUpdate{
-				Sheet:              common.FormatSheet(project.ResourceID, int(task.Payload.GetSheetId())),
-				SchemaVersion:      task.Payload.GetSchemaVersion(),
-				DatabaseChangeType: databaseChangeType,
-				MigrationType:      migrationType,
-			},
+			DatabaseUpdate: databaseUpdate,
 		},
 	}
 	if task.UpdatedAt != nil {
@@ -433,71 +301,21 @@ func convertToTaskFromSchemaUpdate(ctx context.Context, s *store.Store, project 
 	return v1pbTask, nil
 }
 
-func convertToTaskFromDataUpdate(ctx context.Context, s *store.Store, project *store.ProjectMessage, task *store.TaskMessage) (*v1pb.Task, error) {
-	if task.DatabaseName == nil {
-		return nil, errors.Errorf("data update task database is nil")
-	}
-	database, err := s.GetDatabaseV2(ctx, &store.FindDatabaseMessage{InstanceID: &task.InstanceID, DatabaseName: task.DatabaseName, ShowDeleted: true})
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get database")
-	}
-	if database == nil {
-		return nil, errors.Errorf("database not found")
-	}
-
-	stageID := formatStageIDFromEnvironment(task.Environment)
-	v1pbTask := &v1pb.Task{
-		Name:          common.FormatTask(project.ResourceID, task.PipelineID, stageID, task.ID),
-		SpecId:        task.Payload.GetSpecId(),
-		Type:          convertToTaskType(task),
-		Status:        convertToTaskStatus(task.LatestTaskRunStatus, task.Payload.GetSkipped()),
-		SkippedReason: task.Payload.GetSkippedReason(),
-		Target:        fmt.Sprintf("%s%s/%s%s", common.InstanceNamePrefix, database.InstanceID, common.DatabaseIDPrefix, database.DatabaseName),
-		Payload:       nil,
-	}
-	v1pbTaskPayload := &v1pb.Task_DatabaseUpdate_{
-		DatabaseUpdate: &v1pb.Task_DatabaseUpdate{
-			Sheet:              common.FormatSheet(project.ResourceID, int(task.Payload.GetSheetId())),
-			SchemaVersion:      task.Payload.GetSchemaVersion(),
-			DatabaseChangeType: v1pb.DatabaseChangeType_MIGRATE,
-			MigrationType:      v1pb.MigrationType_DML,
-		},
-	}
-
-	v1pbTask.Payload = v1pbTaskPayload
-	if task.UpdatedAt != nil {
-		v1pbTask.UpdateTime = timestamppb.New(*task.UpdatedAt)
-	}
-	if task.RunAt != nil {
-		v1pbTask.RunTime = timestamppb.New(*task.RunAt)
-	}
-	return v1pbTask, nil
-}
-
-func convertToTaskFromDatabaseDataExport(ctx context.Context, s *store.Store, project *store.ProjectMessage, task *store.TaskMessage) (*v1pb.Task, error) {
+func convertToTaskFromDatabaseDataExport(project *store.ProjectMessage, task *store.TaskMessage) (*v1pb.Task, error) {
 	if task.DatabaseName == nil {
 		return nil, errors.Errorf("data export task database is nil")
 	}
-	database, err := s.GetDatabaseV2(ctx, &store.FindDatabaseMessage{InstanceID: &task.InstanceID, DatabaseName: task.DatabaseName, ShowDeleted: true})
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get database")
-	}
-	if database == nil {
-		return nil, errors.Errorf("database not found")
-	}
-	targetDatabaseName := fmt.Sprintf("%s%s/%s%s", common.InstanceNamePrefix, database.InstanceID, common.DatabaseIDPrefix, database.DatabaseName)
-	sheet := common.FormatSheet(project.ResourceID, int(task.Payload.GetSheetId()))
+
+	targetDatabaseName := fmt.Sprintf("%s%s/%s%s", common.InstanceNamePrefix, task.InstanceID, common.DatabaseIDPrefix, *(task.DatabaseName))
+	sheet := common.FormatSheet(project.ResourceID, task.Payload.GetSheetSha256())
 	v1pbTaskPayload := v1pb.Task_DatabaseDataExport_{
 		DatabaseDataExport: &v1pb.Task_DatabaseDataExport{
-			Target:   targetDatabaseName,
-			Sheet:    sheet,
-			Format:   convertExportFormat(task.Payload.GetFormat()),
-			Password: &task.Payload.Password,
+			Sheet: sheet,
 		},
 	}
-	stageID := formatStageIDFromEnvironment(task.Environment)
+	stageID := common.FormatStageID(task.Environment)
 	v1pbTask := &v1pb.Task{
-		Name:    common.FormatTask(project.ResourceID, task.PipelineID, stageID, task.ID),
+		Name:    common.FormatTask(project.ResourceID, task.PlanID, stageID, task.ID),
 		SpecId:  task.Payload.GetSpecId(),
 		Type:    convertToTaskType(task),
 		Status:  convertToTaskStatus(task.LatestTaskRunStatus, false),
@@ -542,46 +360,12 @@ func convertToTaskType(task *store.TaskMessage) v1pb.Task_Type {
 		return v1pb.Task_DATABASE_CREATE
 	case storepb.Task_DATABASE_MIGRATE:
 		return v1pb.Task_DATABASE_MIGRATE
-	case storepb.Task_DATABASE_SDL:
-		return v1pb.Task_DATABASE_SDL
 	case storepb.Task_DATABASE_EXPORT:
 		return v1pb.Task_DATABASE_EXPORT
 	case storepb.Task_TASK_TYPE_UNSPECIFIED:
 		return v1pb.Task_TYPE_UNSPECIFIED
 	default:
 		return v1pb.Task_TYPE_UNSPECIFIED
-	}
-}
-
-func convertToStoreTaskType(taskType v1pb.Task_Type) storepb.Task_Type {
-	//exhaustive:enforce
-	switch taskType {
-	case v1pb.Task_DATABASE_CREATE:
-		return storepb.Task_DATABASE_CREATE
-	case v1pb.Task_DATABASE_MIGRATE:
-		return storepb.Task_DATABASE_MIGRATE
-	case v1pb.Task_DATABASE_SDL:
-		return storepb.Task_DATABASE_SDL
-	case v1pb.Task_DATABASE_EXPORT:
-		return storepb.Task_DATABASE_EXPORT
-	case v1pb.Task_TYPE_UNSPECIFIED, v1pb.Task_GENERAL:
-		return storepb.Task_TASK_TYPE_UNSPECIFIED
-	default:
-		return storepb.Task_TASK_TYPE_UNSPECIFIED
-	}
-}
-
-// getMigrateTypeFromMigrationType converts v1pb.MigrationType to storepb.MigrationType
-func getMigrateTypeFromMigrationType(migrationType v1pb.MigrationType) storepb.MigrationType {
-	switch migrationType {
-	case v1pb.MigrationType_DDL:
-		return storepb.MigrationType_DDL
-	case v1pb.MigrationType_GHOST:
-		return storepb.MigrationType_GHOST
-	case v1pb.MigrationType_DML:
-		return storepb.MigrationType_DML
-	default:
-		return storepb.MigrationType_MIGRATION_TYPE_UNSPECIFIED
 	}
 }
 
@@ -624,9 +408,9 @@ func convertToTaskRunLogEntries(logs []*store.TaskRunLog) []*v1pb.TaskRunLogEntr
 				LogTime:  timestamppb.New(l.T),
 				DeployId: l.Payload.DeployId,
 				CommandExecute: &v1pb.TaskRunLogEntry_CommandExecute{
-					LogTime:        timestamppb.New(l.T),
-					CommandIndexes: l.Payload.CommandExecute.CommandIndexes,
-					Statement:      l.Payload.CommandExecute.Statement,
+					LogTime:   timestamppb.New(l.T),
+					Range:     convertToRange(l.Payload.CommandExecute.Range),
+					Statement: l.Payload.CommandExecute.Statement,
 				},
 			}
 			entries = append(entries, e)
@@ -668,17 +452,6 @@ func convertToTaskRunLogEntries(logs []*store.TaskRunLog) []*v1pb.TaskRunLogEntr
 			prev.DatabaseSync.EndTime = timestamppb.New(l.T)
 			prev.DatabaseSync.Error = l.Payload.DatabaseSyncEnd.Error
 
-		case storepb.TaskRunLog_TASK_RUN_STATUS_UPDATE:
-			e := &v1pb.TaskRunLogEntry{
-				Type:     v1pb.TaskRunLogEntry_TASK_RUN_STATUS_UPDATE,
-				LogTime:  timestamppb.New(l.T),
-				DeployId: l.Payload.DeployId,
-				TaskRunStatusUpdate: &v1pb.TaskRunLogEntry_TaskRunStatusUpdate{
-					Status: convertTaskRunLogTaskRunStatus(l.Payload.TaskRunStatusUpdate.Status),
-				},
-			}
-			entries = append(entries, e)
-
 		case storepb.TaskRunLog_TRANSACTION_CONTROL:
 			e := &v1pb.TaskRunLogEntry{
 				Type:     v1pb.TaskRunLogEntry_TRANSACTION_CONTROL,
@@ -712,7 +485,7 @@ func convertToTaskRunLogEntries(logs []*store.TaskRunLog) []*v1pb.TaskRunLogEntr
 			}
 			prev.PriorBackup.EndTime = timestamppb.New(l.T)
 			prev.PriorBackup.Error = l.Payload.PriorBackupEnd.Error
-			prev.PriorBackup.PriorBackupDetail = convertToTaskRunPriorBackupDetail(l.Payload.PriorBackupEnd.PriorBackupDetail)
+			prev.PriorBackup.PriorBackupDetail = convertToTaskRunLogPriorBackupDetail(l.Payload.PriorBackupEnd.PriorBackupDetail)
 
 		case storepb.TaskRunLog_COMPUTE_DIFF_START:
 			e := &v1pb.TaskRunLogEntry{
@@ -748,22 +521,23 @@ func convertToTaskRunLogEntries(logs []*store.TaskRunLog) []*v1pb.TaskRunLogEntr
 				},
 			}
 			entries = append(entries, e)
+
+		case storepb.TaskRunLog_RELEASE_FILE_EXECUTE:
+			e := &v1pb.TaskRunLogEntry{
+				Type:     v1pb.TaskRunLogEntry_RELEASE_FILE_EXECUTE,
+				LogTime:  timestamppb.New(l.T),
+				DeployId: l.Payload.DeployId,
+				ReleaseFileExecute: &v1pb.TaskRunLogEntry_ReleaseFileExecute{
+					Version:  l.Payload.ReleaseFileExecute.Version,
+					FilePath: l.Payload.ReleaseFileExecute.FilePath,
+				},
+			}
+			entries = append(entries, e)
 		default:
 		}
 	}
 
 	return entries
-}
-
-func convertTaskRunLogTaskRunStatus(s storepb.TaskRunLog_TaskRunStatusUpdate_Status) v1pb.TaskRunLogEntry_TaskRunStatusUpdate_Status {
-	switch s {
-	case storepb.TaskRunLog_TaskRunStatusUpdate_RUNNING_WAITING:
-		return v1pb.TaskRunLogEntry_TaskRunStatusUpdate_RUNNING_WAITING
-	case storepb.TaskRunLog_TaskRunStatusUpdate_RUNNING_RUNNING:
-		return v1pb.TaskRunLogEntry_TaskRunStatusUpdate_RUNNING_RUNNING
-	default:
-		return v1pb.TaskRunLogEntry_TaskRunStatusUpdate_STATUS_UNSPECIFIED
-	}
 }
 
 func convertTaskRunLogTransactionControlType(t storepb.TaskRunLog_TransactionControl_Type) v1pb.TaskRunLogEntry_TransactionControl_Type {
@@ -776,5 +550,15 @@ func convertTaskRunLogTransactionControlType(t storepb.TaskRunLog_TransactionCon
 		return v1pb.TaskRunLogEntry_TransactionControl_ROLLBACK
 	default:
 		return v1pb.TaskRunLogEntry_TransactionControl_TYPE_UNSPECIFIED
+	}
+}
+
+func convertToRange(r *storepb.Range) *v1pb.Range {
+	if r == nil {
+		return nil
+	}
+	return &v1pb.Range{
+		Start: r.Start,
+		End:   r.End,
 	}
 }

@@ -1,5 +1,5 @@
 <template>
-  <form class="space-y-6 px-1" @submit.prevent="trySignin()">
+  <form class="flex flex-col gap-y-6 px-1" @submit.prevent="trySignin()">
     <div>
       <label
         for="email"
@@ -8,7 +8,7 @@
         {{ $t("common.email") }}
         <RequiredStar />
       </label>
-      <div class="mt-1 rounded-md shadow-sm">
+      <div class="mt-1 rounded-md shadow-xs">
         <BBTextField
           v-model:value="state.email"
           required
@@ -32,21 +32,21 @@
           <RequiredStar />
         </div>
         <router-link
-          v-if="props.showForgotPassword"
+          v-if="showForgotPassword"
           :to="{
             path: '/auth/password-forgot',
             query: {
               hint: route.query.hint,
             },
           }"
-          class="text-sm font-normal text-control-light hover:underline focus:outline-none"
+          class="text-sm font-normal text-control-light hover:underline focus:outline-hidden"
           tabindex="-1"
         >
           {{ $t("auth.sign-in.forget-password") }}
         </router-link>
       </label>
       <div
-        class="relative flex flex-row items-center mt-1 rounded-md shadow-sm"
+        class="relative flex flex-row items-center mt-1 rounded-md shadow-xs"
       >
         <BBTextField
           v-model:value="state.password"
@@ -73,7 +73,7 @@
         attr-type="submit"
         type="primary"
         :disabled="!allowSignin"
-        :loading="state.isLoading"
+        :loading="loading"
         size="large"
         style="width: 100%"
       >
@@ -88,38 +88,43 @@ import { create } from "@bufbuild/protobuf";
 import { EyeIcon, EyeOffIcon } from "lucide-vue-next";
 import { NButton } from "naive-ui";
 import { storeToRefs } from "pinia";
-import { computed, reactive, onMounted } from "vue";
+import { computed, onMounted, reactive } from "vue";
 import { useRoute } from "vue-router";
 import { BBTextField } from "@/bbkit";
 import RequiredStar from "@/components/RequiredStar.vue";
-import { useAuthStore, useActuatorV1Store } from "@/store";
-import { LoginRequestSchema } from "@/types/proto-es/v1/auth_service_pb";
+import { useActuatorV1Store } from "@/store";
+import {
+  type LoginRequest,
+  LoginRequestSchema,
+} from "@/types/proto-es/v1/auth_service_pb";
 
 interface LocalState {
   email: string;
   password: string;
   showPassword: boolean;
-  isLoading: boolean;
 }
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     showForgotPassword?: boolean;
+    loading: boolean;
   }>(),
   {
     showForgotPassword: true,
   }
 );
 
+const emit = defineEmits<{
+  (event: "signin", payload: LoginRequest): void;
+}>();
+
 const route = useRoute();
-const authStore = useAuthStore();
 const { isDemo } = storeToRefs(useActuatorV1Store());
 
 const state = reactive<LocalState>({
   email: "",
   password: "",
   showPassword: false,
-  isLoading: false,
 });
 
 onMounted(async () => {
@@ -146,18 +151,12 @@ const allowSignin = computed(() => {
 });
 
 const trySignin = async () => {
-  if (state.isLoading) return;
-  state.isLoading = true;
-  try {
-    await authStore.login(
-      create(LoginRequestSchema, {
-        email: state.email,
-        password: state.password,
-        web: true,
-      })
-    );
-  } finally {
-    state.isLoading = false;
-  }
+  emit(
+    "signin",
+    create(LoginRequestSchema, {
+      email: state.email,
+      password: state.password,
+    })
+  );
 };
 </script>

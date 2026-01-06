@@ -4,13 +4,15 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/tsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/tsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	tsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/tsql"
 )
 
@@ -19,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MSSQL, advisor.SchemaRuleTableNameNoKeyword, &NamingTableNoKeywordAdvisor{})
+	advisor.Register(storepb.Engine_MSSQL, storepb.SQLReviewRule_NAMING_TABLE_NO_KEYWORD, &NamingTableNoKeywordAdvisor{})
 }
 
 // NamingTableNoKeywordAdvisor is the advisor checking for table naming convention without keyword.
@@ -28,23 +30,28 @@ type NamingTableNoKeywordAdvisor struct {
 
 // Check checks for table naming convention without keyword.
 func (*NamingTableNoKeywordAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewNamingTableNoKeywordRule(level, string(checkCtx.Rule.Type))
+	rule := NewNamingTableNoKeywordRule(level, checkCtx.Rule.Type.String())
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList(), nil
 }
@@ -89,7 +96,7 @@ func (r *NamingTableNoKeywordRule) enterCreateTable(ctx *parser.Create_tableCont
 	if tsqlparser.IsTSQLReservedKeyword(normalizedTableName, false) {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.NameIsKeywordIdentifier.Int32(),
+			Code:          code.NameIsKeywordIdentifier.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("Table name [%s] is a reserved keyword and should be avoided.", normalizedTableName),
 			StartPosition: common.ConvertANTLRLineToPosition(tableName.GetStart().GetLine()),

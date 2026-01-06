@@ -19,7 +19,7 @@ CREATE TABLE principal (
     id serial PRIMARY KEY,
     deleted boolean NOT NULL DEFAULT FALSE,
     created_at timestamptz NOT NULL DEFAULT now(),
-    type text NOT NULL CHECK (type IN ('END_USER', 'SYSTEM_BOT', 'SERVICE_ACCOUNT')),
+    type text NOT NULL CHECK (type IN ('END_USER', 'SYSTEM_BOT', 'SERVICE_ACCOUNT', 'WORKLOAD_IDENTITY')),
     name text NOT NULL,
     email text NOT NULL,
     password_hash text NOT NULL,
@@ -30,15 +30,17 @@ CREATE TABLE principal (
     profile jsonb NOT NULL DEFAULT '{}'
 );
 
+CREATE UNIQUE INDEX idx_principal_unique_email ON principal(email);
+
 -- Setting
 CREATE TABLE setting (
     id serial PRIMARY KEY,
-    -- name: AUTH_SECRET, BRANDING_LOGO, WORKSPACE_ID, WORKSPACE_PROFILE, WORKSPACE_APPROVAL,
-    -- WORKSPACE_EXTERNAL_APPROVAL, ENTERPRISE_LICENSE, APP_IM, WATERMARK, AI, SCHEMA_TEMPLATE,
-    -- DATA_CLASSIFICATION, SEMANTIC_TYPES, SCIM, PASSWORD_RESTRICTION, ENVIRONMENT
+    -- name: SYSTEM, WORKSPACE_PROFILE, WORKSPACE_APPROVAL,
+    -- APP_IM, AI, DATA_CLASSIFICATION, SEMANTIC_TYPES, ENVIRONMENT
     -- Enum: SettingName (proto/store/store/setting.proto)
     name text NOT NULL,
-    value text NOT NULL
+    -- Stored as JSON marshalled by protojson.Marshal (camelCase keys)
+    value jsonb NOT NULL
 );
 
 CREATE UNIQUE INDEX idx_setting_unique_name ON setting(name);
@@ -128,6 +130,8 @@ CREATE TABLE instance (
 
 CREATE UNIQUE INDEX idx_instance_unique_resource_id ON instance(resource_id);
 
+CREATE INDEX idx_instance_metadata_engine ON instance((metadata->>'engine'));
+
 ALTER SEQUENCE instance_id_seq RESTART WITH 101;
 
 -- db stores the databases for a particular instance
@@ -174,7 +178,7 @@ CREATE TABLE sheet_blob (
 -- sheet table stores general statements.
 CREATE TABLE sheet (
     id serial PRIMARY KEY,
-    creator_id integer NOT NULL REFERENCES principal(id),
+    creator text NOT NULL REFERENCES principal(email) ON UPDATE CASCADE,
     created_at timestamptz NOT NULL DEFAULT now(),
     project text NOT NULL REFERENCES project(resource_id),
     name text NOT NULL,
@@ -187,22 +191,55 @@ CREATE INDEX idx_sheet_project ON sheet(project);
 
 ALTER SEQUENCE sheet_id_seq RESTART WITH 101;
 
------------------------
--- Pipeline related BEGIN
--- pipeline table
-CREATE TABLE pipeline (
-    id serial PRIMARY KEY,
-    creator_id integer NOT NULL REFERENCES principal(id),
+-- plan table stores the plan for a project
+CREATE TABLE plan (
+    id bigserial PRIMARY KEY,
+    deleted boolean NOT NULL DEFAULT FALSE,
+    creator text NOT NULL REFERENCES principal(email) ON UPDATE CASCADE,
     created_at timestamptz NOT NULL DEFAULT now(),
-    project text NOT NULL REFERENCES project(resource_id)
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    project text NOT NULL REFERENCES project(resource_id),
+    name text NOT NULL,
+    description text NOT NULL,
+    -- Stored as PlanConfig (proto/store/store/plan.proto)
+    config jsonb NOT NULL DEFAULT '{}'
 );
 
-ALTER SEQUENCE pipeline_id_seq RESTART WITH 101;
+CREATE INDEX idx_plan_project ON plan(project);
+CREATE INDEX idx_plan_config_has_rollout ON plan ((config->>'hasRollout'));
 
--- task table stores the task for the pipeline
+ALTER SEQUENCE plan_id_seq RESTART WITH 101;
+
+CREATE TABLE plan_check_run (
+    id serial PRIMARY KEY,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    plan_id bigint NOT NULL REFERENCES plan(id),
+    status text NOT NULL CHECK (status IN ('AVAILABLE', 'RUNNING', 'DONE', 'FAILED', 'CANCELED')),
+    -- Stored as PlanCheckRunResult (proto/store/store/plan_check_run.proto)
+    result jsonb NOT NULL DEFAULT '{}'
+);
+
+CREATE UNIQUE INDEX idx_plan_check_run_unique_plan_id ON plan_check_run(plan_id);
+
+CREATE INDEX idx_plan_check_run_active_status ON plan_check_run(status, id) WHERE status IN ('AVAILABLE', 'RUNNING');
+
+ALTER SEQUENCE plan_check_run_id_seq RESTART WITH 101;
+
+-- Tracks webhook delivery for pipeline events (PIPELINE_FAILED or PIPELINE_COMPLETED).
+-- One row per plan at any time - mutually exclusive events.
+-- Row is deleted when user clicks BatchRunTasks to reset notification state.
+CREATE TABLE plan_webhook_delivery (
+    plan_id BIGINT PRIMARY KEY REFERENCES plan(id),
+    -- Event type: 'PIPELINE_FAILED' or 'PIPELINE_COMPLETED'
+    event_type TEXT NOT NULL,
+    delivered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- task table stores the task for a plan
 CREATE TABLE task (
     id serial PRIMARY KEY,
-    pipeline_id integer NOT NULL REFERENCES pipeline(id),
+    plan_id bigint NOT NULL REFERENCES plan(id),
     instance text NOT NULL REFERENCES instance(resource_id),
     environment text,
     db_name text,
@@ -211,23 +248,21 @@ CREATE TABLE task (
     payload jsonb NOT NULL DEFAULT '{}'
 );
 
-CREATE INDEX idx_task_pipeline_id_environment ON task(pipeline_id, environment);
+CREATE INDEX idx_task_plan_id_environment ON task(plan_id, environment);
 
 ALTER SEQUENCE task_id_seq RESTART WITH 101;
 
 -- task run table stores the task run
 CREATE TABLE task_run (
     id serial PRIMARY KEY,
-    creator_id integer NOT NULL REFERENCES principal(id),
+    creator text NOT NULL REFERENCES principal(email) ON UPDATE CASCADE,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     task_id integer NOT NULL REFERENCES task(id),
-    sheet_id integer REFERENCES sheet(id),
     attempt integer NOT NULL,
-    status text NOT NULL CHECK (status IN ('PENDING', 'RUNNING', 'DONE', 'FAILED', 'CANCELED')),
+    status text NOT NULL CHECK (status IN ('PENDING', 'AVAILABLE', 'RUNNING', 'DONE', 'FAILED', 'CANCELED')),
     started_at timestamptz NULL,
     run_at timestamptz,
-    code integer NOT NULL DEFAULT 0,
     -- result saves the task run result in json format
     -- Stored as TaskRunResult (proto/store/store/task_run.proto)
     result jsonb NOT NULL DEFAULT '{}'
@@ -240,7 +275,7 @@ CREATE UNIQUE INDEX uk_task_run_task_id_attempt ON task_run (task_id, attempt);
 -- Partial index for active task runs. Most task runs are in terminal states (DONE, FAILED, CANCELED)
 -- that never change. Queries frequently filter for active statuses (PENDING, RUNNING), so a partial
 -- index is more efficient than a full index on status - smaller size, faster maintenance, better cache efficiency.
-CREATE INDEX idx_task_run_active_status_id ON task_run(status, id) WHERE status IN ('PENDING', 'RUNNING');
+CREATE INDEX idx_task_run_active_status_id ON task_run(status, id) WHERE status IN ('PENDING', 'AVAILABLE', 'RUNNING');
 
 ALTER SEQUENCE task_run_id_seq RESTART WITH 101;
 
@@ -258,51 +293,10 @@ ALTER SEQUENCE task_run_log_id_seq RESTART WITH 101;
 
 -- Pipeline related END
 -----------------------
--- Plan related BEGIN
-CREATE TABLE plan (
-    id bigserial PRIMARY KEY,
-    deleted boolean NOT NULL DEFAULT FALSE,
-    creator_id integer NOT NULL REFERENCES principal(id),
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    project text NOT NULL REFERENCES project(resource_id),
-    pipeline_id integer REFERENCES pipeline(id),
-    name text NOT NULL,
-    description text NOT NULL,
-    -- Stored as PlanConfig (proto/store/store/plan.proto)
-    config jsonb NOT NULL DEFAULT '{}'
-);
-
-CREATE INDEX idx_plan_project ON plan(project);
-
-CREATE INDEX idx_plan_pipeline_id ON plan(pipeline_id);
-
-ALTER SEQUENCE plan_id_seq RESTART WITH 101;
-
-CREATE TABLE plan_check_run (
-    id serial PRIMARY KEY,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    plan_id bigint NOT NULL REFERENCES plan(id),
-    status text NOT NULL CHECK (status IN ('RUNNING', 'DONE', 'FAILED', 'CANCELED')),
-    type text NOT NULL CHECK (type LIKE 'bb.plan-check.%'),
-    -- Stored as PlanCheckRunConfig (proto/store/store/plan_check_run.proto)
-    config jsonb NOT NULL DEFAULT '{}',
-    -- Stored as PlanCheckRunResult (proto/store/store/plan_check_run.proto)
-    result jsonb NOT NULL DEFAULT '{}',
-    payload jsonb NOT NULL DEFAULT '{}'
-);
-
-CREATE INDEX idx_plan_check_run_plan_id ON plan_check_run (plan_id);
-
-ALTER SEQUENCE plan_check_run_id_seq RESTART WITH 101;
-
--- Plan related END
------------------------
 -- issue
 CREATE TABLE issue (
     id serial PRIMARY KEY,
-    creator_id integer NOT NULL REFERENCES principal(id),
+    creator text NOT NULL REFERENCES principal(email) ON UPDATE CASCADE,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     project text NOT NULL REFERENCES project(resource_id),
@@ -320,9 +314,9 @@ CREATE TABLE issue (
 
 CREATE INDEX idx_issue_project ON issue(project);
 
-CREATE INDEX idx_issue_plan_id ON issue(plan_id);
+CREATE UNIQUE INDEX idx_issue_unique_plan_id ON issue(plan_id);
 
-CREATE INDEX idx_issue_creator_id ON issue(creator_id);
+CREATE INDEX idx_issue_creator ON issue(creator);
 
 CREATE INDEX idx_issue_ts_vector ON issue USING GIN(ts_vector);
 
@@ -359,7 +353,7 @@ ALTER SEQUENCE audit_log_id_seq RESTART WITH 101;
 
 CREATE TABLE issue_comment (
     id bigserial PRIMARY KEY,
-    creator_id integer NOT NULL REFERENCES principal(id),
+    creator text NOT NULL REFERENCES principal(email) ON UPDATE CASCADE,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     issue_id integer NOT NULL REFERENCES issue(id),
@@ -373,7 +367,7 @@ ALTER SEQUENCE issue_comment_id_seq RESTART WITH 101;
 
 CREATE TABLE query_history (
     id bigserial PRIMARY KEY,
-    creator_id integer NOT NULL REFERENCES principal(id),
+    creator text NOT NULL REFERENCES principal(email) ON UPDATE CASCADE,
     created_at timestamptz NOT NULL DEFAULT now(),
     project_id text NOT NULL, -- the project resource id
     database text NOT NULL, -- the database resource name, for example, instances/{instance}/databases/{database}
@@ -385,14 +379,14 @@ CREATE TABLE query_history (
     payload jsonb NOT NULL DEFAULT '{}'
 );
 
-CREATE INDEX idx_query_history_creator_id_created_at_project_id ON query_history(creator_id, created_at, project_id DESC);
+CREATE INDEX idx_query_history_creator_created_at_project_id ON query_history(creator, created_at, project_id DESC);
 
 ALTER SEQUENCE query_history_id_seq RESTART WITH 101;
 
 -- worksheet table stores worksheets in SQL Editor.
 CREATE TABLE worksheet (
     id serial PRIMARY KEY,
-    creator_id integer NOT NULL REFERENCES principal(id),
+    creator text NOT NULL REFERENCES principal(email) ON UPDATE CASCADE,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     project text NOT NULL REFERENCES project(resource_id),
@@ -406,7 +400,7 @@ CREATE TABLE worksheet (
     payload jsonb NOT NULL DEFAULT '{}'
 );
 
-CREATE INDEX idx_worksheet_creator_id_project ON worksheet(creator_id, project);
+CREATE INDEX idx_worksheet_creator_project ON worksheet(creator, project);
 
 ALTER SEQUENCE worksheet_id_seq RESTART WITH 101;
 
@@ -414,27 +408,15 @@ ALTER SEQUENCE worksheet_id_seq RESTART WITH 101;
 CREATE TABLE worksheet_organizer (
     id serial PRIMARY KEY,
     worksheet_id integer NOT NULL REFERENCES worksheet(id) ON DELETE CASCADE,
-    principal_id integer NOT NULL REFERENCES principal(id),
-    starred boolean NOT NULL DEFAULT false
+    principal text NOT NULL REFERENCES principal(email) ON UPDATE CASCADE,
+    payload jsonb NOT NULL DEFAULT '{}'
 );
 
-CREATE UNIQUE INDEX idx_worksheet_organizer_unique_sheet_id_principal_id ON worksheet_organizer(worksheet_id, principal_id);
+CREATE UNIQUE INDEX idx_worksheet_organizer_unique_sheet_id_principal ON worksheet_organizer(worksheet_id, principal);
 
-CREATE INDEX idx_worksheet_organizer_principal_id ON worksheet_organizer(principal_id);
+CREATE INDEX idx_worksheet_organizer_principal ON worksheet_organizer(principal);
 
--- risk stores the definition of a risk.
-CREATE TABLE risk (
-    id bigserial PRIMARY KEY,
-    source text NOT NULL CHECK (source LIKE 'bb.risk.%'),
-    -- Risk level: RISK_LEVEL_UNSPECIFIED, LOW, MODERATE, HIGH
-    level text NOT NULL,
-    name text NOT NULL,
-    active boolean NOT NULL,
-    -- Stored as google.type.Expr (from Google Common Expression Language)
-    expression jsonb NOT NULL
-);
-
-ALTER SEQUENCE risk_id_seq RESTART WITH 101;
+CREATE INDEX idx_worksheet_organizer_payload ON worksheet_organizer USING GIN(payload);
 
 CREATE TABLE db_group (
     id bigserial PRIMARY KEY,
@@ -451,21 +433,6 @@ CREATE UNIQUE INDEX idx_db_group_unique_project_resource_id ON db_group(project,
 
 ALTER SEQUENCE db_group_id_seq RESTART WITH 101;
 
--- changelist table stores project changelists.
-CREATE TABLE changelist (
-    id serial PRIMARY KEY,
-    creator_id integer NOT NULL REFERENCES principal (id),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    project text NOT NULL REFERENCES project(resource_id),
-    name text NOT NULL,
-    -- Stored as Changelist (proto/store/store/changelist.proto)
-    payload jsonb NOT NULL DEFAULT '{}'
-);
-
-CREATE UNIQUE INDEX idx_changelist_project_name ON changelist(project, name);
-
-ALTER SEQUENCE changelist_id_seq RESTART WITH 101;
-
 CREATE TABLE export_archive (
   id serial PRIMARY KEY,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -475,12 +442,15 @@ CREATE TABLE export_archive (
 );
 
 CREATE TABLE user_group (
-  email text PRIMARY KEY,
+  id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  email text,
   name text NOT NULL,
   description text NOT NULL DEFAULT '',
   -- Stored as GroupPayload (proto/store/store/group.proto)
   payload jsonb NOT NULL DEFAULT '{}'
 );
+
+CREATE UNIQUE INDEX idx_user_group_unique_email ON user_group(email) WHERE email IS NOT NULL;
 
 -- review config table.
 CREATE TABLE review_config (
@@ -496,7 +466,7 @@ CREATE TABLE revision (
     instance text NOT NULL,
     db_name text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
-    deleter_id integer REFERENCES principal(id),
+    deleter text REFERENCES principal(email) ON UPDATE CASCADE,
     deleted_at timestamptz,
     version text NOT NULL,
     -- Stored as RevisionPayload (proto/store/store/revision.proto)
@@ -531,7 +501,6 @@ CREATE TABLE changelog (
     instance text NOT NULL,
     db_name text NOT NULL,
     status text NOT NULL CONSTRAINT changelog_status_check CHECK (status IN ('PENDING', 'DONE', 'FAILED')),
-    prev_sync_history_id bigint REFERENCES sync_history(id),
     sync_history_id bigint REFERENCES sync_history(id),
     -- Stored as ChangelogPayload (proto/store/store/changelog.proto)
     payload jsonb NOT NULL DEFAULT '{}',
@@ -546,7 +515,7 @@ CREATE TABLE release (
     id bigserial PRIMARY KEY,
     deleted boolean NOT NULL DEFAULT FALSE,
     project text NOT NULL REFERENCES project(resource_id),
-    creator_id integer NOT NULL REFERENCES principal (id),
+    creator text NOT NULL REFERENCES principal(email) ON UPDATE CASCADE,
     created_at timestamptz NOT NULL DEFAULT now(),
     digest text NOT NULL DEFAULT '',
     -- Stored as ReleasePayload (proto/store/store/release.proto)
@@ -557,8 +526,42 @@ ALTER SEQUENCE release_id_seq RESTART WITH 101;
 
 CREATE INDEX idx_release_project ON release(project);
 
-CREATE UNIQUE INDEX idx_release_unique_project_digest ON release(project, digest) WHERE digest != '';
+-- OAuth2 tables
+CREATE TABLE oauth2_client (
+    client_id text PRIMARY KEY,
+    client_secret_hash text NOT NULL,
+    config jsonb NOT NULL,
+    last_active_at timestamptz NOT NULL DEFAULT now()
+);
 
+CREATE TABLE oauth2_authorization_code (
+    code text PRIMARY KEY,
+    client_id text NOT NULL REFERENCES oauth2_client(client_id) ON DELETE CASCADE,
+    user_email text NOT NULL REFERENCES principal(email) ON UPDATE CASCADE,
+    config jsonb NOT NULL,
+    expires_at timestamptz NOT NULL
+);
+
+CREATE TABLE oauth2_refresh_token (
+    token_hash text PRIMARY KEY,
+    client_id text NOT NULL REFERENCES oauth2_client(client_id) ON DELETE CASCADE,
+    user_email text NOT NULL REFERENCES principal(email) ON UPDATE CASCADE,
+    expires_at timestamptz NOT NULL
+);
+
+CREATE INDEX idx_oauth2_authorization_code_expires_at ON oauth2_authorization_code(expires_at);
+CREATE INDEX idx_oauth2_refresh_token_expires_at ON oauth2_refresh_token(expires_at);
+CREATE INDEX idx_oauth2_client_last_active_at ON oauth2_client(last_active_at);
+
+-- Web refresh tokens for session management
+CREATE TABLE web_refresh_token (
+    token_hash  TEXT PRIMARY KEY,
+    user_email  TEXT NOT NULL REFERENCES principal(email) ON UPDATE CASCADE,
+    expires_at  TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX idx_web_refresh_token_user_email ON web_refresh_token(user_email);
+CREATE INDEX idx_web_refresh_token_expires_at ON web_refresh_token(expires_at);
 
 -- Default bytebase system account id is 1.
 INSERT INTO principal (id, type, name, email, password_hash) VALUES (1, 'SYSTEM_BOT', 'Bytebase', 'support@bytebase.com', '');
@@ -569,3 +572,31 @@ ALTER SEQUENCE principal_id_seq RESTART WITH 101;
 INSERT INTO project (id, name, resource_id) VALUES (1, 'Default', 'default');
 
 ALTER SEQUENCE project_id_seq RESTART WITH 101;
+
+-- Initialize settings with static values
+INSERT INTO setting (name, value) VALUES ('APP_IM', '{}'::jsonb);
+INSERT INTO setting (name, value) VALUES ('DATA_CLASSIFICATION', '{}'::jsonb);
+INSERT INTO setting (name, value) VALUES ('WORKSPACE_APPROVAL', '{"rules":[{"template":{"flow":{"roles":["roles/projectOwner"]},"title":"Fallback Rule","description":"Requires project owner approval when no other rules match."},"condition":{"expression":"true"}}]}'::jsonb);
+INSERT INTO setting (name, value) VALUES (
+  'WORKSPACE_PROFILE',
+  ('{"enableMetricCollection":true,"directorySyncToken":"' || gen_random_uuid()::text || '","passwordRestriction":{"minLength":8}}')::jsonb
+);
+INSERT INTO setting (name, value) VALUES ('ENVIRONMENT', '{"environments":[{"title":"Test","id":"test"},{"title":"Prod","id":"prod"}]}'::jsonb);
+
+-- Initialize settings with dynamically generated values
+-- Generate random alphanumeric string (0-9, a-z, A-Z) compatible with Go's common.RandomString
+-- Initialize SYSTEM setting with auth_secret and workspace_id
+INSERT INTO setting (name, value)
+VALUES (
+  'SYSTEM',
+  json_build_object(
+    'authSecret', (SELECT string_agg(substr('0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ', floor(random() * 62 + 1)::int, 1), '')
+     FROM generate_series(1, 32)),
+    'workspaceId', gen_random_uuid()::text
+  )
+);
+
+-- Initialize workspace IAM policy
+-- Grant workspace member role to allUsers
+INSERT INTO policy (resource_type, resource, type, payload, inherit_from_parent, enforce)
+VALUES ('WORKSPACE', '', 'IAM', '{"bindings":[{"role":"roles/workspaceMember","members":["allUsers"]}]}', FALSE, TRUE);

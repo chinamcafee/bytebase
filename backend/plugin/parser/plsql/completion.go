@@ -8,7 +8,7 @@ import (
 	"unicode"
 
 	"github.com/antlr4-go/antlr/v4"
-	plsql "github.com/bytebase/plsql-parser"
+	"github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
@@ -98,7 +98,6 @@ func newPreferredRules() map[int]bool {
 		plsql.PlSqlParserRULE_attribute_name:           true,
 		plsql.PlSqlParserRULE_savepoint_name:           true,
 		plsql.PlSqlParserRULE_rollback_segment_name:    true,
-		plsql.PlSqlParserRULE_table_var_name:           true,
 		plsql.PlSqlParserRULE_schema_name:              true,
 		plsql.PlSqlParserRULE_package_name:             true,
 		plsql.PlSqlParserRULE_implementation_type_name: true,
@@ -325,6 +324,17 @@ func (m CompletionMap) insertViews(c *Completer, schemas map[string]bool) {
 	}
 }
 
+func (m CompletionMap) insertSequences(c *Completer, schemas map[string]bool) {
+	for schema := range schemas {
+		for _, seq := range c.listSequences(schema) {
+			m.Insert(base.Candidate{
+				Type: base.CandidateTypeSequence,
+				Text: c.quotedIdentifierIfNeeded(seq),
+			})
+		}
+	}
+}
+
 func (m CompletionMap) insertTables(c *Completer, schemas map[string]bool) {
 	for schema := range schemas {
 		if len(schema) == 0 {
@@ -355,23 +365,22 @@ func (m CompletionMap) insertAllColumns(c *Completer) {
 			}
 			c.metadataCache[schema] = metadata
 		}
-		schemaMeta := c.metadataCache[schema].GetSchema("")
+		schemaMeta := c.metadataCache[schema].GetSchemaMetadata("")
 		for _, table := range schemaMeta.ListTableNames() {
 			tableMeta := schemaMeta.GetTable(table)
 			if tableMeta == nil {
 				continue
 			}
-			for _, column := range tableMeta.GetColumns() {
+			for _, column := range tableMeta.GetProto().GetColumns() {
 				definition := fmt.Sprintf("%s.%s | %s", schema, table, column.Type)
 				if !column.Nullable {
 					definition += ", NOT NULL"
 				}
-				comment := column.UserComment
 				m.Insert(base.Candidate{
 					Type:       base.CandidateTypeColumn,
 					Text:       c.quotedIdentifierIfNeeded(column.Name),
 					Definition: definition,
-					Comment:    comment,
+					Comment:    column.Comment,
 				})
 			}
 		}
@@ -403,21 +412,20 @@ func (m CompletionMap) insertColumns(c *Completer, schemas, tables map[string]bo
 		}
 
 		for table := range tables {
-			tableMeta := c.metadataCache[schema].GetSchema("").GetTable(table)
+			tableMeta := c.metadataCache[schema].GetSchemaMetadata("").GetTable(table)
 			if tableMeta == nil {
 				continue
 			}
-			for _, column := range tableMeta.GetColumns() {
+			for _, column := range tableMeta.GetProto().GetColumns() {
 				definition := fmt.Sprintf("%s.%s | %s", schema, table, column.Type)
 				if !column.Nullable {
 					definition += ", NOT NULL"
 				}
-				comment := column.UserComment
 				m.Insert(base.Candidate{
 					Type:       base.CandidateTypeColumn,
 					Text:       c.quotedIdentifierIfNeeded(column.Name),
 					Definition: definition,
-					Comment:    comment,
+					Comment:    column.Comment,
 				})
 			}
 		}
@@ -450,7 +458,7 @@ func (c *Completer) listTables(schema string) []string {
 		c.metadataCache[schema] = metadata
 	}
 
-	return c.metadataCache[schema].GetSchema("").ListTableNames()
+	return c.metadataCache[schema].GetSchemaMetadata("").ListTableNames()
 }
 
 func (c *Completer) listViews(schema string) []string {
@@ -462,7 +470,19 @@ func (c *Completer) listViews(schema string) []string {
 		c.metadataCache[schema] = metadata
 	}
 
-	return c.metadataCache[schema].GetSchema("").ListViewNames()
+	return c.metadataCache[schema].GetSchemaMetadata("").ListViewNames()
+}
+
+func (c *Completer) listSequences(schema string) []string {
+	if _, exists := c.metadataCache[schema]; !exists {
+		_, metadata, err := c.getMetadata(c.ctx, c.instanceID, schema)
+		if err != nil || metadata == nil {
+			return nil
+		}
+		c.metadataCache[schema] = metadata
+	}
+
+	return c.metadataCache[schema].GetSchemaMetadata("").ListSequenceNames()
 }
 
 func (c *Completer) convertCandidates(candidates *base.CandidatesCollection) ([]base.Candidate, error) {
@@ -472,6 +492,7 @@ func (c *Completer) convertCandidates(candidates *base.CandidatesCollection) ([]
 	tableEntries := make(CompletionMap)
 	columnEntries := make(CompletionMap)
 	viewEntries := make(CompletionMap)
+	sequenceEntries := make(CompletionMap)
 
 	for token, value := range candidates.Tokens {
 		entry := c.parser.SymbolicNames[token]
@@ -530,6 +551,7 @@ func (c *Completer) convertCandidates(candidates *base.CandidatesCollection) ([]
 
 				tableEntries.insertTables(c, schemas)
 				viewEntries.insertViews(c, schemas)
+				sequenceEntries.insertSequences(c, schemas)
 			}
 		case plsql.PlSqlParserRULE_general_element:
 			schema, table, flags := c.determineGeneralElementPartCandidates()
@@ -559,6 +581,7 @@ func (c *Completer) convertCandidates(candidates *base.CandidatesCollection) ([]
 			if flags&ObjectFlagsShowTables != 0 {
 				tableEntries.insertTables(c, schemas)
 				viewEntries.insertViews(c, schemas)
+				sequenceEntries.insertSequences(c, schemas)
 
 				for _, reference := range c.references {
 					switch reference := reference.(type) {
@@ -663,6 +686,7 @@ func (c *Completer) convertCandidates(candidates *base.CandidatesCollection) ([]
 	result = append(result, tableEntries.toSlice()...)
 	result = append(result, columnEntries.toSlice()...)
 	result = append(result, viewEntries.toSlice()...)
+	result = append(result, sequenceEntries.toSlice()...)
 	return result, nil
 }
 
@@ -1110,7 +1134,7 @@ func prepareTrickyParserAndScanner(statement string, caretLine int, caretOffset 
 	return parser, lexer, scanner
 }
 
-func notEmptySQLCount(list []base.SingleSQL) int {
+func notEmptySQLCount(list []base.Statement) int {
 	count := 0
 	for _, sql := range list {
 		if !sql.Empty {
@@ -1132,7 +1156,8 @@ func skipHeadingSQLs(statement string, caretLine int, caretOffset int) (string, 
 
 	start := 0
 	for i, sql := range list {
-		sqlEndLine := int(sql.End.GetLine())
+		// End.Line is 1-based per proto spec, convert to 0-based for comparison with caretLine
+		sqlEndLine := int(sql.End.GetLine()) - 1
 		sqlEndColumn := int(sql.End.GetColumn())
 		if sqlEndLine > caretLine || (sqlEndLine == caretLine && sqlEndColumn >= caretOffset) {
 			start = i
@@ -1140,13 +1165,15 @@ func skipHeadingSQLs(statement string, caretLine int, caretOffset int) (string, 
 				// The caret is in the first SQL statement, so we don't need to skip any SQL statements.
 				break
 			}
-			previousSQLEndLine := int(list[i-1].End.GetLine())
+			// End.Line is 1-based per proto spec, convert to 0-based
+			previousSQLEndLine := int(list[i-1].End.GetLine()) - 1
 			previousSQLEndColumn := int(list[i-1].End.GetColumn())
 			newCaretLine = caretLine - previousSQLEndLine + 1 // Convert to 1-based.
 			if caretLine == previousSQLEndLine {
 				// The caret is in the same line as the last line of the previous SQL statement.
-				// We need to adjust the caret offset.
-				newCaretOffset = caretOffset - previousSQLEndColumn - 1 // Convert to 0-based.
+				// End.Column is 1-based exclusive, so (End.Column - 1) gives 0-based start of next statement.
+				// newCaretOffset = caretOffset - (previousSQLEndColumn - 1)
+				newCaretOffset = caretOffset - previousSQLEndColumn + 1
 			}
 			break
 		}

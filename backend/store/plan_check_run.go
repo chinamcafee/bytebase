@@ -12,28 +12,12 @@ import (
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 )
 
-// PlanCheckRunType is the type of a plan check run.
-type PlanCheckRunType string
-
-const (
-	// PlanCheckDatabaseStatementFakeAdvise is the plan check type for fake advise.
-	PlanCheckDatabaseStatementFakeAdvise PlanCheckRunType = "bb.plan-check.database.statement.fake-advise"
-	// PlanCheckDatabaseStatementCompatibility is the plan check type for statement compatibility.
-	PlanCheckDatabaseStatementCompatibility PlanCheckRunType = "bb.plan-check.database.statement.compatibility"
-	// PlanCheckDatabaseStatementAdvise is the plan check type for schema system review policy.
-	PlanCheckDatabaseStatementAdvise PlanCheckRunType = "bb.plan-check.database.statement.advise"
-	// PlanCheckDatabaseStatementSummaryReport is the plan check type for statement summary report.
-	PlanCheckDatabaseStatementSummaryReport PlanCheckRunType = "bb.plan-check.database.statement.summary.report"
-	// PlanCheckDatabaseConnect is the plan check type for database connection.
-	PlanCheckDatabaseConnect PlanCheckRunType = "bb.plan-check.database.connect"
-	// PlanCheckDatabaseGhostSync is the plan check type for the gh-ost sync task.
-	PlanCheckDatabaseGhostSync PlanCheckRunType = "bb.plan-check.database.ghost.sync"
-)
-
 // PlanCheckRunStatus is the status of a plan check run.
 type PlanCheckRunStatus string
 
 const (
+	// PlanCheckRunStatusAvailable is the plan check status for AVAILABLE.
+	PlanCheckRunStatusAvailable PlanCheckRunStatus = "AVAILABLE"
 	// PlanCheckRunStatusRunning is the plan check status for RUNNING.
 	PlanCheckRunStatusRunning PlanCheckRunStatus = "RUNNING"
 	// PlanCheckRunStatusDone is the plan check status for DONE.
@@ -53,8 +37,6 @@ type PlanCheckRunMessage struct {
 	PlanUID int64
 
 	Status PlanCheckRunStatus
-	Type   PlanCheckRunType
-	Config *storepb.PlanCheckRunConfig
 	Result *storepb.PlanCheckRunResult
 }
 
@@ -63,56 +45,29 @@ type FindPlanCheckRunMessage struct {
 	PlanUID      *int64
 	UIDs         *[]int
 	Status       *[]PlanCheckRunStatus
-	Type         *[]PlanCheckRunType
 	ResultStatus *[]storepb.Advice_Status
 }
 
-// CreatePlanCheckRuns creates new plan check runs.
-func (s *Store) CreatePlanCheckRuns(ctx context.Context, plan *PlanMessage, creates ...*PlanCheckRunMessage) error {
-	if len(creates) == 0 {
-		return nil
+// CreatePlanCheckRun creates or replaces the plan check run for a plan.
+// Always creates with AVAILABLE status for HA-safe scheduling.
+func (s *Store) CreatePlanCheckRun(ctx context.Context, create *PlanCheckRunMessage) error {
+	result, err := protojson.Marshal(create.Result)
+	if err != nil {
+		return errors.Wrapf(err, "failed to marshal result")
 	}
 
-	txn, err := s.GetDB().BeginTx(ctx, nil)
-	if err != nil {
-		return err
+	query := `
+		INSERT INTO plan_check_run (plan_id, status, result)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (plan_id) DO UPDATE SET
+			status = EXCLUDED.status,
+			result = EXCLUDED.result,
+			updated_at = now()
+	`
+	if _, err := s.GetDB().ExecContext(ctx, query, create.PlanUID, PlanCheckRunStatusAvailable, result); err != nil {
+		return errors.Wrapf(err, "failed to upsert plan check run")
 	}
-	defer txn.Rollback()
-
-	// Delete existing plan check runs
-	q := qb.Q().Space("DELETE FROM plan_check_run WHERE plan_id = ?", plan.UID)
-	query, args, err := q.ToSQL()
-	if err != nil {
-		return errors.Wrapf(err, "failed to build delete sql")
-	}
-	if _, err := txn.ExecContext(ctx, query, args...); err != nil {
-		return errors.Wrapf(err, "failed to delete plan check run for plan %d", plan.UID)
-	}
-
-	// Insert new plan check runs
-	q = qb.Q().Space("INSERT INTO plan_check_run (plan_id, status, type, config, result) VALUES")
-	for i, create := range creates {
-		config, err := protojson.Marshal(create.Config)
-		if err != nil {
-			return errors.Wrapf(err, "faield to marshal create config %v", create.Config)
-		}
-		result, err := protojson.Marshal(create.Result)
-		if err != nil {
-			return errors.Wrapf(err, "failed to marshal create result %v", create.Result)
-		}
-		if i > 0 {
-			q.Space(",")
-		}
-		q.Space("(?, ?, ?, ?, ?)", create.PlanUID, create.Status, create.Type, config, result)
-	}
-	query, args, err = q.ToSQL()
-	if err != nil {
-		return errors.Wrapf(err, "failed to build insert sql")
-	}
-	if _, err := txn.ExecContext(ctx, query, args...); err != nil {
-		return errors.Wrapf(err, "failed to execute insert")
-	}
-	return txn.Commit()
+	return nil
 }
 
 // ListPlanCheckRuns returns a list of plan check runs based on find.
@@ -124,8 +79,6 @@ SELECT
 	plan_check_run.updated_at,
 	plan_check_run.plan_id,
 	plan_check_run.status,
-	plan_check_run.type,
-	plan_check_run.config,
 	plan_check_run.result
 FROM plan_check_run
 WHERE TRUE`)
@@ -137,9 +90,6 @@ WHERE TRUE`)
 	}
 	if v := find.Status; v != nil {
 		q.Space("AND plan_check_run.status = ANY(?)", *v)
-	}
-	if v := find.Type; v != nil {
-		q.Space("AND plan_check_run.type = ANY(?)", *v)
 	}
 	if v := find.ResultStatus; v != nil {
 		statusStrings := make([]string, len(*v))
@@ -162,23 +112,17 @@ WHERE TRUE`)
 	var planCheckRuns []*PlanCheckRunMessage
 	for rows.Next() {
 		planCheckRun := PlanCheckRunMessage{
-			Config: &storepb.PlanCheckRunConfig{},
 			Result: &storepb.PlanCheckRunResult{},
 		}
-		var config, result string
+		var result string
 		if err := rows.Scan(
 			&planCheckRun.UID,
 			&planCheckRun.CreatedAt,
 			&planCheckRun.UpdatedAt,
 			&planCheckRun.PlanUID,
 			&planCheckRun.Status,
-			&planCheckRun.Type,
-			&config,
 			&result,
 		); err != nil {
-			return nil, err
-		}
-		if err := common.ProtojsonUnmarshaler.Unmarshal([]byte(config), planCheckRun.Config); err != nil {
 			return nil, err
 		}
 		if err := common.ProtojsonUnmarshaler.Unmarshal([]byte(result), planCheckRun.Result); err != nil {
@@ -192,6 +136,18 @@ WHERE TRUE`)
 	}
 
 	return planCheckRuns, nil
+}
+
+// GetPlanCheckRun returns the plan check run for a plan.
+func (s *Store) GetPlanCheckRun(ctx context.Context, planUID int64) (*PlanCheckRunMessage, error) {
+	runs, err := s.ListPlanCheckRuns(ctx, &FindPlanCheckRunMessage{PlanUID: &planUID})
+	if err != nil {
+		return nil, err
+	}
+	if len(runs) == 0 {
+		return nil, nil
+	}
+	return runs[0], nil
 }
 
 // UpdatePlanCheckRun updates a plan check run.
@@ -233,4 +189,51 @@ func (s *Store) BatchCancelPlanCheckRuns(ctx context.Context, planCheckRunUIDs [
 		return err
 	}
 	return nil
+}
+
+// ClaimedPlanCheckRun represents a plan check run that was atomically claimed.
+type ClaimedPlanCheckRun struct {
+	UID     int
+	PlanUID int64
+}
+
+// ClaimAvailablePlanCheckRuns atomically claims all AVAILABLE plan check runs by updating them to RUNNING
+// and returns the claimed UIDs. Uses FOR UPDATE SKIP LOCKED to allow concurrent schedulers to claim different runs.
+func (s *Store) ClaimAvailablePlanCheckRuns(ctx context.Context) ([]*ClaimedPlanCheckRun, error) {
+	q := qb.Q().Space(`
+		UPDATE plan_check_run
+		SET status = ?, updated_at = now()
+		WHERE id IN (
+			SELECT id FROM plan_check_run
+			WHERE status = ?
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING id, plan_id
+	`, PlanCheckRunStatusRunning, PlanCheckRunStatusAvailable)
+
+	query, args, err := q.ToSQL()
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to build sql")
+	}
+
+	rows, err := s.GetDB().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to claim plan check runs")
+	}
+	defer rows.Close()
+
+	var claimed []*ClaimedPlanCheckRun
+	for rows.Next() {
+		var c ClaimedPlanCheckRun
+		if err := rows.Scan(&c.UID, &c.PlanUID); err != nil {
+			return nil, err
+		}
+		claimed = append(claimed, &c)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return claimed, nil
 }

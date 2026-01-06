@@ -2,31 +2,41 @@ import { last } from "lodash-es";
 import { useI18n } from "vue-i18n";
 import { extractCoreDatabaseInfoFromDatabaseCreateTask } from "@/components/IssueV1";
 import { mockDatabase } from "@/components/IssueV1/logic/utils";
+import { TASK_STATUS_FILTERS } from "@/components/Plan/constants/task";
 import { useDatabaseV1Store } from "@/store";
 import {
+  EMPTY_ID,
   EMPTY_TASK_NAME,
   emptyStage,
   emptyTask,
-  unknownTask,
-  unknownStage,
-  EMPTY_ID,
-  UNKNOWN_ID,
   isValidDatabaseName,
+  UNKNOWN_ID,
   unknownDatabase,
+  unknownStage,
+  unknownTask,
 } from "@/types";
+import type { Plan } from "@/types/proto-es/v1/plan_service_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import {
-  Task_Type,
-  TaskRun_Status,
   type Rollout,
   type Stage,
   type Task,
+  Task_Status,
+  Task_Type,
+  TaskRun_Status,
 } from "@/types/proto-es/v1/rollout_service_pb";
-import { Task_Status } from "@/types/proto-es/v1/rollout_service_pb";
 import { flattenTaskV1List } from "./issue";
 
-export const extractRolloutUID = (name: string) => {
-  const pattern = /(?:^|\/)rollouts\/([^/]+)(?:$|\/)/;
+export const extractPlanUIDFromRolloutName = (name: string) => {
+  const pattern = /(?:^|\/)plans\/([^/]+)\/rollout(?:$|\/)/;
+  const matches = name.match(pattern);
+  return matches?.[1] ?? "";
+};
+
+export const extractPlanNameFromRolloutName = (name: string) => {
+  // Rollout name format: projects/{project}/plans/{plan}/rollout
+  // Returns: projects/{project}/plans/{plan}
+  const pattern = /^(.+\/plans\/[^/]+)\/rollout(?:$|\/)/;
   const matches = name.match(pattern);
   return matches?.[1] ?? "";
 };
@@ -76,6 +86,17 @@ export const stageV1Slug = (stage: Stage): string => {
 
 export const taskV1Slug = (task: Task): string => {
   return extractTaskUID(task.name);
+};
+
+/**
+ * Extracts the stage resource name from a task resource name.
+ * Task name format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}
+ * Returns: projects/{project}/plans/{plan}/rollout/stages/{stage}
+ */
+export const extractStageNameFromTaskName = (taskName: string): string => {
+  const pattern = /^(.+\/stages\/[^/]+)\/tasks\/[^/]+$/;
+  const matches = taskName.match(pattern);
+  return matches?.[1] ?? "";
 };
 
 export const activeTaskInTaskList = (tasks: Task[]): Task => {
@@ -133,9 +154,14 @@ export const findTaskByName = (
   rollout: Rollout | undefined,
   name: string
 ): Task => {
+  // Use task ID for comparison to handle legacy data with malformed stage IDs.
+  const targetTaskUID = extractTaskUID(name);
+  if (!targetTaskUID) {
+    return unknownTask();
+  }
   for (const stage of rollout?.stages ?? []) {
     for (const task of stage.tasks) {
-      if (task.name == name) {
+      if (extractTaskUID(task.name) === targetTaskUID) {
         return task;
       }
     }
@@ -147,17 +173,16 @@ export const findStageByName = (
   rollout: Rollout | undefined,
   name: string
 ): Stage => {
-  return (rollout?.stages ?? []).find((s) => s.name === name) ?? unknownStage();
-};
-
-export const extractSchemaVersionFromTask = (task: Task): string => {
-  // The schema version is specified in the filename
-  // parsed and stored to the payload.schemaVersion
-  // fallback to empty if we can't read the field.
-  if (task.payload?.case === "databaseUpdate") {
-    return task.payload.value.schemaVersion ?? "";
+  // Use stage ID for comparison to handle legacy data with malformed stage IDs.
+  const targetStageUID = extractStageUID(name);
+  if (!targetStageUID) {
+    return unknownStage();
   }
-  return "";
+  return (
+    (rollout?.stages ?? []).find(
+      (s) => extractStageUID(s.name) === targetStageUID
+    ) ?? unknownStage()
+  );
 };
 
 export const sheetNameOfTaskV1 = (task: Task): string => {
@@ -165,7 +190,11 @@ export const sheetNameOfTaskV1 = (task: Task): string => {
     return task.payload.value.sheet ?? "";
   }
   if (task.payload?.case === "databaseUpdate") {
-    return task.payload.value.sheet ?? "";
+    // Task.DatabaseUpdate now uses oneof source { sheet | release }
+    if (task.payload.value.source.case === "sheet") {
+      return task.payload.value.source.value ?? "";
+    }
+    return "";
   }
   if (task.payload?.case === "databaseDataExport") {
     return task.payload.value.sheet ?? "";
@@ -177,10 +206,24 @@ export const setSheetNameForTask = (task: Task, sheetName: string) => {
   if (task.payload?.case === "databaseCreate") {
     task.payload.value.sheet = sheetName;
   } else if (task.payload?.case === "databaseUpdate") {
-    task.payload.value.sheet = sheetName;
+    // Task.DatabaseUpdate now uses oneof source { sheet | release }
+    task.payload.value.source = {
+      case: "sheet",
+      value: sheetName,
+    };
   } else if (task.payload?.case === "databaseDataExport") {
     task.payload.value.sheet = sheetName;
   }
+};
+
+export const releaseNameOfTaskV1 = (task: Task): string => {
+  if (task.payload?.case === "databaseUpdate") {
+    // Task.DatabaseUpdate now uses oneof source { sheet | release }
+    if (task.payload.value.source.case === "release") {
+      return task.payload.value.source.value ?? "";
+    }
+  }
+  return "";
 };
 
 export const stringifyTaskStatus = (
@@ -202,6 +245,8 @@ export const stringifyTaskStatus = (
       return t("task.status.canceled");
     case Task_Status.SKIPPED:
       return t("task.status.skipped");
+    case TaskRun_Status.AVAILABLE:
+      return t("task.status.available");
     default:
       return Task_Status[status] || String(status);
   }
@@ -211,57 +256,36 @@ export const getStageStatus = (stage: Stage): Task_Status => {
   const tasks = stage.tasks;
   if (tasks.length === 0) return Task_Status.NOT_STARTED;
 
-  // Priority order for stage status:
-  // 1. Failed - if any task failed
-  // 2. Canceled - if any task canceled (and none failed)
-  // 3. Running - if any task is running
-  // 4. Pending - if any task is pending
-  // 5. Not Started - if all tasks are not started
-  // 6. Skipped - if all tasks are skipped
-  // 7. Done - if all tasks are done
-
-  // Check for any failed tasks
-  if (tasks.some((task) => task.status === Task_Status.FAILED)) {
-    return Task_Status.FAILED;
+  // Priority order follows TASK_STATUS_FILTERS
+  for (const status of TASK_STATUS_FILTERS) {
+    if (tasks.some((task) => task.status === status)) {
+      return status;
+    }
   }
 
-  // Check for any canceled tasks
-  if (tasks.some((task) => task.status === Task_Status.CANCELED)) {
-    return Task_Status.CANCELED;
-  }
-
-  // Check for any running tasks
-  if (tasks.some((task) => task.status === Task_Status.RUNNING)) {
-    return Task_Status.RUNNING;
-  }
-
-  // Check for any pending tasks
-  if (tasks.some((task) => task.status === Task_Status.PENDING)) {
-    return Task_Status.PENDING;
-  }
-
-  // Check if all tasks are done
-  if (tasks.every((task) => task.status === Task_Status.DONE)) {
-    return Task_Status.DONE;
-  }
-
-  // Check if all tasks are skipped
-  if (tasks.every((task) => task.status === Task_Status.SKIPPED)) {
-    return Task_Status.SKIPPED;
-  }
-
-  // Default to not started
   return Task_Status.NOT_STARTED;
 };
 
-export const databaseForTask = (project: Project, task: Task) => {
+export const getRolloutStatus = (rollout: Rollout): Task_Status => {
+  const stages = rollout.stages;
+  if (stages.length === 0) return Task_Status.NOT_STARTED;
+
+  for (const status of TASK_STATUS_FILTERS) {
+    if (stages.some((stage) => getStageStatus(stage) === status)) {
+      return status;
+    }
+  }
+
+  return Task_Status.NOT_STARTED;
+};
+
+export const databaseForTask = (project: Project, task: Task, plan?: Plan) => {
   switch (task.type) {
     case Task_Type.DATABASE_CREATE:
       // The database is not created yet.
       // extract database info from the task's and payload's properties.
-      return extractCoreDatabaseInfoFromDatabaseCreateTask(project, task);
+      return extractCoreDatabaseInfoFromDatabaseCreateTask(project, task, plan);
     case Task_Type.DATABASE_MIGRATE:
-    case Task_Type.DATABASE_SDL:
     case Task_Type.DATABASE_EXPORT:
       const db = useDatabaseV1Store().getDatabaseByName(task.target);
       if (!isValidDatabaseName(db.name)) {
@@ -271,4 +295,12 @@ export const databaseForTask = (project: Project, task: Task) => {
     default:
       return unknownDatabase();
   }
+};
+
+export const isReleaseBasedTask = (task: Task): boolean => {
+  if (task.payload?.case === "databaseUpdate") {
+    return task.payload.value.source?.case === "release";
+  }
+
+  return false;
 };

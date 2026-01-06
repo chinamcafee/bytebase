@@ -1,7 +1,7 @@
 <template>
   <NSelect
     v-bind="$attrs"
-    :value="value ? value : undefined"
+    :value="value"
     :multiple="multiple"
     :disabled="disabled"
     :clearable="clearable"
@@ -10,6 +10,7 @@
     :filterable="true"
     :render-label="renderLabel"
     :placeholder="$t('settings.members.select-role', multiple ? 2 : 1)"
+    to="body"
     @update:value="onValueUpdate"
   />
   <FeatureModal
@@ -22,11 +23,11 @@
 <script setup lang="tsx">
 import type { SelectGroupOption, SelectOption } from "naive-ui";
 import { NSelect } from "naive-ui";
-import { computed, ref, h } from "vue";
+import { computed, h, ref } from "vue";
 import FeatureBadge from "@/components/FeatureGuard/FeatureBadge.vue";
 import FeatureModal from "@/components/FeatureGuard/FeatureModal.vue";
 import { t } from "@/plugins/i18n";
-import { useRoleStore, featureToRef } from "@/store";
+import { featureToRef, useRoleStore } from "@/store";
 import {
   PRESET_PROJECT_ROLES,
   PRESET_ROLES,
@@ -43,20 +44,15 @@ const props = withDefaults(
     multiple?: boolean;
     suffix?: string;
     includeWorkspaceRoles?: boolean;
-    size?: "tiny" | "small" | "medium" | "large";
-    supportRoles?: string[];
+    filter?: (role: string) => boolean;
   }>(),
   {
     clearable: true,
-    value: undefined,
-    multiple: false,
     includeWorkspaceRoles: true,
     suffix: () =>
       ` (${t("common.optional")}, ${t(
         "role.project-roles.apply-to-all-projects"
       ).toLocaleLowerCase()})`,
-    size: "medium",
-    supportRoles: () => [],
   }
 );
 
@@ -69,10 +65,10 @@ const showFeatureModal = ref(false);
 const hasCustomRoleFeature = featureToRef(PlanFeature.FEATURE_CUSTOM_ROLES);
 
 const filterRole = (role: string) => {
-  if (!props.supportRoles || props.supportRoles.length === 0) {
+  if (!props.filter) {
     return true;
   }
-  return props.supportRoles.includes(role);
+  return props.filter(role);
 };
 
 const availableRoleOptions = computed(

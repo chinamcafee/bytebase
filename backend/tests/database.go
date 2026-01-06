@@ -10,7 +10,7 @@ import (
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 )
 
-func (ctl *controller) createDatabaseV2(ctx context.Context, project *v1pb.Project, instance *v1pb.Instance, environment *v1pb.EnvironmentSetting_Environment, databaseName string, owner string) error {
+func (ctl *controller) createDatabase(ctx context.Context, project *v1pb.Project, instance *v1pb.Instance, environment *v1pb.EnvironmentSetting_Environment, databaseName string, owner string) error {
 	characterSet, collation := "utf8mb4", "utf8mb4_general_ci"
 	if instance.Engine == v1pb.Engine_POSTGRES {
 		characterSet = "UTF8"
@@ -56,22 +56,10 @@ func (ctl *controller) createDatabaseV2(ctx context.Context, project *v1pb.Proje
 	if err != nil {
 		return err
 	}
-	rolloutResp, err := ctl.rolloutServiceClient.CreateRollout(ctx, connect.NewRequest(&v1pb.CreateRolloutRequest{Parent: project.Name, Rollout: &v1pb.Rollout{Plan: planResp.Msg.Name}}))
+	rolloutResp, err := ctl.rolloutServiceClient.CreateRollout(ctx, connect.NewRequest(&v1pb.CreateRolloutRequest{Parent: planResp.Msg.Name}))
 	if err != nil {
 		return err
 	}
 
-	if err := ctl.waitRollout(ctx, issueResp.Msg.Name, rolloutResp.Msg.Name); err != nil {
-		return err
-	}
-
-	_, err = ctl.issueServiceClient.BatchUpdateIssuesStatus(ctx, connect.NewRequest(&v1pb.BatchUpdateIssuesStatusRequest{
-		Parent: project.Name,
-		Issues: []string{issueResp.Msg.Name},
-		Status: v1pb.IssueStatus_DONE,
-	}))
-	if err != nil {
-		return err
-	}
-	return nil
+	return ctl.waitRollout(ctx, issueResp.Msg.Name, rolloutResp.Msg.Name)
 }

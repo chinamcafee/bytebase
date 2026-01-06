@@ -6,13 +6,14 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	"github.com/pkg/errors"
 
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	advisorcode "github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -24,8 +25,8 @@ const (
 var _ advisor.Advisor = (*UseInnoDBAdvisor)(nil)
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleMySQLEngine, &UseInnoDBAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleMySQLEngine, &UseInnoDBAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_ENGINE_MYSQL_USE_INNODB, &UseInnoDBAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_ENGINE_MYSQL_USE_INNODB, &UseInnoDBAdvisor{})
 }
 
 // UseInnoDBAdvisor is the advisor checking for using InnoDB engine.
@@ -34,26 +35,28 @@ type UseInnoDBAdvisor struct {
 
 // Check checks for using InnoDB engine.
 func (*UseInnoDBAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	list, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewUseInnoDBRule(level, string(checkCtx.Rule.Type))
+	rule := NewUseInnoDBRule(level, checkCtx.Rule.Type.String())
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range list {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -126,7 +129,7 @@ func (r *UseInnoDBRule) checkAlterTable(ctx *mysql.AlterTableContext) {
 	if ctx.AlterTableActions().AlterCommandList().AlterList() == nil {
 		return
 	}
-	code := advisor.Ok
+	code := advisorcode.Ok
 	for _, option := range ctx.AlterTableActions().AlterCommandList().AlterList().AllCreateTableOptionsSpaceSeparated() {
 		for _, op := range option.AllCreateTableOption() {
 			if op.ENGINE_SYMBOL() != nil {
@@ -135,14 +138,14 @@ func (r *UseInnoDBRule) checkAlterTable(ctx *mysql.AlterTableContext) {
 				}
 				engine := op.EngineRef().GetText()
 				if strings.ToLower(engine) != innoDB {
-					code = advisor.NotInnoDBEngine
+					code = advisorcode.NotInnoDBEngine
 					break
 				}
 			}
 		}
 	}
 
-	if code != advisor.Ok {
+	if code != advisorcode.Ok {
 		content := "ALTER " + ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx)
 		line := ctx.GetStart().GetLine()
 		r.addAdvice(content, line)
@@ -150,7 +153,7 @@ func (r *UseInnoDBRule) checkAlterTable(ctx *mysql.AlterTableContext) {
 }
 
 func (r *UseInnoDBRule) checkSetStatement(ctx *mysql.SetStatementContext) {
-	code := advisor.Ok
+	code := advisorcode.Ok
 	if ctx.StartOptionValueList() == nil {
 		return
 	}
@@ -170,11 +173,11 @@ func (r *UseInnoDBRule) checkSetStatement(ctx *mysql.SetStatementContext) {
 	if optionValueNoOptionType.SetExprOrDefault() != nil {
 		engine := optionValueNoOptionType.SetExprOrDefault().GetText()
 		if strings.ToLower(engine) != innoDB {
-			code = advisor.NotInnoDBEngine
+			code = advisorcode.NotInnoDBEngine
 		}
 	}
 
-	if code != advisor.Ok {
+	if code != advisorcode.Ok {
 		content := ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx)
 		line := ctx.GetStart().GetLine()
 		r.addAdvice(content, line)
@@ -185,7 +188,7 @@ func (r *UseInnoDBRule) addAdvice(content string, lineNumber int) {
 	lineNumber += r.baseLine
 	r.AddAdvice(&storepb.Advice{
 		Status:        r.level,
-		Code:          advisor.NotInnoDBEngine.Int32(),
+		Code:          advisorcode.NotInnoDBEngine.Int32(),
 		Title:         r.title,
 		Content:       fmt.Sprintf("\"%s;\" doesn't use InnoDB engine", content),
 		StartPosition: common.ConvertANTLRLineToPosition(lineNumber),

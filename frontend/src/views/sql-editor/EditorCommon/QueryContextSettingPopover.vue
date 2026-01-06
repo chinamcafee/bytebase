@@ -85,29 +85,11 @@
           {{ $t("sql-editor.redis-command.only-for-cluster") }}
         </NTooltip>
         <div class="border-t pt-1">
-          <ResultLimitSelect
-            placement="right-start"
-            trigger="hover"
-            :maximum="policyStore.maximumResultRows"
-          >
-            <template
-              #default="{ resultRowsLimit }: { resultRowsLimit: number }"
-            >
-              <NButton
-                icon-placement="right"
-                quaternary
-                style="justify-content: start; --n-padding: 0 8px; width: 100%"
-              >
-                {{ $t("sql-editor.result-limit.self") }}
-                {{
-                  $t("sql-editor.result-limit.n-rows", { n: resultRowsLimit })
-                }}
-                <template #icon>
-                  <ChevronRight />
-                </template>
-              </NButton>
-            </template>
-          </ResultLimitSelect>
+          <MaxRowCountSelect
+            v-model:value="resultRowsLimit"
+            :quaternary="true"
+            :maximum-export-count="maximumResultRows"
+          />
         </div>
       </div>
     </template>
@@ -116,32 +98,35 @@
 
 <script lang="ts" setup>
 import { orderBy } from "lodash-es";
-import { ChevronDown, ChevronRight } from "lucide-vue-next";
-import { NButton, NPopover, NRadioGroup, NRadio, NTooltip } from "naive-ui";
+import { ChevronDown } from "lucide-vue-next";
+import { NButton, NPopover, NRadio, NRadioGroup, NTooltip } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { computed, watch, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
+import MaxRowCountSelect from "@/components/GrantRequestPanel/MaxRowCountSelect.vue";
 import {
   useConnectionOfCurrentSQLEditorTab,
   usePolicyV1Store,
-  useSQLEditorTabStore,
   useSQLEditorStore,
+  useSQLEditorTabStore,
 } from "@/store";
 import { isValidDatabaseName } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import type { DataSource } from "@/types/proto-es/v1/instance_service_pb";
 import {
-  DataSourceType,
   DataSource_RedisType,
+  DataSourceType,
 } from "@/types/proto-es/v1/instance_service_pb";
 import {
   DataSourceQueryPolicy_Restriction,
   PolicyType,
 } from "@/types/proto-es/v1/org_policy_service_pb";
 import { QueryOption_RedisRunCommandsOn } from "@/types/proto-es/v1/sql_service_pb";
-import { getValidDataSourceByPolicy, readableDataSourceType } from "@/utils";
-import { getAdminDataSourceRestrictionOfDatabase } from "@/utils";
-import ResultLimitSelect from "./ResultLimitSelect.vue";
+import {
+  getAdminDataSourceRestrictionOfDatabase,
+  getValidDataSourceByPolicy,
+  readableDataSourceType,
+} from "@/utils";
 
 defineProps<{
   disabled?: boolean;
@@ -152,8 +137,14 @@ const tabStore = useSQLEditorTabStore();
 const { connection, database } = useConnectionOfCurrentSQLEditorTab();
 const policyStore = usePolicyV1Store();
 
-const { redisCommandOption, resultRowsLimit } =
-  storeToRefs(useSQLEditorStore());
+const { redisCommandOption, resultRowsLimit, project } = storeToRefs(
+  useSQLEditorStore()
+);
+
+const maximumResultRows = computed(() => {
+  return policyStore.getEffectiveQueryDataPolicyForProject(project.value)
+    .maximumResultRows;
+});
 
 const show = computed(() => {
   return tabStore.currentTab?.mode !== "ADMIN";
@@ -272,8 +263,8 @@ watch(
 );
 
 watchEffect(() => {
-  if (resultRowsLimit.value > policyStore.maximumResultRows) {
-    resultRowsLimit.value = policyStore.maximumResultRows;
+  if (resultRowsLimit.value > maximumResultRows.value) {
+    resultRowsLimit.value = maximumResultRows.value;
   }
 });
 </script>

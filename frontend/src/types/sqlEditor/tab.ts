@@ -1,14 +1,11 @@
-import type {
-  AdviceOption,
-  Selection as MonacoSelection,
-} from "@/components/MonacoEditor";
+import type { Selection as MonacoSelection } from "@/components/MonacoEditor";
 import { t } from "@/plugins/i18n";
 import { DataSourceType } from "@/types/proto-es/v1/instance_service_pb";
 import type { SQLResultSetV1 } from "../v1/sql";
 import type { SQLEditorConnection, SQLEditorQueryParams } from "./editor";
+import type { EditorPanelViewState } from "./tabViewState";
 
 export type SQLEditorTabStatus =
-  | "NEW" // just created and untouched
   | "DIRTY" // edited
   | "CLEAN"; // saved to a remote sheet
 
@@ -81,7 +78,7 @@ export type SQLEditorTab = {
     string /* database or instance */,
     SQLEditorDatabaseQueryContext[]
   >;
-  batchQueryContext?: BatchQueryContext;
+  batchQueryContext: BatchQueryContext;
 
   // extended fields
   treeState: {
@@ -90,8 +87,8 @@ export type SQLEditorTab = {
   };
   editorState: {
     selection: MonacoSelection | null;
-    advices: AdviceOption[];
   };
+  viewState: EditorPanelViewState;
 };
 
 export type CoreSQLEditorTab = Pick<

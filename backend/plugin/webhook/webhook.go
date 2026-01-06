@@ -16,7 +16,7 @@ import (
 
 var (
 	receiverMu sync.RWMutex
-	receivers  = make(map[storepb.ProjectWebhook_Type]Receiver)
+	receivers  = make(map[storepb.WebhookType]Receiver)
 	// Based on the local test, Teams sometimes cannot finish the request in 1 second, so use 3s.
 	Timeout = 3 * time.Second
 )
@@ -48,26 +48,17 @@ type Issue struct {
 	Status      string
 	Type        string
 	Description string
-	Creator     *store.UserMessage
+	Creator     Creator
+}
+
+type Creator struct {
+	Name  string
+	Email string
 }
 
 type Rollout struct {
 	UID   int
 	Title string
-}
-
-type Stage struct {
-	Name string
-}
-
-// TaskResult is the latest result of a task.
-// The `detail` field is only present if the status is TaskFailed.
-// The `SkippedReason` field is only present if the task is skipped.
-type TaskResult struct {
-	Name          string
-	Status        string
-	Detail        string
-	SkippedReason string
 }
 
 // Project object of project.
@@ -91,15 +82,24 @@ type Context struct {
 	CreatedTS   int64
 	Issue       *Issue
 	Rollout     *Rollout
-	Stage       *Stage
 	Project     *Project
-	TaskResult  *TaskResult
 	// End users that should be mentioned.
-	MentionEndUsers     []*store.UserMessage
-	MentionUsersByPhone []string
+	MentionEndUsers []*store.UserMessage
 
 	DirectMessage bool
 	IMSetting     *storepb.AppIMSetting
+
+	// Event-specific data
+	FailedTasks []FailedTaskInfo
+}
+
+// FailedTaskInfo contains information about a failed task.
+type FailedTaskInfo struct {
+	Name         string
+	Instance     string
+	Database     string
+	ErrorMessage string
+	FailedAt     string
 }
 
 // Receiver is the webhook receiver.
@@ -142,38 +142,6 @@ func (c *Context) GetMetaList() []Meta {
 		}
 	}
 
-	if c.Stage != nil {
-		m = append(m, Meta{
-			Name:  "Stage",
-			Value: c.Stage.Name,
-		})
-	}
-
-	if c.TaskResult != nil {
-		if c.TaskResult.Name != "" {
-			m = append(m, Meta{
-				Name:  "Task",
-				Value: c.TaskResult.Name,
-			})
-		}
-		m = append(m, Meta{
-			Name:  "Status",
-			Value: c.TaskResult.Status,
-		})
-		if c.TaskResult.Detail != "" {
-			m = append(m, Meta{
-				Name:  "Result Detail",
-				Value: common.TruncateStringWithDescription(c.TaskResult.Detail),
-			})
-		}
-		if c.TaskResult.SkippedReason != "" {
-			m = append(m, Meta{
-				Name:  "Skipped Reason",
-				Value: c.TaskResult.SkippedReason,
-			})
-		}
-	}
-
 	return m
 }
 
@@ -212,45 +180,13 @@ func (c *Context) GetMetaListZh() []Meta {
 		}
 	}
 
-	if c.Stage != nil {
-		m = append(m, Meta{
-			Name:  "阶段",
-			Value: c.Stage.Name,
-		})
-	}
-
-	if c.TaskResult != nil {
-		if c.TaskResult.Name != "" {
-			m = append(m, Meta{
-				Name:  "任务",
-				Value: c.TaskResult.Name,
-			})
-		}
-		m = append(m, Meta{
-			Name:  "状态",
-			Value: c.TaskResult.Status,
-		})
-		if c.TaskResult.Detail != "" {
-			m = append(m, Meta{
-				Name:  "结果详情",
-				Value: common.TruncateStringWithDescription(c.TaskResult.Detail),
-			})
-		}
-		if c.TaskResult.SkippedReason != "" {
-			m = append(m, Meta{
-				Name:  "跳过原因",
-				Value: c.TaskResult.SkippedReason,
-			})
-		}
-	}
-
 	return m
 }
 
 // Register makes a receiver available by the webhook type
 // If Register is called twice with the same type or if receiver is nil,
 // it panics.
-func Register(webhookType storepb.ProjectWebhook_Type, r Receiver) {
+func Register(webhookType storepb.WebhookType, r Receiver) {
 	receiverMu.Lock()
 	defer receiverMu.Unlock()
 	if r == nil {
@@ -263,7 +199,7 @@ func Register(webhookType storepb.ProjectWebhook_Type, r Receiver) {
 }
 
 // Post posts the message to webhook.
-func Post(webhookType storepb.ProjectWebhook_Type, context Context) error {
+func Post(webhookType storepb.WebhookType, context Context) error {
 	receiverMu.RLock()
 	r, ok := receivers[webhookType]
 	receiverMu.RUnlock()

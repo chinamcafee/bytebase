@@ -19,18 +19,19 @@
 import { orderBy } from "lodash-es";
 import type {
   DataTableColumn,
-  DataTableRowKey,
   DataTableRowData,
+  DataTableRowKey,
 } from "naive-ui";
 import { NDataTable } from "naive-ui";
 import { computed, h, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import GroupMemberNameCell from "@/components/User/Settings/UserDataTableByGroup/cells/GroupMemberNameCell.vue";
 import GroupNameCell from "@/components/User/Settings/UserDataTableByGroup/cells/GroupNameCell.vue";
+import { UserNameCell } from "@/components/v2/Model/cells";
 import { useUserStore } from "@/store";
+import { unknownUser } from "@/types";
 import type { User } from "@/types/proto-es/v1/user_service_pb";
 import type { MemberBinding } from "../types";
-import UserNameCell from "./cells/UserNameCell.vue";
 import UserOperationsCell from "./cells/UserOperationsCell.vue";
 import UserRolesCell from "./cells/UserRolesCell.vue";
 
@@ -85,10 +86,9 @@ const onGroupLoad = async (row: DataTableRowData) => {
     return;
   }
 
-  const memberUserIds = binding.group.members.map((m) => m.member);
-  if (memberUserIds.length > 0) {
-    await userStore.batchGetUsers(memberUserIds);
-  }
+  await userStore.batchGetOrFetchUsers(
+    binding.group.members.map((m) => m.member)
+  );
 
   const children: UserRoleData[] = [];
   for (const member of binding.group.members) {
@@ -154,7 +154,12 @@ const columns = computed(
             );
           }
           return (
-            <UserNameCell binding={binding} onClickUser={props.onClickUser} />
+            <UserNameCell
+              user={binding.user ?? unknownUser()}
+              onClickUser={props.onClickUser}
+              allowEdit={false}
+              showMfaEnabled={false}
+            />
           );
         },
       },

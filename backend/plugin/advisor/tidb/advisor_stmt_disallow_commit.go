@@ -7,11 +7,11 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 )
 
 var (
@@ -20,7 +20,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleStatementDisallowCommit, &StatementDisallowCommitAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_STATEMENT_DISALLOW_COMMIT, &StatementDisallowCommitAdvisor{})
 }
 
 // StatementDisallowCommitAdvisor is the advisor checking for index type no blob.
@@ -29,9 +29,10 @@ type StatementDisallowCommitAdvisor struct {
 
 // Check checks for index type no blob.
 func (*StatementDisallowCommitAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -40,7 +41,7 @@ func (*StatementDisallowCommitAdvisor) Check(_ context.Context, checkCtx advisor
 	}
 	checker := &statementDisallowCommitChecker{
 		level: level,
-		title: string(checkCtx.Rule.Type),
+		title: checkCtx.Rule.Type.String(),
 	}
 
 	for _, stmt := range stmtList {
@@ -65,7 +66,7 @@ func (c *statementDisallowCommitChecker) Enter(in ast.Node) (ast.Node, bool) {
 	if _, ok := in.(*ast.CommitStmt); ok {
 		c.adviceList = append(c.adviceList, &storepb.Advice{
 			Status:        c.level,
-			Code:          advisor.StatementDisallowCommit.Int32(),
+			Code:          code.StatementDisallowCommit.Int32(),
 			Title:         c.title,
 			Content:       fmt.Sprintf("Commit is not allowed, related statement: \"%s\"", c.text),
 			StartPosition: common.ConvertANTLRLineToPosition(c.line),

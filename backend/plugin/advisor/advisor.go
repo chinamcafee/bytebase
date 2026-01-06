@@ -13,8 +13,8 @@ import (
 
 	"github.com/bytebase/bytebase/backend/common/log"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 const (
@@ -23,11 +23,11 @@ const (
 )
 
 // NewStatusBySQLReviewRuleLevel returns status by SQLReviewRuleLevel.
-func NewStatusBySQLReviewRuleLevel(level storepb.SQLReviewRuleLevel) (storepb.Advice_Status, error) {
+func NewStatusBySQLReviewRuleLevel(level storepb.SQLReviewRule_Level) (storepb.Advice_Status, error) {
 	switch level {
-	case storepb.SQLReviewRuleLevel_ERROR:
+	case storepb.SQLReviewRule_ERROR:
 		return storepb.Advice_ERROR, nil
-	case storepb.SQLReviewRuleLevel_WARNING:
+	case storepb.SQLReviewRule_WARNING:
 		return storepb.Advice_WARNING, nil
 	default:
 		return storepb.Advice_STATUS_UNSPECIFIED, errors.Errorf("unexpected rule level type: %s", level)
@@ -37,26 +37,36 @@ func NewStatusBySQLReviewRuleLevel(level storepb.SQLReviewRuleLevel) (storepb.Ad
 // Context is the context for advisor.
 type Context struct {
 	DBSchema              *storepb.DatabaseSchemaMetadata
-	ChangeType            storepb.PlanCheckRunConfig_ChangeDatabaseType
 	EnablePriorBackup     bool
-	ClassificationConfig  *storepb.DataClassificationSetting_DataClassificationConfig
+	EnableGhost           bool
 	ListDatabaseNamesFunc base.ListDatabaseNamesFunc
 	InstanceID            string
 	IsObjectCaseSensitive bool
 
 	// SQL review rule special fields.
-	AST     any
-	Rule    *storepb.SQLReviewRule
-	Catalog *catalog.Finder
-	Driver  *sql.DB
+	Rule             *storepb.SQLReviewRule
+	OriginalMetadata *model.DatabaseMetadata
+	FinalMetadata    *model.DatabaseMetadata
+	Driver           *sql.DB
+	// ParsedStatements contains complete per-statement info including text.
+	ParsedStatements []base.ParsedStatement
 
 	// CurrentDatabase is the current database.
 	CurrentDatabase string
-	// Statement is the original statement of AST, it is used for some PostgreSQL
-	// advisors which need to check the token stream.
-	Statements string
-	// UsePostgresDatabaseOwner is true if the advisor should use the database owner as default role.
-	UsePostgresDatabaseOwner bool
+	// StatementsTotalSize is the total size of all statements in bytes.
+	// Used for size limit checks without needing the full statement text.
+	StatementsTotalSize int
+	// TenantMode indicates whether to use database owner role for PostgreSQL tenant mode.
+	TenantMode bool
+
+	// SQL review level fields.
+	DBType storepb.Engine
+
+	// Snowflake specific fields (duplicates CurrentDatabase, kept for compatibility).
+	// CurrentDatabase string
+
+	// Used for test only.
+	NoAppendBuiltin bool
 }
 
 // Advisor is the interface for advisor.
@@ -66,13 +76,13 @@ type Advisor interface {
 
 var (
 	advisorMu sync.RWMutex
-	advisors  = make(map[storepb.Engine]map[SQLReviewRuleType]Advisor)
+	advisors  = make(map[storepb.Engine]map[storepb.SQLReviewRule_Type]Advisor)
 )
 
 // Register makes a advisor available by the provided id.
 // If Register is called twice with the same name or if advisor is nil,
 // it panics.
-func Register(dbType storepb.Engine, ruleType SQLReviewRuleType, f Advisor) {
+func Register(dbType storepb.Engine, ruleType storepb.SQLReviewRule_Type, f Advisor) {
 	advisorMu.Lock()
 	defer advisorMu.Unlock()
 	if f == nil {
@@ -80,7 +90,7 @@ func Register(dbType storepb.Engine, ruleType SQLReviewRuleType, f Advisor) {
 	}
 	dbAdvisors, ok := advisors[dbType]
 	if !ok {
-		advisors[dbType] = map[SQLReviewRuleType]Advisor{
+		advisors[dbType] = map[storepb.SQLReviewRule_Type]Advisor{
 			ruleType: f,
 		}
 	} else {
@@ -92,7 +102,7 @@ func Register(dbType storepb.Engine, ruleType SQLReviewRuleType, f Advisor) {
 }
 
 // Check runs the advisor and returns the advices.
-func Check(ctx context.Context, dbType storepb.Engine, ruleType SQLReviewRuleType, checkCtx Context) (adviceList []*storepb.Advice, err error) {
+func Check(ctx context.Context, dbType storepb.Engine, ruleType storepb.SQLReviewRule_Type, checkCtx Context) (adviceList []*storepb.Advice, err error) {
 	defer func() {
 		if panicErr := recover(); panicErr != nil {
 			panicErr, ok := panicErr.(error)

@@ -33,13 +33,8 @@ func (x *TaskRunLog_CommandExecute) Equal(y *TaskRunLog_CommandExecute) bool {
 	if x == nil || y == nil {
 		return x == nil && y == nil
 	}
-	if len(x.CommandIndexes) != len(y.CommandIndexes) {
+	if !x.Range.Equal(y.Range) {
 		return false
-	}
-	for i := 0; i < len(x.CommandIndexes); i++ {
-		if x.CommandIndexes[i] != y.CommandIndexes[i] {
-			return false
-		}
 	}
 	if x.Statement != y.Statement {
 		return false
@@ -53,14 +48,6 @@ func (x *TaskRunLog_CommandResponse) Equal(y *TaskRunLog_CommandResponse) bool {
 	}
 	if x == nil || y == nil {
 		return x == nil && y == nil
-	}
-	if len(x.CommandIndexes) != len(y.CommandIndexes) {
-		return false
-	}
-	for i := 0; i < len(x.CommandIndexes); i++ {
-		if x.CommandIndexes[i] != y.CommandIndexes[i] {
-			return false
-		}
 	}
 	if x.Error != y.Error {
 		return false
@@ -97,19 +84,6 @@ func (x *TaskRunLog_DatabaseSyncEnd) Equal(y *TaskRunLog_DatabaseSyncEnd) bool {
 		return x == nil && y == nil
 	}
 	if x.Error != y.Error {
-		return false
-	}
-	return true
-}
-
-func (x *TaskRunLog_TaskRunStatusUpdate) Equal(y *TaskRunLog_TaskRunStatusUpdate) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Status != y.Status {
 		return false
 	}
 	return true
@@ -199,6 +173,22 @@ func (x *TaskRunLog_ComputeDiffEnd) Equal(y *TaskRunLog_ComputeDiffEnd) bool {
 	return true
 }
 
+func (x *TaskRunLog_ReleaseFileExecute) Equal(y *TaskRunLog_ReleaseFileExecute) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if x.Version != y.Version {
+		return false
+	}
+	if x.FilePath != y.FilePath {
+		return false
+	}
+	return true
+}
+
 func (x *TaskRunLog) Equal(y *TaskRunLog) bool {
 	if x == y {
 		return true
@@ -230,9 +220,6 @@ func (x *TaskRunLog) Equal(y *TaskRunLog) bool {
 	if !x.DatabaseSyncEnd.Equal(y.DatabaseSyncEnd) {
 		return false
 	}
-	if !x.TaskRunStatusUpdate.Equal(y.TaskRunStatusUpdate) {
-		return false
-	}
 	if !x.TransactionControl.Equal(y.TransactionControl) {
 		return false
 	}
@@ -250,6 +237,68 @@ func (x *TaskRunLog) Equal(y *TaskRunLog) bool {
 	}
 	if !x.ComputeDiffEnd.Equal(y.ComputeDiffEnd) {
 		return false
+	}
+	if !x.ReleaseFileExecute.Equal(y.ReleaseFileExecute) {
+		return false
+	}
+	return true
+}
+
+func (x *PriorBackupDetail_Item_Table) Equal(y *PriorBackupDetail_Item_Table) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if x.Database != y.Database {
+		return false
+	}
+	if x.Schema != y.Schema {
+		return false
+	}
+	if x.Table != y.Table {
+		return false
+	}
+	return true
+}
+
+func (x *PriorBackupDetail_Item) Equal(y *PriorBackupDetail_Item) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if !x.SourceTable.Equal(y.SourceTable) {
+		return false
+	}
+	if !x.TargetTable.Equal(y.TargetTable) {
+		return false
+	}
+	if !x.StartPosition.Equal(y.StartPosition) {
+		return false
+	}
+	if !x.EndPosition.Equal(y.EndPosition) {
+		return false
+	}
+	return true
+}
+
+func (x *PriorBackupDetail) Equal(y *PriorBackupDetail) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if len(x.Items) != len(y.Items) {
+		return false
+	}
+	for i := 0; i < len(x.Items); i++ {
+		if !x.Items[i].Equal(y.Items[i]) {
+			return false
+		}
 	}
 	return true
 }

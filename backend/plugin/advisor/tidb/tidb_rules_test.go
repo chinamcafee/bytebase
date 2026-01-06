@@ -8,117 +8,59 @@ import (
 )
 
 func TestTiDBRules(t *testing.T) {
-	tidbRules := []advisor.SQLReviewRuleType{
-		// advisor.SchemaRuleTableNaming enforce the table name format.
-		advisor.SchemaRuleTableNaming,
-		// advisor.SchemaRuleColumnNaming enforce the column name format.
-		advisor.SchemaRuleColumnNaming,
-		// advisor.SchemaRuleUKNaming enforce the unique key name format.
-		advisor.SchemaRuleUKNaming,
-		// advisor.SchemaRuleFKNaming enforce the foreign key name format.
-		advisor.SchemaRuleFKNaming,
-		// advisor.SchemaRuleIDXNaming enforce the index name format.
-		advisor.SchemaRuleIDXNaming,
-		// advisor.SchemaRuleAutoIncrementColumnNaming enforce the auto_increment column name format.
-		advisor.SchemaRuleAutoIncrementColumnNaming,
-
-		// advisor.SchemaRuleStatementNoSelectAll disallow 'SELECT *'.
-		advisor.SchemaRuleStatementNoSelectAll,
-		// advisor.SchemaRuleStatementRequireWhereForSelect require 'WHERE' clause for SELECT statement.
-		advisor.SchemaRuleStatementRequireWhereForSelect,
-		// advisor.SchemaRuleStatementRequireWhereForUpdateDelete require 'WHERE' clause for UPDATE and DELETE statement.
-		advisor.SchemaRuleStatementRequireWhereForUpdateDelete,
-		// advisor.SchemaRuleStatementNoLeadingWildcardLike disallow leading '%' in LIKE, e.g. LIKE foo = '%x' is not allowed.
-		advisor.SchemaRuleStatementNoLeadingWildcardLike,
-		// advisor.SchemaRuleStatementDisallowCommit disallow using commit in the issue.
-		advisor.SchemaRuleStatementDisallowCommit,
-		// advisor.SchemaRuleStatementDisallowLimit disallow the LIMIT clause in INSERT, DELETE and UPDATE statements.
-		advisor.SchemaRuleStatementDisallowLimit,
-		// advisor.SchemaRuleStatementDisallowOrderBy disallow the ORDER BY clause in DELETE and UPDATE statements.
-		advisor.SchemaRuleStatementDisallowOrderBy,
-		// advisor.SchemaRuleStatementMergeAlterTable disallow redundant ALTER TABLE statements.
-		advisor.SchemaRuleStatementMergeAlterTable,
-		// advisor.SchemaRuleStatementInsertMustSpecifyColumn enforce the insert column specified.
-		advisor.SchemaRuleStatementInsertMustSpecifyColumn,
-		// advisor.SchemaRuleStatementInsertDisallowOrderByRand disallow the order by rand in the INSERT statement.
-		advisor.SchemaRuleStatementInsertDisallowOrderByRand,
-		// advisor.SchemaRuleStatementDMLDryRun dry run the dml.
-		advisor.SchemaRuleStatementDMLDryRun,
-		advisor.SchemaRuleStatementMaximumLimitValue,
-
-		// advisor.SchemaRuleTableRequirePK require the table to have a primary key.
-		advisor.SchemaRuleTableRequirePK,
-		// advisor.SchemaRuleTableNoFK require the table disallow the foreign key.
-		advisor.SchemaRuleTableNoFK,
-		// advisor.SchemaRuleTableDropNamingConvention require only the table following the naming convention can be deleted.
-		advisor.SchemaRuleTableDropNamingConvention,
-		// advisor.SchemaRuleTableCommentConvention enforce the table comment convention.
-		advisor.SchemaRuleTableCommentConvention,
-		// advisor.SchemaRuleTableDisallowPartition disallow the table partition.
-		advisor.SchemaRuleTableDisallowPartition,
-
-		// advisor.SchemaRuleRequiredColumn enforce the required columns in each table.
-		advisor.SchemaRuleRequiredColumn,
-		// advisor.SchemaRuleColumnNotNull enforce the columns cannot have NULL value.
-		advisor.SchemaRuleColumnNotNull,
-		// advisor.SchemaRuleColumnDisallowChangeType disallow change column type.
-		advisor.SchemaRuleColumnDisallowChangeType,
-		// advisor.SchemaRuleColumnSetDefaultForNotNull require the not null column to set default value.
-		advisor.SchemaRuleColumnSetDefaultForNotNull,
-		// advisor.SchemaRuleColumnDisallowChange disallow CHANGE COLUMN statement.
-		advisor.SchemaRuleColumnDisallowChange,
-		// advisor.SchemaRuleColumnDisallowChangingOrder disallow changing column order.
-		advisor.SchemaRuleColumnDisallowChangingOrder,
-		// advisor.SchemaRuleColumnDisallowDropIndex disallow drop index column.
-		advisor.SchemaRuleColumnDisallowDropInIndex,
-		// advisor.SchemaRuleColumnCommentConvention enforce the column comment convention.
-		advisor.SchemaRuleColumnCommentConvention,
-		// advisor.SchemaRuleColumnAutoIncrementMustInteger require the auto-increment column to be integer.
-		advisor.SchemaRuleColumnAutoIncrementMustInteger,
-		// advisor.SchemaRuleColumnTypeDisallowList enforce the column type disallow list.
-		advisor.SchemaRuleColumnTypeDisallowList,
-		// advisor.SchemaRuleColumnDisallowSetCharset disallow set column charset.
-		advisor.SchemaRuleColumnDisallowSetCharset,
-		// advisor.SchemaRuleColumnMaximumCharacterLength enforce the maximum character length.
-		advisor.SchemaRuleColumnMaximumCharacterLength,
-		// advisor.SchemaRuleColumnAutoIncrementInitialValue enforce the initial auto-increment value.
-		advisor.SchemaRuleColumnAutoIncrementInitialValue,
-		// advisor.SchemaRuleColumnAutoIncrementMustUnsigned enforce the auto-increment column to be unsigned.
-		advisor.SchemaRuleColumnAutoIncrementMustUnsigned,
-		// advisor.SchemaRuleCurrentTimeColumnCountLimit enforce the current column count limit.
-		advisor.SchemaRuleCurrentTimeColumnCountLimit,
-		// advisor.SchemaRuleColumnRequireDefault enforce the column default.
-		advisor.SchemaRuleColumnRequireDefault,
-
-		// advisor.SchemaRuleSchemaBackwardCompatibility enforce the MySQL and TiDB support check whether the schema change is backward compatible.
-		advisor.SchemaRuleSchemaBackwardCompatibility,
-
-		// advisor.SchemaRuleDropEmptyDatabase enforce the MySQL and TiDB support check if the database is empty before users drop it.
-		advisor.SchemaRuleDropEmptyDatabase,
-
-		// advisor.SchemaRuleIndexNoDuplicateColumn require the index no duplicate column.
-		advisor.SchemaRuleIndexNoDuplicateColumn,
-		// advisor.SchemaRuleIndexKeyNumberLimit enforce the index key number limit.
-		advisor.SchemaRuleIndexKeyNumberLimit,
-		// advisor.SchemaRuleIndexPKTypeLimit enforce the type restriction of columns in primary key.
-		advisor.SchemaRuleIndexPKTypeLimit,
-		// advisor.SchemaRuleIndexTypeNoBlob enforce the type restriction of columns in index.
-		advisor.SchemaRuleIndexTypeNoBlob,
-		// advisor.SchemaRuleIndexTotalNumberLimit enforce the index total number limit.
-		advisor.SchemaRuleIndexTotalNumberLimit,
-		advisor.SchemaRuleIndexPrimaryKeyTypeAllowlist,
-
-		// advisor.SchemaRuleCharsetAllowlist enforce the charset allowlist.
-		advisor.SchemaRuleCharsetAllowlist,
-
-		// advisor.SchemaRuleCollationAllowlist enforce the collation allowlist.
-		advisor.SchemaRuleCollationAllowlist,
-
-		advisor.SchemaRuleStatementDisallowMixInDDL,
-		advisor.SchemaRuleStatementDisallowMixInDML,
+	rules := []*storepb.SQLReviewRule{
+		{Type: storepb.SQLReviewRule_NAMING_TABLE, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_NamingPayload{NamingPayload: &storepb.SQLReviewRule_NamingRulePayload{Format: "^[a-z]+(_[a-z]+)*$", MaxLength: 64}}},
+		{Type: storepb.SQLReviewRule_NAMING_COLUMN, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_NamingPayload{NamingPayload: &storepb.SQLReviewRule_NamingRulePayload{Format: "^[a-z]+(_[a-z]+)*$", MaxLength: 64}}},
+		{Type: storepb.SQLReviewRule_NAMING_INDEX_UK, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_NamingPayload{NamingPayload: &storepb.SQLReviewRule_NamingRulePayload{Format: "^$|^uk_{{table}}_{{column_list}}$", MaxLength: 64}}},
+		{Type: storepb.SQLReviewRule_NAMING_INDEX_FK, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_NamingPayload{NamingPayload: &storepb.SQLReviewRule_NamingRulePayload{Format: "^$|^fk_{{referencing_table}}_{{referencing_column}}_{{referenced_table}}_{{referenced_column}}$", MaxLength: 64}}},
+		{Type: storepb.SQLReviewRule_NAMING_INDEX_IDX, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_NamingPayload{NamingPayload: &storepb.SQLReviewRule_NamingRulePayload{Format: "^$|^idx_{{table}}_{{column_list}}$", MaxLength: 64}}},
+		{Type: storepb.SQLReviewRule_NAMING_COLUMN_AUTO_INCREMENT, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_NamingPayload{NamingPayload: &storepb.SQLReviewRule_NamingRulePayload{Format: "^id$", MaxLength: 64}}},
+		{Type: storepb.SQLReviewRule_STATEMENT_SELECT_NO_SELECT_ALL, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_STATEMENT_WHERE_REQUIRE_SELECT, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_STATEMENT_WHERE_REQUIRE_UPDATE_DELETE, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_STATEMENT_WHERE_NO_LEADING_WILDCARD_LIKE, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_STATEMENT_DISALLOW_COMMIT, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_STATEMENT_DISALLOW_LIMIT, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_STATEMENT_DISALLOW_ORDER_BY, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_STATEMENT_MERGE_ALTER_TABLE, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_STATEMENT_INSERT_MUST_SPECIFY_COLUMN, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_STATEMENT_INSERT_DISALLOW_ORDER_BY_RAND, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_STATEMENT_DML_DRY_RUN, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_STATEMENT_MAXIMUM_LIMIT_VALUE, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_NumberPayload{NumberPayload: &storepb.SQLReviewRule_NumberRulePayload{Number: 1000}}},
+		{Type: storepb.SQLReviewRule_TABLE_REQUIRE_PK, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_TABLE_NO_FOREIGN_KEY, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_TABLE_DROP_NAMING_CONVENTION, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_NamingPayload{NamingPayload: &storepb.SQLReviewRule_NamingRulePayload{Format: "_delete$"}}},
+		{Type: storepb.SQLReviewRule_TABLE_COMMENT, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_CommentConventionPayload{CommentConventionPayload: &storepb.SQLReviewRule_CommentConventionRulePayload{Required: true, MaxLength: 10}}},
+		{Type: storepb.SQLReviewRule_TABLE_DISALLOW_PARTITION, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_COLUMN_REQUIRED, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_StringArrayPayload{StringArrayPayload: &storepb.SQLReviewRule_StringArrayRulePayload{List: []string{"id", "created_ts", "updated_ts", "creator_id", "updater_id"}}}},
+		{Type: storepb.SQLReviewRule_COLUMN_NO_NULL, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_COLUMN_DISALLOW_CHANGE_TYPE, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_COLUMN_SET_DEFAULT_FOR_NOT_NULL, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_COLUMN_DISALLOW_CHANGE, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_COLUMN_DISALLOW_CHANGING_ORDER, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_COLUMN_DISALLOW_DROP_IN_INDEX, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_COLUMN_COMMENT, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_CommentConventionPayload{CommentConventionPayload: &storepb.SQLReviewRule_CommentConventionRulePayload{Required: true, MaxLength: 10}}},
+		{Type: storepb.SQLReviewRule_COLUMN_AUTO_INCREMENT_MUST_INTEGER, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_COLUMN_TYPE_DISALLOW_LIST, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_StringArrayPayload{StringArrayPayload: &storepb.SQLReviewRule_StringArrayRulePayload{List: []string{"JSON", "BINARY_FLOAT"}}}},
+		{Type: storepb.SQLReviewRule_COLUMN_DISALLOW_SET_CHARSET, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_COLUMN_MAXIMUM_CHARACTER_LENGTH, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_NumberPayload{NumberPayload: &storepb.SQLReviewRule_NumberRulePayload{Number: 20}}},
+		{Type: storepb.SQLReviewRule_COLUMN_AUTO_INCREMENT_INITIAL_VALUE, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_NumberPayload{NumberPayload: &storepb.SQLReviewRule_NumberRulePayload{Number: 20}}},
+		{Type: storepb.SQLReviewRule_COLUMN_AUTO_INCREMENT_MUST_UNSIGNED, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_COLUMN_CURRENT_TIME_COUNT_LIMIT, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_COLUMN_REQUIRE_DEFAULT, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_SCHEMA_BACKWARD_COMPATIBILITY, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_DATABASE_DROP_EMPTY_DATABASE, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_INDEX_NO_DUPLICATE_COLUMN, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_INDEX_KEY_NUMBER_LIMIT, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_NumberPayload{NumberPayload: &storepb.SQLReviewRule_NumberRulePayload{Number: 5}}},
+		{Type: storepb.SQLReviewRule_INDEX_PK_TYPE_LIMIT, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_INDEX_TYPE_NO_BLOB, Level: storepb.SQLReviewRule_WARNING},
+		{Type: storepb.SQLReviewRule_INDEX_TOTAL_NUMBER_LIMIT, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_NumberPayload{NumberPayload: &storepb.SQLReviewRule_NumberRulePayload{Number: 5}}},
+		{Type: storepb.SQLReviewRule_INDEX_PRIMARY_KEY_TYPE_ALLOWLIST, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_StringArrayPayload{StringArrayPayload: &storepb.SQLReviewRule_StringArrayRulePayload{List: []string{"serial", "bigserial", "int", "bigint"}}}},
+		{Type: storepb.SQLReviewRule_SYSTEM_CHARSET_ALLOWLIST, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_StringArrayPayload{StringArrayPayload: &storepb.SQLReviewRule_StringArrayRulePayload{List: []string{"utf8mb4", "UTF8"}}}},
+		{Type: storepb.SQLReviewRule_SYSTEM_COLLATION_ALLOWLIST, Level: storepb.SQLReviewRule_WARNING, Payload: &storepb.SQLReviewRule_StringArrayPayload{StringArrayPayload: &storepb.SQLReviewRule_StringArrayRulePayload{List: []string{"utf8mb4_0900_ai_ci"}}}},
 	}
 
-	for _, rule := range tidbRules {
-		advisor.RunSQLReviewRuleTest(t, rule, storepb.Engine_TIDB, false, false /* record */)
+	for _, rule := range rules {
+		advisor.RunSQLReviewRuleTest(t, rule, storepb.Engine_TIDB, false /* record */)
 	}
 }

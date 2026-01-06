@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/bytebase/parser/mysql"
 	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -21,9 +24,9 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleIndexTypeNoBlob, &IndexTypeNoBlobAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleIndexTypeNoBlob, &IndexTypeNoBlobAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleIndexTypeNoBlob, &IndexTypeNoBlobAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_INDEX_TYPE_NO_BLOB, &IndexTypeNoBlobAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_INDEX_TYPE_NO_BLOB, &IndexTypeNoBlobAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_INDEX_TYPE_NO_BLOB, &IndexTypeNoBlobAdvisor{})
 }
 
 // IndexTypeNoBlobAdvisor is the advisor checking for index type no blob.
@@ -32,26 +35,28 @@ type IndexTypeNoBlobAdvisor struct {
 
 // Check checks for index type no blob.
 func (*IndexTypeNoBlobAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewIndexTypeNoBlobRule(level, string(checkCtx.Rule.Type), checkCtx.Catalog)
+	rule := NewIndexTypeNoBlobRule(level, checkCtx.Rule.Type.String(), checkCtx.OriginalMetadata)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -60,18 +65,18 @@ func (*IndexTypeNoBlobAdvisor) Check(_ context.Context, checkCtx advisor.Context
 // IndexTypeNoBlobRule checks for index type no blob.
 type IndexTypeNoBlobRule struct {
 	BaseRule
-	catalog          *catalog.Finder
+	originalMetadata *model.DatabaseMetadata
 	tablesNewColumns tableColumnTypes
 }
 
 // NewIndexTypeNoBlobRule creates a new IndexTypeNoBlobRule.
-func NewIndexTypeNoBlobRule(level storepb.Advice_Status, title string, catalog *catalog.Finder) *IndexTypeNoBlobRule {
+func NewIndexTypeNoBlobRule(level storepb.Advice_Status, title string, originalMetadata *model.DatabaseMetadata) *IndexTypeNoBlobRule {
 	return &IndexTypeNoBlobRule{
 		BaseRule: BaseRule{
 			level: level,
 			title: title,
 		},
-		catalog:          catalog,
+		originalMetadata: originalMetadata,
 		tablesNewColumns: make(tableColumnTypes),
 	}
 }
@@ -272,7 +277,7 @@ func (r *IndexTypeNoBlobRule) addAdvice(tableName, columnName, columnType string
 	if r.isBlob(columnType) {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.IndexTypeNoBlob.Int32(),
+			Code:          code.IndexTypeNoBlob.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("Columns in index must not be BLOB but `%s`.`%s` is %s", tableName, columnName, columnType),
 			StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + lineNumber),
@@ -293,12 +298,9 @@ func (r *IndexTypeNoBlobRule) getColumnType(tableName string, columnName string)
 	if columnType, ok := r.tablesNewColumns.get(tableName, columnName); ok {
 		return columnType, nil
 	}
-	column := r.catalog.Origin.FindColumn(&catalog.ColumnFind{
-		TableName:  tableName,
-		ColumnName: columnName,
-	})
+	column := r.originalMetadata.GetSchemaMetadata("").GetTable(tableName).GetColumn(columnName)
 	if column != nil {
-		return column.Type(), nil
+		return column.GetProto().Type, nil
 	}
 	return "", errors.Errorf("cannot find the type of `%s`.`%s`", tableName, columnName)
 }

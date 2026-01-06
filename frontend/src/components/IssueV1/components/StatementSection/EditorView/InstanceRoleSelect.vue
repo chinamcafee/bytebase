@@ -3,7 +3,7 @@
     <span class="shrink-0">{{ $t("common.role.self") }}</span>
     <NSelect
       v-model:value="state.selectedRole"
-      class="!w-40 grow"
+      class="w-40! grow"
       consistent-menu-width
       size="small"
       :options="options"
@@ -20,9 +20,8 @@ import { create } from "@bufbuild/protobuf";
 import { NSelect, type SelectOption } from "naive-ui";
 import { computed, reactive, ref, watch } from "vue";
 import { useIssueContext } from "@/components/IssueV1/logic";
-import { instanceRoleServiceClientConnect } from "@/grpcweb";
+import { instanceRoleServiceClientConnect } from "@/connect";
 import { useCurrentProjectV1 } from "@/store";
-import { DEFAULT_PAGE_SIZE } from "@/store/modules/common";
 import type { InstanceRole } from "@/types/proto-es/v1/instance_role_service_pb";
 import { ListInstanceRolesRequestSchema } from "@/types/proto-es/v1/instance_role_service_pb";
 import { databaseForTask } from "@/utils";
@@ -50,7 +49,6 @@ watch(
   async () => {
     const request = create(ListInstanceRolesRequestSchema, {
       parent: database.value.instance,
-      pageSize: DEFAULT_PAGE_SIZE,
     });
     const response =
       await instanceRoleServiceClientConnect.listInstanceRoles(request);

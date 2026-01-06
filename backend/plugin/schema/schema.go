@@ -7,6 +7,7 @@ import (
 	"github.com/pkg/errors"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	"github.com/bytebase/bytebase/backend/store/model"
 )
 
@@ -24,6 +25,7 @@ var (
 	generateMigrations              = make(map[storepb.Engine]generateMigration)
 	getSDLDiffs                     = make(map[storepb.Engine]getSDLDiff)
 	getMultiFileDatabaseDefinitions = make(map[storepb.Engine]getMultiFileDatabaseDefinition)
+	walkThroughs                    = make(map[storepb.Engine]walkThrough)
 )
 
 type getDatabaseDefinition func(GetDefinitionContext, *storepb.DatabaseSchemaMetadata) (string, error)
@@ -37,7 +39,8 @@ type getProcedureDefinition func(string, *storepb.ProcedureMetadata) (string, er
 type getSequenceDefinition func(string, *storepb.SequenceMetadata) (string, error)
 type getDatabaseMetadata func(string) (*storepb.DatabaseSchemaMetadata, error)
 type generateMigration func(*MetadataDiff) (string, error)
-type getSDLDiff func(currentSDLText, previousUserSDLText string, currentSchema, previousSchema *model.DatabaseSchema) (*MetadataDiff, error)
+type getSDLDiff func(currentSDLText, previousUserSDLText string, currentSchema, previousSchema *model.DatabaseMetadata) (*MetadataDiff, error)
+type walkThrough func(*model.DatabaseMetadata, []base.AST) *storepb.Advice
 
 type GetDefinitionContext struct {
 	SkipBackupSchema bool
@@ -241,7 +244,7 @@ func RegisterGetSDLDiff(engine storepb.Engine, f getSDLDiff) {
 	getSDLDiffs[engine] = f
 }
 
-func GetSDLDiff(engine storepb.Engine, currentSDLText, previousUserSDLText string, currentSchema, previousSchema *model.DatabaseSchema) (*MetadataDiff, error) {
+func GetSDLDiff(engine storepb.Engine, currentSDLText, previousUserSDLText string, currentSchema, previousSchema *model.DatabaseMetadata) (*MetadataDiff, error) {
 	f, ok := getSDLDiffs[engine]
 	if !ok {
 		return nil, errors.Errorf("engine %s is not supported", engine)
@@ -264,4 +267,21 @@ func GetMultiFileDatabaseDefinition(engine storepb.Engine, ctx GetDefinitionCont
 		return nil, errors.Errorf("engine %s is not supported for multi-file database definition", engine)
 	}
 	return f(ctx, metadata)
+}
+
+func RegisterWalkThrough(engine storepb.Engine, f walkThrough) {
+	mux.Lock()
+	defer mux.Unlock()
+	if _, dup := walkThroughs[engine]; dup {
+		panic(fmt.Sprintf("Register called twice %s", engine))
+	}
+	walkThroughs[engine] = f
+}
+
+func WalkThrough(engine storepb.Engine, d *model.DatabaseMetadata, ast []base.AST) *storepb.Advice {
+	f, ok := walkThroughs[engine]
+	if !ok {
+		return nil
+	}
+	return f(d, ast)
 }

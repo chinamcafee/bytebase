@@ -35,18 +35,18 @@
 <script lang="ts" setup>
 import { create } from "@bufbuild/protobuf";
 import { ref } from "vue";
-import { planServiceClientConnect } from "@/grpcweb";
+import { planServiceClientConnect } from "@/connect";
 import type { ComposedDatabase } from "@/types";
-import { RunPlanChecksRequestSchema } from "@/types/proto-es/v1/plan_service_pb";
-import type {
-  PlanCheckRun,
-  PlanCheckRun_Type,
+import type { PlanCheckRun } from "@/types/proto-es/v1/plan_service_pb";
+import {
+  PlanCheckRun_Result_Type,
+  RunPlanChecksRequestSchema,
 } from "@/types/proto-es/v1/plan_service_pb";
 import type { VueClass } from "@/utils";
+import { usePlanCheckRunContext } from "./context";
 import PlanCheckRunBadgeBar from "./PlanCheckRunBadgeBar.vue";
 import PlanCheckRunButton from "./PlanCheckRunButton.vue";
 import PlanCheckRunModal from "./PlanCheckRunModal.vue";
-import { usePlanCheckRunContext } from "./context";
 
 const props = withDefaults(
   defineProps<{
@@ -65,7 +65,7 @@ const props = withDefaults(
 
 const { events } = usePlanCheckRunContext();
 
-const selectedType = ref<PlanCheckRun_Type>();
+const selectedType = ref<PlanCheckRun_Result_Type>();
 
 const runChecks = async () => {
   const request = create(RunPlanChecksRequestSchema, {

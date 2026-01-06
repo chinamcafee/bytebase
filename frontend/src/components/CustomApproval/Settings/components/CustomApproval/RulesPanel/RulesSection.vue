@@ -1,118 +1,245 @@
 <template>
-  <div class="space-y-2">
-    <div class="flex items-center justify-start">
+  <div class="flex flex-col gap-y-2">
+    <div class="flex items-center justify-between">
       <div class="font-medium text-base">
-        {{ sourceText(source) }}
+        {{ sourceDisplayText }}
+      </div>
+      <PermissionGuardWrapper
+        v-slot="slotProps"
+        :permissions="['bb.settings.set']"
+      >
+        <NButton size="small" :disabled="slotProps.disabled" @click="handleAddRule">
+          <template #icon>
+            <PlusIcon class="w-4" />
+          </template>
+          {{ $t("custom-approval.approval-flow.add-rule") }}
+        </NButton>
+      </PermissionGuardWrapper>
+    </div>
+
+    <div class="rules-table border border-gray-200 rounded-sm text-sm">
+      <!-- Table Header -->
+      <div
+        class="rules-table-header grid bg-gray-50 border-b border-gray-200 font-medium text-gray-600"
+      >
+        <div class="px-2 py-2 w-10"></div>
+        <div class="px-3 py-2">{{ $t("common.title") }}</div>
+        <div class="px-3 py-2">{{ $t("cel.condition.self") }}</div>
+        <div class="px-3 py-2">{{ $t("custom-approval.approval-flow.self") }}</div>
+        <div class="px-3 py-2 w-24">{{ $t("common.operations") }}</div>
+      </div>
+
+      <!-- Draggable Body -->
+      <Draggable
+        v-model="localRules"
+        item-key="uid"
+        handle=".drag-handle"
+        animation="150"
+        ghost-class="rules-row-ghost"
+        @end="handleDragEnd"
+      >
+        <template #item="{ element: rule, index }">
+          <div
+            class="rules-table-row grid border-b border-gray-100 last:border-b-0 hover:bg-gray-50"
+            :class="{ 'bg-gray-50/50': index % 2 === 1 }"
+          >
+            <div class="px-2 py-2 w-10 flex items-center justify-center">
+              <GripVerticalIcon
+                class="drag-handle w-4 h-4 text-gray-400 cursor-grab active:cursor-grabbing"
+              />
+            </div>
+            <div class="px-3 py-2 truncate" :title="rule.title">
+              {{ rule.title || "-" }}
+            </div>
+            <div class="px-3 py-2 truncate">
+              <code class="text-xs">{{ rule.condition || "true" }}</code>
+            </div>
+            <div class="px-3 py-2 truncate">
+              {{ formatApprovalFlow(rule.flow) }}
+            </div>
+            <div class="px-3 py-2 w-24 flex items-center gap-x-1">
+              <MiniActionButton @click="handleEditRule(rule)">
+                <PencilIcon class="w-3" />
+              </MiniActionButton>
+              <NPopconfirm
+                v-if="allowAdmin"
+                :positive-text="$t('common.confirm')"
+                :negative-text="$t('common.cancel')"
+                @positive-click="handleDeleteRule(rule)"
+              >
+                <template #trigger>
+                  <MiniActionButton>
+                    <TrashIcon class="w-3" />
+                  </MiniActionButton>
+                </template>
+                {{ $t("common.confirm") }}?
+              </NPopconfirm>
+            </div>
+          </div>
+        </template>
+      </Draggable>
+
+      <!-- Empty State -->
+      <div
+        v-if="localRules.length === 0"
+        class="px-3 py-4 text-center text-gray-400"
+      >
+        {{ $t("common.no-data") }}
       </div>
     </div>
-    <div>
-      <NDataTable
-        size="small"
-        :columns="columns"
-        :data="rows"
-        :striped="true"
-        :bordered="true"
-        :row-key="(row: Row) => String(row.level)"
-      />
-    </div>
+
+    <RuleEditModal
+      v-model:show="showModal"
+      :mode="modalMode"
+      :source="source"
+      :rule="editingRule"
+      :is-fallback="isFallback"
+      @save="handleSaveRule"
+    />
   </div>
 </template>
 
-<script lang="tsx" setup>
-import { NDataTable } from "naive-ui";
-import type { DataTableColumn } from "naive-ui";
-import { computed } from "vue";
+<script lang="ts" setup>
+import {
+  GripVerticalIcon,
+  PencilIcon,
+  PlusIcon,
+  TrashIcon,
+} from "lucide-vue-next";
+import { NButton, NPopconfirm } from "naive-ui";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import Draggable from "vuedraggable";
+import PermissionGuardWrapper from "@/components/Permission/PermissionGuardWrapper.vue";
+import { MiniActionButton } from "@/components/v2";
 import { pushNotification, useWorkspaceApprovalSettingStore } from "@/store";
-import type { ParsedApprovalRule } from "@/types";
-import { DEFAULT_RISK_LEVEL, PresetRiskLevelList } from "@/types";
-import type { Risk_Source } from "@/types/proto-es/v1/risk_service_pb";
-import { levelText, sourceText, useRiskFilter } from "../../common";
+import type { LocalApprovalRule } from "@/types";
+import { WorkspaceApprovalSetting_Rule_Source } from "@/types/proto-es/v1/setting_service_pb";
+import { formatApprovalFlow } from "@/utils";
+import { approvalSourceText } from "../../common/utils";
 import { useCustomApprovalContext } from "../context";
-import RiskTips from "./RiskTips.vue";
-import RuleSelect from "./RuleSelect.vue";
-
-type Row = {
-  level: number;
-  rule: string | undefined; // ApprovalTemplate.id
-};
+import RuleEditModal from "./RuleEditModal.vue";
 
 const props = defineProps<{
-  source: Risk_Source;
+  source: WorkspaceApprovalSetting_Rule_Source;
 }>();
+
+const isFallback = computed(
+  () => props.source === WorkspaceApprovalSetting_Rule_Source.SOURCE_UNSPECIFIED
+);
 
 const { t } = useI18n();
 const store = useWorkspaceApprovalSettingStore();
 const context = useCustomApprovalContext();
+const { allowAdmin } = context;
 
-const columns = computed((): DataTableColumn<Row>[] => {
-  return [
-    {
-      title: t("custom-approval.risk.self"),
-      key: "level",
-      width: 160,
-      render: (row) => levelText(row.level),
-    },
-    {
-      title: t("custom-approval.approval-flow.self"),
-      key: "rule",
-      render: (row) => (
-        <div class="flex items-center space-x-2">
-          <RuleSelect
-            class="flex-1 max-w-md min-w-[10rem]"
-            value={row.rule}
-            onUpdate={(rule: string | undefined) => updateRow(row, rule)}
-          />
-          <RiskTips level={row.level} source={props.source} rule={row.rule} />
-        </div>
-      ),
-    },
-  ];
-});
+const showModal = ref(false);
+const modalMode = ref<"create" | "edit">("create");
+const editingRule = ref<LocalApprovalRule | undefined>();
 
-const filter = useRiskFilter();
+const rules = computed(() => store.getRulesBySource(props.source));
 
-const rulesMap = computed(() => {
-  const map = new Map<number, ParsedApprovalRule>();
-  store.config.parsed
-    .filter((item) => item.source === props.source)
-    .forEach((item) => {
-      map.set(item.level, item);
-    });
-  return map;
-});
+// Local copy for dragging - synced with store
+const localRules = ref<LocalApprovalRule[]>([]);
 
-const rows = computed(() => {
-  const filteredLevelList = [...filter.levels.value.values()];
-  filteredLevelList.sort((a, b) => -(a - b)); // by level DESC
-  const displayLevelList =
-    filteredLevelList.length === 0
-      ? [...PresetRiskLevelList.map((item) => item.level), DEFAULT_RISK_LEVEL]
-      : filteredLevelList;
+watch(
+  rules,
+  (newRules) => {
+    localRules.value = [...newRules];
+  },
+  { immediate: true }
+);
 
-  return displayLevelList.map<Row>((level) => ({
-    level,
-    rule: rulesMap.value.get(level)?.rule ?? "",
-  }));
-});
+const sourceDisplayText = computed(() => approvalSourceText(props.source));
 
-const updateRow = async (row: Row, rule: string | undefined) => {
+const handleDragEnd = async (event: { oldIndex: number; newIndex: number }) => {
+  const { oldIndex, newIndex } = event;
+  if (oldIndex === newIndex) return;
+
   if (!context.hasFeature.value) {
     context.showFeatureModal.value = true;
+    // Revert local change
+    localRules.value = [...rules.value];
     return;
   }
 
-  const { source } = props;
-  const { level } = row;
   try {
-    await store.updateRuleFlow(source, level, rule);
+    await store.reorderRules(props.source, oldIndex, newIndex);
     pushNotification({
       module: "bytebase",
       style: "SUCCESS",
       title: t("common.updated"),
     });
   } catch {
-    // nothing, exception has been handled already
+    // Revert local change on error
+    localRules.value = [...rules.value];
+  }
+};
+
+const handleAddRule = () => {
+  if (!context.hasFeature.value) {
+    context.showFeatureModal.value = true;
+    return;
+  }
+  modalMode.value = "create";
+  editingRule.value = undefined;
+  showModal.value = true;
+};
+
+const handleEditRule = (rule: LocalApprovalRule) => {
+  if (!context.hasFeature.value) {
+    context.showFeatureModal.value = true;
+    return;
+  }
+  modalMode.value = "edit";
+  editingRule.value = rule;
+  showModal.value = true;
+};
+
+const handleDeleteRule = async (rule: LocalApprovalRule) => {
+  if (!context.hasFeature.value) {
+    context.showFeatureModal.value = true;
+    return;
+  }
+  try {
+    await store.deleteRule(rule.uid);
+    pushNotification({
+      module: "bytebase",
+      style: "SUCCESS",
+      title: t("common.deleted"),
+    });
+  } catch {
+    // Error handled by store
+  }
+};
+
+const handleSaveRule = async (ruleData: Partial<LocalApprovalRule>) => {
+  try {
+    if (modalMode.value === "create") {
+      await store.addRule(ruleData as Omit<LocalApprovalRule, "uid">);
+    } else if (editingRule.value && ruleData.uid) {
+      await store.updateRule(ruleData.uid, ruleData);
+    }
+    showModal.value = false;
+    pushNotification({
+      module: "bytebase",
+      style: "SUCCESS",
+      title: t("common.updated"),
+    });
+  } catch {
+    // Error handled by store
   }
 };
 </script>
+
+<style scoped>
+.rules-table-header,
+.rules-table-row {
+  grid-template-columns: 40px 200px 1fr 280px 96px;
+}
+
+.rules-row-ghost {
+  opacity: 0.5;
+  background: #e0f2fe;
+}
+</style>

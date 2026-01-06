@@ -3,23 +3,23 @@ import type { FieldMask } from "@bufbuild/protobuf/wkt";
 import { createContextValues } from "@connectrpc/connect";
 import { defineStore } from "pinia";
 import { computed } from "vue";
-import { settingServiceClientConnect } from "@/grpcweb";
-import { silentContextKey } from "@/grpcweb/context-key";
+import { settingServiceClientConnect } from "@/connect";
+import { silentContextKey } from "@/connect/context-key";
 import { settingNamePrefix } from "@/store/modules/v1/common";
 import {
+  type DataClassificationSetting_DataClassificationConfig,
   GetSettingRequestSchema,
-  UpdateSettingRequestSchema,
   ListSettingsRequestSchema,
   type Setting,
-  SettingSchema,
   Setting_SettingName,
+  SettingSchema,
+  type SettingValue,
+  SettingValueSchema,
+  UpdateSettingRequestSchema,
   type WorkspaceProfileSetting,
+  type WorkspaceProfileSetting_PasswordRestriction,
+  WorkspaceProfileSetting_PasswordRestrictionSchema,
   WorkspaceProfileSettingSchema,
-  type DataClassificationSetting_DataClassificationConfig,
-  type PasswordRestrictionSetting,
-  PasswordRestrictionSettingSchema,
-  type Value as SettingValue,
-  ValueSchema as SettingValueSchema,
 } from "@/types/proto-es/v1/setting_service_pb";
 import { useActuatorV1Store } from "./actuator";
 
@@ -38,21 +38,13 @@ export const useSettingV1Store = defineStore("setting_v1", {
       );
       if (!setting?.value?.value) return undefined;
       const value = setting.value.value;
-      if (value.case === "workspaceProfileSettingValue") {
+      if (value.case === "workspaceProfile") {
         return value.value;
       }
       return undefined;
     },
-    brandingLogo(state): string | undefined {
-      const setting = state.settingMapByName.get(
-        `${settingNamePrefix}${Setting_SettingName[Setting_SettingName.BRANDING_LOGO]}`
-      );
-      if (!setting?.value?.value) return undefined;
-      const value = setting.value.value;
-      if (value.case === "stringValue") {
-        return value.value;
-      }
-      return undefined;
+    brandingLogo(): string | undefined {
+      return this.workspaceProfileSetting?.brandingLogo;
     },
     classification(): DataClassificationSetting_DataClassificationConfig[] {
       const setting = this.settingMapByName.get(
@@ -60,29 +52,19 @@ export const useSettingV1Store = defineStore("setting_v1", {
       );
       if (!setting?.value?.value) return [];
       const value = setting.value.value;
-      if (value.case === "dataClassificationSettingValue") {
+      if (value.case === "dataClassification") {
         return value.value.configs;
       }
       return [];
     },
-    passwordRestriction(): PasswordRestrictionSetting {
-      const setting = this.settingMapByName.get(
-        `${settingNamePrefix}${Setting_SettingName[Setting_SettingName.PASSWORD_RESTRICTION]}`
-      );
-      if (!setting?.value?.value) {
-        return create(PasswordRestrictionSettingSchema, {
+    passwordRestriction(): WorkspaceProfileSetting_PasswordRestriction {
+      return (
+        this.workspaceProfileSetting?.passwordRestriction ??
+        create(WorkspaceProfileSetting_PasswordRestrictionSchema, {
           minLength: 8,
           requireLetter: true,
-        });
-      }
-      const value = setting.value.value;
-      if (value.case === "passwordRestrictionSetting") {
-        return value.value;
-      }
-      return create(PasswordRestrictionSettingSchema, {
-        minLength: 8,
-        requireLetter: true,
-      });
+        })
+      );
     },
   },
   actions: {
@@ -94,7 +76,7 @@ export const useSettingV1Store = defineStore("setting_v1", {
       );
       if (!setting?.value?.value) return undefined;
       const value = setting.value.value;
-      if (value.case === "dataClassificationSettingValue") {
+      if (value.case === "dataClassification") {
         return value.value.configs.find(
           (config) => config.id === classificationId
         );
@@ -187,7 +169,7 @@ export const useSettingV1Store = defineStore("setting_v1", {
         name: Setting_SettingName.WORKSPACE_PROFILE,
         value: create(SettingValueSchema, {
           value: {
-            case: "workspaceProfileSettingValue",
+            case: "workspaceProfile",
             value: profileSetting,
           },
         }),

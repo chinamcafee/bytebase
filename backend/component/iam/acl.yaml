@@ -4,15 +4,15 @@ roles:
     permissions:
       - bb.auditLogs.export
       - bb.auditLogs.search
-      - bb.changelists.create
-      - bb.changelists.delete
-      - bb.changelists.get
-      - bb.changelists.list
-      - bb.changelists.update
       - bb.changelogs.get
       - bb.changelogs.list
       - bb.databaseCatalogs.get
       - bb.databaseCatalogs.update
+      - bb.databaseGroups.create
+      - bb.databaseGroups.delete
+      - bb.databaseGroups.get
+      - bb.databaseGroups.list
+      - bb.databaseGroups.update
       - bb.databases.check
       - bb.databases.get
       - bb.databases.getSchema
@@ -39,7 +39,7 @@ roles:
       - bb.issues.get
       - bb.issues.list
       - bb.issues.update
-      - bb.planCheckRuns.list
+      - bb.planCheckRuns.get
       - bb.planCheckRuns.run
       - bb.plans.create
       - bb.plans.get
@@ -74,10 +74,6 @@ roles:
       - bb.revisions.delete
       - bb.revisions.get
       - bb.revisions.list
-      - bb.risks.create
-      - bb.risks.delete
-      - bb.risks.list
-      - bb.risks.update
       - bb.roles.create
       - bb.roles.delete
       - bb.roles.list
@@ -86,7 +82,6 @@ roles:
       - bb.rollouts.create
       - bb.rollouts.get
       - bb.rollouts.list
-      - bb.rollouts.preview
       - bb.settings.get
       - bb.settings.list
       - bb.settings.set
@@ -112,6 +107,7 @@ roles:
       - bb.users.list
       - bb.users.undelete
       - bb.users.update
+      - bb.users.updateEmail
       - bb.worksheets.get
       - bb.worksheets.manage
       - bb.workspaces.getIamPolicy
@@ -121,25 +117,21 @@ roles:
     permissions:
       - bb.auditLogs.export
       - bb.auditLogs.search
-      - bb.changelists.create
-      - bb.changelists.delete
-      - bb.changelists.get
-      - bb.changelists.list
-      - bb.changelists.update
       - bb.changelogs.get
       - bb.changelogs.list
       - bb.databaseCatalogs.get
       - bb.databaseCatalogs.update
+      - bb.databaseGroups.create
+      - bb.databaseGroups.delete
+      - bb.databaseGroups.get
+      - bb.databaseGroups.list
+      - bb.databaseGroups.update
       - bb.databases.check
       - bb.databases.get
       - bb.databases.getSchema
       - bb.databases.list
       - bb.databases.sync
       - bb.databases.update
-      - bb.identityProviders.create
-      - bb.identityProviders.delete
-      - bb.identityProviders.get
-      - bb.identityProviders.update
       - bb.instances.create
       - bb.instances.delete
       - bb.instances.get
@@ -156,7 +148,7 @@ roles:
       - bb.issues.get
       - bb.issues.list
       - bb.issues.update
-      - bb.planCheckRuns.list
+      - bb.planCheckRuns.get
       - bb.planCheckRuns.run
       - bb.plans.create
       - bb.plans.get
@@ -191,10 +183,6 @@ roles:
       - bb.revisions.delete
       - bb.revisions.get
       - bb.revisions.list
-      - bb.risks.create
-      - bb.risks.delete
-      - bb.risks.list
-      - bb.risks.update
       - bb.roles.create
       - bb.roles.delete
       - bb.roles.list
@@ -203,7 +191,6 @@ roles:
       - bb.rollouts.create
       - bb.rollouts.get
       - bb.rollouts.list
-      - bb.rollouts.preview
       - bb.settings.get
       - bb.settings.list
       - bb.settings.set
@@ -234,7 +221,6 @@ roles:
       - bb.policies.list
       - bb.reviewConfigs.get
       - bb.reviewConfigs.list
-      - bb.risks.list
       - bb.roles.list
       - bb.roles.get
       - bb.settings.get
@@ -242,23 +228,21 @@ roles:
       - bb.groups.create
       - bb.groups.get
       - bb.groups.list
-      - bb.users.get
-      - bb.users.list
       - bb.workspaces.getIamPolicy
   - name: roles/projectOwner
     title: Project owner
     permissions:
       - bb.auditLogs.export
       - bb.auditLogs.search
-      - bb.changelists.create
-      - bb.changelists.delete
-      - bb.changelists.get
-      - bb.changelists.list
-      - bb.changelists.update
       - bb.changelogs.get
       - bb.changelogs.list
       - bb.databaseCatalogs.get
       - bb.databaseCatalogs.update
+      - bb.databaseGroups.create
+      - bb.databaseGroups.delete
+      - bb.databaseGroups.get
+      - bb.databaseGroups.list
+      - bb.databaseGroups.update
       - bb.databases.check
       - bb.databases.get
       - bb.databases.getSchema
@@ -272,7 +256,7 @@ roles:
       - bb.issues.get
       - bb.issues.list
       - bb.issues.update
-      - bb.planCheckRuns.list
+      - bb.planCheckRuns.get
       - bb.planCheckRuns.run
       - bb.plans.create
       - bb.plans.get
@@ -301,7 +285,6 @@ roles:
       - bb.rollouts.create
       - bb.rollouts.get
       - bb.rollouts.list
-      - bb.rollouts.preview
       - bb.sheets.create
       - bb.sheets.get
       - bb.sheets.update
@@ -316,13 +299,11 @@ roles:
     title: Project developer
     permissions:
       - bb.auditLogs.search
-      - bb.changelists.create
-      - bb.changelists.get
-      - bb.changelists.list
-      - bb.changelists.update
       - bb.changelogs.get
       - bb.changelogs.list
       - bb.databaseCatalogs.get
+      - bb.databaseGroups.get
+      - bb.databaseGroups.list
       - bb.databases.check
       - bb.databases.get
       - bb.databases.getSchema
@@ -335,7 +316,7 @@ roles:
       - bb.issues.get
       - bb.issues.list
       - bb.issues.update
-      - bb.planCheckRuns.list
+      - bb.planCheckRuns.get
       - bb.planCheckRuns.run
       - bb.plans.create
       - bb.plans.get
@@ -350,7 +331,6 @@ roles:
       - bb.rollouts.create
       - bb.rollouts.get
       - bb.rollouts.list
-      - bb.rollouts.preview
       - bb.sheets.create
       - bb.sheets.get
       - bb.sheets.update
@@ -359,6 +339,8 @@ roles:
     title: SQL Editor User
     permissions:
       - bb.databaseCatalogs.get
+      - bb.databaseGroups.get
+      - bb.databaseGroups.list
       - bb.databases.check
       - bb.databases.get
       - bb.databases.getSchema
@@ -377,6 +359,8 @@ roles:
     permissions:
       - bb.databaseCatalogs.get
       - bb.changelogs.get
+      - bb.databaseGroups.get
+      - bb.databaseGroups.list
       - bb.databases.check
       - bb.databases.get
       - bb.databases.getSchema
@@ -386,7 +370,7 @@ roles:
       - bb.issueComments.update
       - bb.issues.get
       - bb.issues.list
-      - bb.planCheckRuns.list
+      - bb.planCheckRuns.get
       - bb.planCheckRuns.run
       - bb.plans.get
       - bb.plans.list
@@ -401,10 +385,25 @@ roles:
       - bb.sheets.get
       - bb.taskRuns.create
       - bb.taskRuns.list
+  - name: roles/gitopsServiceAgent
+    title: GitOps Service Agent
+    permissions:
+      - bb.plans.create
+      - bb.plans.get
+      - bb.releases.check
+      - bb.releases.create
+      - bb.releases.get
+      - bb.rollouts.create
+      - bb.rollouts.get
+      - bb.rollouts.list
+      - bb.taskRuns.create
+      - bb.taskRuns.list
   - name: roles/projectViewer
     title: Project viewer
     permissions:
       - bb.databaseCatalogs.get
+      - bb.databaseGroups.get
+      - bb.databaseGroups.list
       - bb.databases.get
       - bb.databases.getSchema
       - bb.databases.list

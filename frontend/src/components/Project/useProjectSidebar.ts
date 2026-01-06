@@ -1,40 +1,36 @@
 import {
-  Database,
   CircleDot,
-  Users,
-  Settings,
-  PencilRuler,
+  Database,
   DownloadIcon,
-  PackageIcon,
   LayoutList,
+  PackageIcon,
   PlayCircle,
+  Settings,
+  Users,
   Workflow,
 } from "lucide-vue-next";
-import { computed, h, unref, type MaybeRef } from "vue";
+import { computed, h, type MaybeRef, unref } from "vue";
 import { useRoute } from "vue-router";
 import type { SidebarItem } from "@/components/v2/Sidebar/type";
-import { getFlattenRoutes } from "@/components/v2/Sidebar/utils.ts";
 import { useIssueLayoutVersion } from "@/composables/useIssueLayoutVersion";
 import { t } from "@/plugins/i18n";
-import projectV1Routes, {
-  PROJECT_V1_ROUTE_DATABASES,
-  PROJECT_V1_ROUTE_ISSUES,
-  PROJECT_V1_ROUTE_SYNC_SCHEMA,
-  PROJECT_V1_ROUTE_MEMBERS,
-  PROJECT_V1_ROUTE_SETTINGS,
-  PROJECT_V1_ROUTE_WEBHOOKS,
-  PROJECT_V1_ROUTE_CHANGELISTS,
-  PROJECT_V1_ROUTE_DATABASE_GROUPS,
-  PROJECT_V1_ROUTE_EXPORT_CENTER,
+import {
   PROJECT_V1_ROUTE_AUDIT_LOGS,
-  PROJECT_V1_ROUTE_RELEASES,
+  PROJECT_V1_ROUTE_DATABASE_GROUPS,
+  PROJECT_V1_ROUTE_DATABASES,
+  PROJECT_V1_ROUTE_EXPORT_CENTER,
+  PROJECT_V1_ROUTE_ISSUES,
   PROJECT_V1_ROUTE_MASKING_EXEMPTION,
+  PROJECT_V1_ROUTE_MEMBERS,
   PROJECT_V1_ROUTE_PLANS,
+  PROJECT_V1_ROUTE_RELEASES,
   PROJECT_V1_ROUTE_ROLLOUTS,
+  PROJECT_V1_ROUTE_SETTINGS,
+  PROJECT_V1_ROUTE_SYNC_SCHEMA,
+  PROJECT_V1_ROUTE_WEBHOOKS,
 } from "@/router/dashboard/projectV1";
 import { DEFAULT_PROJECT_NAME } from "@/types";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
-import { hasProjectPermissionV2 } from "@/utils";
 
 interface ProjectSidebarItem extends SidebarItem {
   title: string;
@@ -50,28 +46,6 @@ export const useProjectSidebar = (project: MaybeRef<Project>) => {
   const isDefaultProject = computed((): boolean => {
     return unref(project).name === DEFAULT_PROJECT_NAME;
   });
-
-  const flattenProjectV1Routes = computed(() => {
-    return getFlattenRoutes(projectV1Routes);
-  });
-
-  const filterProjectSidebarByPermissions = (
-    sidebarList: ProjectSidebarItem[]
-  ): ProjectSidebarItem[] => {
-    return sidebarList
-      .filter((item) => {
-        const routeConfig = flattenProjectV1Routes.value.find(
-          (projectV1Route) => projectV1Route.name === item.path
-        );
-        return (routeConfig?.permissions ?? []).every((permission) =>
-          hasProjectPermissionV2(unref(project), permission)
-        );
-      })
-      .map((item) => ({
-        ...item,
-        children: filterProjectSidebarByPermissions(item.children ?? []),
-      }));
-  };
 
   const projectSidebarItemList = computed((): ProjectSidebarItem[] => {
     const cicdRoutes: ProjectSidebarItem[] = enabledNewLayout.value
@@ -102,13 +76,6 @@ export const useProjectSidebar = (project: MaybeRef<Project>) => {
           },
         ]
       : [
-          {
-            title: t("changelist.changelists"),
-            path: PROJECT_V1_ROUTE_CHANGELISTS,
-            icon: () => h(PencilRuler),
-            type: "div",
-            hide: isDefaultProject.value,
-          },
           {
             title: t("release.releases"),
             path: PROJECT_V1_ROUTE_RELEASES,
@@ -214,7 +181,7 @@ export const useProjectSidebar = (project: MaybeRef<Project>) => {
       },
     ];
 
-    return filterProjectSidebarByPermissions(sidebarList);
+    return sidebarList;
   });
 
   const flattenNavigationItems = computed(() => {
@@ -231,15 +198,11 @@ export const useProjectSidebar = (project: MaybeRef<Project>) => {
 
   const checkIsActive = (item: SidebarItem) => {
     const { name: current } = route;
-
+    const currentRoute = current?.toString() ?? "";
     const isActiveRoute =
-      item.path === current?.toString() ||
-      current?.toString().startsWith(`${item.path}.`);
+      item.path === currentRoute || currentRoute.startsWith(`${item.path}.`);
 
-    if (isActiveRoute) {
-      return true;
-    }
-    return false;
+    return isActiveRoute;
   };
 
   const activeSidebar = computed(() => {

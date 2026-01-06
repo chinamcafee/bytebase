@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -12,6 +13,7 @@ import (
 
 	"connectrpc.com/connect"
 	"connectrpc.com/grpcreflect"
+	"connectrpc.com/validate"
 	grpcruntime "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/labstack/echo/v4"
 	"github.com/pkg/errors"
@@ -21,17 +23,16 @@ import (
 	apiv1 "github.com/bytebase/bytebase/backend/api/v1"
 	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/common/stacktrace"
+	"github.com/bytebase/bytebase/backend/component/bus"
 	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/dbfactory"
 	"github.com/bytebase/bytebase/backend/component/iam"
 	"github.com/bytebase/bytebase/backend/component/sampleinstance"
 	"github.com/bytebase/bytebase/backend/component/sheet"
-	"github.com/bytebase/bytebase/backend/component/state"
 	"github.com/bytebase/bytebase/backend/component/webhook"
 	"github.com/bytebase/bytebase/backend/enterprise"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
-	"github.com/bytebase/bytebase/backend/runner/metricreport"
 	"github.com/bytebase/bytebase/backend/runner/schemasync"
 	"github.com/bytebase/bytebase/backend/store"
 )
@@ -44,8 +45,7 @@ func configureGrpcRouters(
 	dbFactory *dbfactory.DBFactory,
 	licenseService *enterprise.LicenseService,
 	profile *config.Profile,
-	metricReporter *metricreport.Reporter,
-	stateCfg *state.State,
+	bus *bus.Bus,
 	schemaSyncer *schemasync.Syncer,
 	webhookManager *webhook.Manager,
 	iamManager *iam.Manager,
@@ -54,14 +54,31 @@ func configureGrpcRouters(
 ) error {
 	// Note: the gateway response modifier takes the token duration on server startup. If the value is changed,
 	// the user has to restart the server to take the latest value.
-	gatewayModifier := auth.GatewayResponseModifier{Store: stores, LicenseService: licenseService}
 	mux := grpcruntime.NewServeMux(
 		grpcruntime.WithMarshalerOption(grpcruntime.MIMEWildcard, &grpcruntime.JSONPb{
 			MarshalOptions: protojson.MarshalOptions{},
 			//nolint:forbidigo
 			UnmarshalOptions: protojson.UnmarshalOptions{},
 		}),
-		grpcruntime.WithForwardResponseOption(gatewayModifier.Modify),
+		// pass through request headers that need to be used by connect rpc handlers.
+		grpcruntime.WithIncomingHeaderMatcher(func(key string) (string, bool) {
+			switch strings.ToLower(key) {
+			// grpc-gateway hard codes authorization pass-through already, we do it again anyways.
+			// https://github.com/grpc-ecosystem/grpc-gateway/blob/2cca0efe61de30f05068b9e3b4eb4801b1b2c1aa/runtime/context.go#L160
+			case "authorization", "cookie", "origin":
+				return key, true
+			default:
+				return "", false
+			}
+		}),
+		grpcruntime.WithOutgoingHeaderMatcher(func(key string) (string, bool) {
+			switch strings.ToLower(key) {
+			case "set-cookie":
+				return key, true
+			default:
+				return "", false
+			}
+		}),
 		grpcruntime.WithRoutingErrorHandler(func(ctx context.Context, sm *grpcruntime.ServeMux, m grpcruntime.Marshaler, w http.ResponseWriter, r *http.Request, httpStatus int) {
 			err := &grpcruntime.HTTPStatusError{
 				HTTPStatus: httpStatus,
@@ -71,32 +88,30 @@ func configureGrpcRouters(
 		}),
 	)
 	actuatorService := apiv1.NewActuatorService(stores, profile, schemaSyncer, licenseService, sampleInstanceManager)
-	auditLogService := apiv1.NewAuditLogService(stores, iamManager, licenseService)
-	authService := apiv1.NewAuthService(stores, secret, licenseService, metricReporter, profile, stateCfg, iamManager)
+	auditLogService := apiv1.NewAuditLogService(stores, licenseService)
+	authService := apiv1.NewAuthService(stores, secret, licenseService, profile, iamManager)
 	celService := apiv1.NewCelService()
-	changelistService := apiv1.NewChangelistService(stores, profile, iamManager)
-	databaseCatalogService := apiv1.NewDatabaseCatalogService(stores, licenseService)
-	databaseGroupService := apiv1.NewDatabaseGroupService(stores, profile, iamManager, licenseService)
-	databaseService := apiv1.NewDatabaseService(stores, schemaSyncer, licenseService, profile, iamManager)
+	databaseCatalogService := apiv1.NewDatabaseCatalogService(stores)
+	databaseGroupService := apiv1.NewDatabaseGroupService(stores, licenseService)
+	databaseService := apiv1.NewDatabaseService(stores, schemaSyncer, profile, iamManager)
 	groupService := apiv1.NewGroupService(stores, iamManager, licenseService)
-	identityProviderService := apiv1.NewIdentityProviderService(stores, licenseService)
-	instanceRoleService := apiv1.NewInstanceRoleService(stores, dbFactory)
-	instanceService := apiv1.NewInstanceService(stores, licenseService, metricReporter, stateCfg, dbFactory, schemaSyncer, iamManager, sampleInstanceManager)
-	issueService := apiv1.NewIssueService(stores, webhookManager, stateCfg, licenseService, profile, iamManager, metricReporter)
+	identityProviderService := apiv1.NewIdentityProviderService(stores, licenseService, profile)
+	instanceRoleService := apiv1.NewInstanceRoleService(stores)
+	instanceService := apiv1.NewInstanceService(stores, profile, licenseService, dbFactory, schemaSyncer, sampleInstanceManager)
+	issueService := apiv1.NewIssueService(stores, webhookManager, bus, licenseService, iamManager)
 	orgPolicyService := apiv1.NewOrgPolicyService(stores, licenseService)
-	planService := apiv1.NewPlanService(stores, sheetManager, licenseService, dbFactory, stateCfg, profile, iamManager)
-	projectService := apiv1.NewProjectService(stores, profile, iamManager, licenseService)
-	releaseService := apiv1.NewReleaseService(stores, sheetManager, schemaSyncer, dbFactory, iamManager)
-	reviewConfigService := apiv1.NewReviewConfigService(stores, licenseService)
+	planService := apiv1.NewPlanService(stores, bus, iamManager, webhookManager, licenseService)
+	projectService := apiv1.NewProjectService(stores, profile, iamManager)
+	releaseService := apiv1.NewReleaseService(stores, sheetManager, dbFactory)
+	reviewConfigService := apiv1.NewReviewConfigService(stores)
 	revisionService := apiv1.NewRevisionService(stores)
-	riskService := apiv1.NewRiskService(stores, iamManager, licenseService)
 	roleService := apiv1.NewRoleService(stores, iamManager, licenseService)
-	rolloutService := apiv1.NewRolloutService(stores, sheetManager, licenseService, dbFactory, stateCfg, webhookManager, profile, iamManager)
-	settingService := apiv1.NewSettingService(stores, profile, licenseService, stateCfg)
-	sheetService := apiv1.NewSheetService(stores, sheetManager, licenseService, iamManager, profile)
-	sqlService := apiv1.NewSQLService(stores, sheetManager, schemaSyncer, dbFactory, licenseService, profile, iamManager)
-	subscriptionService := apiv1.NewSubscriptionService(stores, profile, metricReporter, licenseService)
-	userService := apiv1.NewUserService(stores, secret, licenseService, metricReporter, profile, stateCfg, iamManager)
+	rolloutService := apiv1.NewRolloutService(stores, dbFactory, bus, webhookManager, iamManager)
+	settingService := apiv1.NewSettingService(stores, profile, licenseService)
+	sheetService := apiv1.NewSheetService(stores)
+	sqlService := apiv1.NewSQLService(stores, schemaSyncer, dbFactory, licenseService, iamManager)
+	subscriptionService := apiv1.NewSubscriptionService(profile, licenseService)
+	userService := apiv1.NewUserService(stores, licenseService, profile, iamManager)
 	worksheetService := apiv1.NewWorksheetService(stores, iamManager)
 	workspaceService := apiv1.NewWorkspaceService(stores, iamManager)
 
@@ -107,12 +122,15 @@ func configureGrpcRouters(
 		return connect.NewError(connect.CodeInternal, errors.Errorf("error: %v\n%s", p, stack))
 	}
 
+	// Create validation interceptor.
+	validateInterceptor := validate.NewInterceptor()
+
 	handlerOpts := connect.WithHandlerOptions(
 		connect.WithInterceptors(
-			apiv1.NewDebugInterceptor(metricReporter),
-			auth.New(stores, secret, licenseService, stateCfg, profile),
+			validateInterceptor,
+			auth.New(stores, secret, licenseService, bus, profile),
 			apiv1.NewACLInterceptor(stores, secret, iamManager, profile),
-			apiv1.NewAuditInterceptor(stores),
+			apiv1.NewAuditInterceptor(stores, secret, profile),
 		),
 		connect.WithRecover(onPanic),
 	)
@@ -130,9 +148,6 @@ func configureGrpcRouters(
 
 	celPath, celHandler := v1connect.NewCelServiceHandler(celService, handlerOpts)
 	connectHandlers[celPath] = celHandler
-
-	changelistPath, changelistHandler := v1connect.NewChangelistServiceHandler(changelistService, handlerOpts)
-	connectHandlers[changelistPath] = changelistHandler
 
 	databaseCatalogPath, databaseCatalogHandler := v1connect.NewDatabaseCatalogServiceHandler(databaseCatalogService, handlerOpts)
 	connectHandlers[databaseCatalogPath] = databaseCatalogHandler
@@ -176,9 +191,6 @@ func configureGrpcRouters(
 	revisionPath, revisionHandler := v1connect.NewRevisionServiceHandler(revisionService, handlerOpts)
 	connectHandlers[revisionPath] = revisionHandler
 
-	riskPath, riskHandler := v1connect.NewRiskServiceHandler(riskService, handlerOpts)
-	connectHandlers[riskPath] = riskHandler
-
 	rolePath, roleHandler := v1connect.NewRoleServiceHandler(roleService, handlerOpts)
 	connectHandlers[rolePath] = roleHandler
 
@@ -212,7 +224,6 @@ func configureGrpcRouters(
 		v1connect.AuditLogServiceName,
 		v1connect.AuthServiceName,
 		v1connect.CelServiceName,
-		v1connect.ChangelistServiceName,
 		v1connect.DatabaseCatalogServiceName,
 		v1connect.DatabaseGroupServiceName,
 		v1connect.DatabaseServiceName,
@@ -227,7 +238,6 @@ func configureGrpcRouters(
 		v1connect.ReleaseServiceName,
 		v1connect.ReviewConfigServiceName,
 		v1connect.RevisionServiceName,
-		v1connect.RiskServiceName,
 		v1connect.RoleServiceName,
 		v1connect.RolloutServiceName,
 		v1connect.SettingServiceName,
@@ -267,9 +277,6 @@ func configureGrpcRouters(
 		return err
 	}
 	if err := v1pb.RegisterCelServiceHandler(ctx, mux, grpcConn); err != nil {
-		return err
-	}
-	if err := v1pb.RegisterChangelistServiceHandler(ctx, mux, grpcConn); err != nil {
 		return err
 	}
 	if err := v1pb.RegisterDatabaseCatalogServiceHandler(ctx, mux, grpcConn); err != nil {
@@ -312,9 +319,6 @@ func configureGrpcRouters(
 		return err
 	}
 	if err := v1pb.RegisterRevisionServiceHandler(ctx, mux, grpcConn); err != nil {
-		return err
-	}
-	if err := v1pb.RegisterRiskServiceHandler(ctx, mux, grpcConn); err != nil {
 		return err
 	}
 	if err := v1pb.RegisterRoleServiceHandler(ctx, mux, grpcConn); err != nil {

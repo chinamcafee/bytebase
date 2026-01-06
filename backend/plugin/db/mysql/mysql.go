@@ -336,15 +336,14 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 	slog.Debug("connectionID", slog.String("connectionID", connectionID))
 
 	var totalCommands int
-	var commands []base.SingleSQL
-	var originalIndex []int32
+	var commands []base.Statement
 	oneshot := true
 	if len(statement) <= common.MaxSheetCheckSize {
 		singleSQLs, err := mysqlparser.SplitSQL(statement)
 		if err != nil {
 			return 0, errors.Wrapf(err, "failed to split sql")
 		}
-		singleSQLs, originalIndex = base.FilterEmptySQLWithIndexes(singleSQLs)
+		singleSQLs = base.FilterEmptyStatements(singleSQLs)
 		if len(singleSQLs) == 0 {
 			return 0, nil
 		}
@@ -355,12 +354,11 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 		}
 	}
 	if oneshot {
-		commands = []base.SingleSQL{
+		commands = []base.Statement{
 			{
 				Text: statement,
 			},
 		}
-		originalIndex = []int32{0}
 	}
 
 	// Validate isolation level for MySQL if specified
@@ -378,13 +376,13 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 
 	// Execute based on transaction mode
 	if transactionConfig.Mode == common.TransactionModeOff {
-		return d.executeInAutoCommitMode(ctx, conn, commands, originalIndex, opts, connectionID)
+		return d.executeInAutoCommitMode(ctx, conn, commands, opts, connectionID)
 	}
-	return d.executeInTransactionMode(ctx, conn, commands, originalIndex, opts, connectionID, transactionConfig.Isolation)
+	return d.executeInTransactionMode(ctx, conn, commands, opts, connectionID, transactionConfig.Isolation)
 }
 
 // executeInTransactionMode executes statements within a single transaction
-func (d *Driver) executeInTransactionMode(ctx context.Context, conn *sql.Conn, commands []base.SingleSQL, originalIndex []int32, opts db.ExecuteOptions, connectionID string, isolationLevel common.IsolationLevel) (int64, error) {
+func (d *Driver) executeInTransactionMode(ctx context.Context, conn *sql.Conn, commands []base.Statement, opts db.ExecuteOptions, connectionID string, isolationLevel common.IsolationLevel) (int64, error) {
 	var totalRowsAffected int64
 
 	if err := conn.Raw(func(driverConn any) error {
@@ -420,9 +418,8 @@ func (d *Driver) executeInTransactionMode(ctx context.Context, conn *sql.Conn, c
 			opts.LogTransactionControl(storepb.TaskRunLog_TransactionControl_ROLLBACK, rerr)
 		}()
 
-		for i, command := range commands {
-			indexes := []int32{originalIndex[i]}
-			opts.LogCommandExecute(indexes, command.Text)
+		for _, command := range commands {
+			opts.LogCommandExecute(command.Range, command.Text)
 
 			sqlWithBytebaseAppComment := util.MySQLPrependBytebaseAppComment(command.Text)
 			sqlResult, err := exer.ExecContext(ctx, sqlWithBytebaseAppComment, nil)
@@ -436,11 +433,7 @@ func (d *Driver) executeInTransactionMode(ctx context.Context, conn *sql.Conn, c
 
 				opts.LogCommandResponse(0, nil, err.Error())
 
-				return &db.ErrorWithPosition{
-					Err:   errors.Wrapf(err, "failed to execute context in a transaction"),
-					Start: command.Start,
-					End:   command.End,
-				}
+				return err
 			}
 
 			allRowsAffected := sqlResult.(mysql.Result).AllRowsAffected()
@@ -471,16 +464,15 @@ func (d *Driver) executeInTransactionMode(ctx context.Context, conn *sql.Conn, c
 }
 
 // executeInAutoCommitMode executes statements sequentially in auto-commit mode
-func (d *Driver) executeInAutoCommitMode(ctx context.Context, conn *sql.Conn, commands []base.SingleSQL, originalIndex []int32, opts db.ExecuteOptions, connectionID string) (int64, error) {
+func (d *Driver) executeInAutoCommitMode(ctx context.Context, conn *sql.Conn, commands []base.Statement, opts db.ExecuteOptions, connectionID string) (int64, error) {
 	var totalRowsAffected int64
 
 	if err := conn.Raw(func(driverConn any) error {
 		//nolint
 		exer := driverConn.(driver.ExecerContext)
 
-		for i, command := range commands {
-			indexes := []int32{originalIndex[i]}
-			opts.LogCommandExecute(indexes, command.Text)
+		for _, command := range commands {
+			opts.LogCommandExecute(command.Range, command.Text)
 
 			sqlWithBytebaseAppComment := util.MySQLPrependBytebaseAppComment(command.Text)
 			sqlResult, err := exer.ExecContext(ctx, sqlWithBytebaseAppComment, nil)
@@ -495,11 +487,7 @@ func (d *Driver) executeInAutoCommitMode(ctx context.Context, conn *sql.Conn, co
 				opts.LogCommandResponse(0, nil, err.Error())
 				// In auto-commit mode, we stop at the first error
 				// The database is left in a partially migrated state
-				return &db.ErrorWithPosition{
-					Err:   errors.Wrapf(err, "failed to execute statement %d in auto-commit mode", i+1),
-					Start: command.Start,
-					End:   command.End,
-				}
+				return err
 			}
 
 			allRowsAffected := sqlResult.(mysql.Result).AllRowsAffected()
@@ -528,7 +516,7 @@ func (d *Driver) QueryConn(ctx context.Context, conn *sql.Conn, statement string
 	if err != nil {
 		return nil, err
 	}
-	singleSQLs = base.FilterEmptySQL(singleSQLs)
+	singleSQLs = base.FilterEmptyStatements(singleSQLs)
 	if len(singleSQLs) == 0 {
 		return nil, nil
 	}

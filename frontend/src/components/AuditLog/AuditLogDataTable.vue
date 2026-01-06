@@ -6,45 +6,49 @@
     :striped="true"
     :loading="loading"
     :row-key="(data: AuditLog) => data.name"
+    @update:sorter="$emit('update:sorters', $event)"
   />
 </template>
 
 <script lang="tsx" setup>
 import { file_google_rpc_error_details } from "@buf/googleapis_googleapis.bufbuild_es/google/rpc/error_details_pb";
-import { createRegistry, fromBinary, toJsonString } from "@bufbuild/protobuf";
+import { createRegistry, toJsonString } from "@bufbuild/protobuf";
+import { AnySchema } from "@bufbuild/protobuf/wkt";
 import dayjs from "dayjs";
 import { ExternalLinkIcon } from "lucide-vue-next";
-import { NButton, NDataTable, type DataTableColumn } from "naive-ui";
+import {
+  type DataTableColumn,
+  type DataTableSortState,
+  NButton,
+  NDataTable,
+} from "naive-ui";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import BBAvatar from "@/bbkit/BBAvatar.vue";
-import { useProjectV1Store, useUserStore } from "@/store";
+import { ProjectV1Name } from "@/components/v2";
+import { UserLink } from "@/components/v2/Model/cells";
+import { mapSorterStatus } from "@/components/v2/Model/utils";
 import {
+  extractUserId,
+  getProjectIdPlanUidStageUidFromRolloutName,
   projectNamePrefix,
   rolloutNamePrefix,
-  getProjectIdRolloutUidStageUid,
 } from "@/store/modules/v1/common";
-import { getDateForPbTimestampProtoEs } from "@/types";
+import { emptyProject, getDateForPbTimestampProtoEs } from "@/types";
 import { StatusSchema } from "@/types/proto-es/google/rpc/status_pb";
 import type { AuditLog } from "@/types/proto-es/v1/audit_log_service_pb";
 import {
   AuditDataSchema,
   AuditLog_Severity,
 } from "@/types/proto-es/v1/audit_log_service_pb";
-import { IssueService, type Issue } from "@/types/proto-es/v1/issue_service_pb";
-import { file_v1_plan_service } from "@/types/proto-es/v1/plan_service_pb";
-import { PlanService, type Plan } from "@/types/proto-es/v1/plan_service_pb";
+import { IssueService } from "@/types/proto-es/v1/issue_service_pb";
 import {
-  RolloutService,
-  type Rollout,
-} from "@/types/proto-es/v1/rollout_service_pb";
+  file_v1_plan_service,
+  PlanService,
+} from "@/types/proto-es/v1/plan_service_pb";
+import { RolloutService } from "@/types/proto-es/v1/rollout_service_pb";
 import { SettingSchema } from "@/types/proto-es/v1/setting_service_pb";
-import {
-  SQLService,
-  type ExportRequest,
-} from "@/types/proto-es/v1/sql_service_pb";
-import { humanizeDurationV1 } from "@/utils";
-import { extractProjectResourceName } from "@/utils";
+import { SQLService } from "@/types/proto-es/v1/sql_service_pb";
+import { extractProjectResourceName, humanizeDurationV1 } from "@/utils";
 import JSONStringView from "./JSONStringView.vue";
 
 type AuditDataTableColumn = DataTableColumn<AuditLog> & {
@@ -54,7 +58,9 @@ type AuditDataTableColumn = DataTableColumn<AuditLog> & {
 // The registry is used to decode anypb protobuf messages to JSON.
 const registry = createRegistry(
   file_google_rpc_error_details,
-  file_v1_plan_service
+  file_v1_plan_service,
+  AuditDataSchema,
+  SettingSchema
 );
 
 const props = withDefaults(
@@ -62,6 +68,7 @@ const props = withDefaults(
     auditLogList: AuditLog[];
     showProject?: boolean;
     loading?: boolean;
+    sorters?: DataTableSortState[];
   }>(),
   {
     showProject: true,
@@ -69,17 +76,20 @@ const props = withDefaults(
   }
 );
 
+defineEmits<{
+  (event: "update:sorters", sorters: DataTableSortState[]): void;
+}>();
+
 const { t } = useI18n();
-const projectStore = useProjectV1Store();
-const userStore = useUserStore();
 
 const columnList = computed((): AuditDataTableColumn[] => {
-  return (
+  const columns: AuditDataTableColumn[] = (
     [
       {
-        key: "created-ts",
+        key: "create_time",
         title: t("audit-log.table.created-ts"),
-        width: 240,
+        width: 220,
+        resizable: true,
         render: (auditLog) =>
           dayjs(getDateForPbTimestampProtoEs(auditLog.createTime)).format(
             "YYYY-MM-DD HH:mm:ss Z"
@@ -87,24 +97,27 @@ const columnList = computed((): AuditDataTableColumn[] => {
       },
       {
         key: "severity",
-        width: 96,
+        width: 60,
         title: t("audit-log.table.level"),
         render: (auditLog) => AuditLog_Severity[auditLog.severity],
       },
       {
         key: "project",
-        width: 96,
+        width: 120,
         title: t("common.project"),
+        resizable: true,
         hide: !props.showProject,
         render: (auditLog) => {
           const projectResourceId = extractProjectResourceName(auditLog.name);
           if (!projectResourceId) {
             return <span>-</span>;
           }
-          const project = projectStore.getProjectByName(
-            `${projectNamePrefix}${projectResourceId}`
-          );
-          return <span>{project.title}</span>;
+          const mockProject = {
+            ...emptyProject(),
+            name: `${projectNamePrefix}${projectResourceId}`,
+            title: projectResourceId,
+          };
+          return <ProjectV1Name project={mockProject} />;
         },
       },
       {
@@ -116,19 +129,15 @@ const columnList = computed((): AuditDataTableColumn[] => {
       },
       {
         key: "actor",
-        width: 128,
+        width: 180,
         title: t("audit-log.table.actor"),
+        resizable: true,
         render: (auditLog) => {
-          const user = userStore.getUserByIdentifier(auditLog.user);
-          if (!user) {
+          if (!auditLog.user) {
             return <span>-</span>;
           }
-          return (
-            <div class="flex flex-row items-center overflow-hidden gap-x-1">
-              <BBAvatar size="SMALL" username={user.title} />
-              <span class="truncate">{user.title}</span>
-            </div>
-          );
+          const email = extractUserId(auditLog.user);
+          return <UserLink title={email} email={email} />;
         },
       },
       {
@@ -188,23 +197,11 @@ const columnList = computed((): AuditDataTableColumn[] => {
         width: 256,
         title: t("audit-log.table.service-data"),
         render: (auditLog) => {
-          return auditLog.serviceData && auditLog.serviceData.typeUrl ? (
+          return auditLog.serviceData ? (
             <JSONStringView
-              jsonString={JSON.stringify(
-                {
-                  "@type": auditLog.serviceData.typeUrl,
-                  ...getServiceDataValue(
-                    auditLog.serviceData.typeUrl,
-                    auditLog.serviceData.value
-                  ),
-                },
-                (_, value) => {
-                  if (typeof value === "bigint") {
-                    return value.toString(); // Convert to string
-                  }
-                  return value;
-                }
-              )}
+              jsonString={toJsonString(AnySchema, auditLog.serviceData, {
+                registry: registry,
+              })}
             />
           ) : (
             "-"
@@ -234,25 +231,21 @@ const columnList = computed((): AuditDataTableColumn[] => {
       },
     ] as AuditDataTableColumn[]
   ).filter((column) => !column.hide);
+  return mapSorterStatus(columns, props.sorters);
 });
 
-const getServiceDataValue = (typeUrl: string, value: Uint8Array): any => {
-  switch (typeUrl) {
-    case "type.googleapis.com/bytebase.v1.AuditData":
-      return fromBinary(AuditDataSchema, value);
-    case "type.googleapis.com/bytebase.v1.Setting":
-      return fromBinary(SettingSchema, value);
-    default:
-      return null;
-  }
-};
-
 const getViewLink = (auditLog: AuditLog): string | null => {
-  let parsedRequest: any;
-  let parsedResponse: any;
+  let parsedRequest: Record<string, unknown>;
+  let parsedResponse: Record<string, unknown>;
   try {
-    parsedRequest = JSON.parse(auditLog.request || "{}");
-    parsedResponse = JSON.parse(auditLog.response || "{}");
+    parsedRequest = JSON.parse(auditLog.request || "{}") as Record<
+      string,
+      unknown
+    >;
+    parsedResponse = JSON.parse(auditLog.response || "{}") as Record<
+      string,
+      unknown
+    >;
   } catch {
     return null;
   }
@@ -263,24 +256,26 @@ const getViewLink = (auditLog: AuditLog): string | null => {
   const sections = auditLog.method.split("/").filter((i) => i);
   switch (sections[0]) {
     case RolloutService.typeName:
-      return (parsedResponse as Rollout).name;
+      return (parsedResponse["name"] as string) || null;
     case PlanService.typeName:
-      return (parsedResponse as Plan).name;
+      return (parsedResponse["name"] as string) || null;
     case IssueService.typeName:
-      return (parsedResponse as Issue).name;
-    case SQLService.typeName:
+      return (parsedResponse["name"] as string) || null;
+    case SQLService.typeName: {
       if (sections[1] !== "Export") {
         return null;
       }
-      const name = (parsedRequest as ExportRequest).name;
+      const name = parsedRequest["name"] as string | undefined;
       if (!name) {
         return null;
       }
-      const [projectId, rolloutId, _] = getProjectIdRolloutUidStageUid(name);
-      if (!projectId || !rolloutId) {
+      const [projectId, planId, _] =
+        getProjectIdPlanUidStageUidFromRolloutName(name);
+      if (!projectId || !planId) {
         return null;
       }
-      return `${projectNamePrefix}${projectId}/${rolloutNamePrefix}${rolloutId}`;
+      return `${projectNamePrefix}${projectId}/${rolloutNamePrefix}${planId}`;
+    }
   }
   return null;
 };

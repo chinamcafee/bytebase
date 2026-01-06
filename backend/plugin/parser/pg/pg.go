@@ -6,28 +6,102 @@ import (
 	"github.com/antlr4-go/antlr/v4"
 	parser "github.com/bytebase/parser/postgresql"
 
+	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
-type ParseResult struct {
-	Tree   antlr.Tree
-	Tokens *antlr.CommonTokenStream
+func init() {
+	base.RegisterParseFunc(storepb.Engine_POSTGRES, parsePostgreSQLForRegistry)
+	base.RegisterParseStatementsFunc(storepb.Engine_POSTGRES, parsePgStatements)
+	base.RegisterGetStatementTypes(storepb.Engine_POSTGRES, GetStatementTypesForRegistry)
 }
 
-// ParsePostgreSQL parses the given SQL and returns the ParseResult.
+// parsePostgreSQLForRegistry is the ParseFunc for PostgreSQL.
+// Returns []base.AST with *ANTLRAST instances.
+func parsePostgreSQLForRegistry(statement string) ([]base.AST, error) {
+	parseResults, err := ParsePostgreSQL(statement)
+	if err != nil {
+		return nil, err
+	}
+	asts := make([]base.AST, len(parseResults))
+	for i, r := range parseResults {
+		asts[i] = r
+	}
+	return asts, nil
+}
+
+// parsePgStatements is the ParseStatementsFunc for PostgreSQL.
+// Returns []ParsedStatement with both text and AST populated.
+func parsePgStatements(statement string) ([]base.ParsedStatement, error) {
+	// First split to get Statement with text and positions
+	stmts, err := SplitSQL(statement)
+	if err != nil {
+		return nil, err
+	}
+
+	// Then parse to get ASTs
+	parseResults, err := ParsePostgreSQL(statement)
+	if err != nil {
+		return nil, err
+	}
+
+	// Combine: Statement provides text/positions, ANTLRAST provides AST
+	var result []base.ParsedStatement
+	astIndex := 0
+	for _, stmt := range stmts {
+		ps := base.ParsedStatement{
+			Statement: stmt,
+		}
+		if !stmt.Empty && astIndex < len(parseResults) {
+			ps.AST = parseResults[astIndex]
+			astIndex++
+		}
+		result = append(result, ps)
+	}
+
+	return result, nil
+}
+
+// ParsePostgreSQL parses the given SQL and returns a list of ANTLRAST (one per statement).
 // Use the PostgreSQL parser based on antlr4.
-func ParsePostgreSQL(sql string) (*ParseResult, error) {
+func ParsePostgreSQL(sql string) ([]*base.ANTLRAST, error) {
+	stmts, err := SplitSQL(sql)
+	if err != nil {
+		return nil, err
+	}
+
+	var results []*base.ANTLRAST
+	for _, stmt := range stmts {
+		if stmt.Empty {
+			continue
+		}
+
+		parseResult, err := parseSinglePostgreSQL(stmt.Text, stmt.BaseLine())
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, parseResult)
+	}
+
+	return results, nil
+}
+
+// parseSinglePostgreSQL parses a single PostgreSQL statement and returns the ANTLRAST.
+func parseSinglePostgreSQL(sql string, baseLine int) (*base.ANTLRAST, error) {
 	lexer := parser.NewPostgreSQLLexer(antlr.NewInputStream(sql))
 	stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
 	p := parser.NewPostgreSQLParser(stream)
+	startPosition := &storepb.Position{Line: int32(baseLine) + 1}
 	lexerErrorListener := &base.ParseErrorListener{
-		Statement: sql,
+		Statement:     sql,
+		StartPosition: startPosition,
 	}
 	lexer.RemoveErrorListeners()
 	lexer.AddErrorListener(lexerErrorListener)
 
 	parserErrorListener := &base.ParseErrorListener{
-		Statement: sql,
+		Statement:     sql,
+		StartPosition: startPosition,
 	}
 	p.RemoveErrorListeners()
 	p.AddErrorListener(parserErrorListener)
@@ -43,28 +117,31 @@ func ParsePostgreSQL(sql string) (*ParseResult, error) {
 		return nil, parserErrorListener.Err
 	}
 
-	result := &ParseResult{
-		Tree:   tree,
-		Tokens: stream,
+	result := &base.ANTLRAST{
+		StartPosition: &storepb.Position{Line: int32(baseLine) + 1},
+		Tree:          tree,
+		Tokens:        stream,
 	}
 
 	return result, nil
 }
 
-// ParsePostgreSQLPLBlock parses the given PL/pgSQL block (BEGIN...END) and returns the ParseResult.
+// ParsePostgreSQLPLBlock parses the given PL/pgSQL block (BEGIN...END) and returns the ANTLRAST.
 // Use the PostgreSQL parser based on antlr4, starting from pl_block rule.
-func ParsePostgreSQLPLBlock(plBlock string) (*ParseResult, error) {
+func ParsePostgreSQLPLBlock(plBlock string) (*base.ANTLRAST, error) {
 	lexer := parser.NewPostgreSQLLexer(antlr.NewInputStream(plBlock))
 	stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
 	p := parser.NewPostgreSQLParser(stream)
 	lexerErrorListener := &base.ParseErrorListener{
-		Statement: plBlock,
+		Statement:     plBlock,
+		StartPosition: &storepb.Position{Line: 1},
 	}
 	lexer.RemoveErrorListeners()
 	lexer.AddErrorListener(lexerErrorListener)
 
 	parserErrorListener := &base.ParseErrorListener{
-		Statement: plBlock,
+		Statement:     plBlock,
+		StartPosition: &storepb.Position{Line: 1},
 	}
 	p.RemoveErrorListeners()
 	p.AddErrorListener(parserErrorListener)
@@ -81,15 +158,15 @@ func ParsePostgreSQLPLBlock(plBlock string) (*ParseResult, error) {
 		return nil, parserErrorListener.Err
 	}
 
-	result := &ParseResult{
-		Tree:   tree,
-		Tokens: stream,
+	result := &base.ANTLRAST{
+		StartPosition: &storepb.Position{Line: 1},
+		Tree:          tree,
+		Tokens:        stream,
 	}
 
 	return result, nil
 }
 
-// nolint:unused
 func normalizePostgreSQLTableAlias(ctx parser.ITable_aliasContext) string {
 	if ctx == nil {
 		return ""
@@ -104,7 +181,6 @@ func normalizePostgreSQLTableAlias(ctx parser.ITable_aliasContext) string {
 	}
 }
 
-// nolint:unused
 func normalizePostgreSQLNameList(ctx parser.IName_listContext) []string {
 	if ctx == nil {
 		return nil
@@ -161,7 +237,6 @@ func NormalizePostgreSQLQualifiedName(ctx parser.IQualified_nameContext) []strin
 	return res
 }
 
-// nolint:unused
 func normalizePostgreSQLSetTarget(ctx parser.ISet_targetContext) []string {
 	if ctx == nil {
 		return []string{}
@@ -173,7 +248,6 @@ func normalizePostgreSQLSetTarget(ctx parser.ISet_targetContext) []string {
 	return res
 }
 
-// nolint:unused
 func normalizePostgreSQLOptIndirection(ctx parser.IOpt_indirectionContext) []string {
 	var res []string
 	for _, child := range ctx.AllIndirection_el() {
@@ -222,6 +296,16 @@ func normalizePostgreSQLCollabel(ctx parser.ICollabelContext) string {
 	return strings.ToLower(ctx.GetText())
 }
 
+func normalizePostgreSQLBareColLabel(ctx parser.IBare_col_labelContext) string {
+	if ctx == nil {
+		return ""
+	}
+	if ctx.Identifier() != nil {
+		return normalizePostgreSQLIdentifier(ctx.Identifier())
+	}
+	return strings.ToLower(ctx.GetText())
+}
+
 // NormalizePostgreSQLColid normalizes the given colid.
 func NormalizePostgreSQLColid(ctx parser.IColidContext) string {
 	if ctx == nil {
@@ -236,7 +320,6 @@ func NormalizePostgreSQLColid(ctx parser.IColidContext) string {
 	return strings.ToLower(ctx.GetText())
 }
 
-// nolint:unused
 func normalizePostgreSQLAnyIdentifier(ctx parser.IAny_identifierContext) string {
 	if ctx == nil {
 		return ""
@@ -304,11 +387,6 @@ func NormalizePostgreSQLFuncName(ctx parser.IFunc_nameContext) []string {
 			parts := normalizePostgreSQLIndirection(ctx.Indirection())
 			result = append(result, parts...)
 		}
-	}
-
-	// Handle builtin function names
-	if ctx.Builtin_function_name() != nil {
-		result = append(result, ctx.Builtin_function_name().GetText())
 	}
 
 	// Handle special keywords LEFT/RIGHT

@@ -9,9 +9,7 @@ import (
 	"unicode"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/tsql-parser"
-
-	parsererror "github.com/bytebase/bytebase/backend/plugin/parser/errors"
+	parser "github.com/bytebase/parser/tsql"
 
 	"github.com/pkg/errors"
 
@@ -59,14 +57,17 @@ func newQuerySpanExtractor(defaultDatabase string, defaultSchema string, gCtx ba
 func (q *querySpanExtractor) getQuerySpan(ctx context.Context, statement string) (*base.QuerySpan, error) {
 	q.ctx = ctx
 
-	parseResult, err := ParseTSQL(statement)
+	antlrASTs, err := ParseTSQL(statement)
 	if err != nil {
 		return nil, err
 	}
-	if parseResult == nil {
-		return nil, nil
+
+	if len(antlrASTs) != 1 {
+		return nil, errors.Errorf("expected exactly 1 statement, got %d", len(antlrASTs))
 	}
-	tree := parseResult.Tree
+
+	ast := antlrASTs[0]
+	tree := ast.Tree
 	if tree == nil {
 		return nil, nil
 	}
@@ -104,10 +105,15 @@ func (q *querySpanExtractor) getQuerySpan(ctx context.Context, statement string)
 	listener := &tsqlSelectOnlyListener{
 		extractor: q,
 	}
-	antlr.ParseTreeWalkerDefault.Walk(listener, tree)
+	// Walk all ASTs to collect temp table declarations from earlier statements
+	for _, a := range antlrASTs {
+		if a.Tree != nil {
+			antlr.ParseTreeWalkerDefault.Walk(listener, a.Tree)
+		}
+	}
 	err = listener.err
 	if err != nil {
-		var resourceNotFound *parsererror.ResourceNotFoundError
+		var resourceNotFound *base.ResourceNotFoundError
 		if errors.As(err, &resourceNotFound) {
 			return &base.QuerySpan{
 				Type:          queryTypeListener.result,
@@ -535,12 +541,12 @@ func (q *querySpanExtractor) extractTSqlSensitiveFieldsFromTableSourceItem(ctx p
 		if tempTable, ok := q.gCtx.TempTables[tableName]; ok {
 			return tempTable, nil
 		}
-		return nil, &parsererror.ResourceNotFoundError{
+		return nil, &base.ResourceNotFoundError{
 			Table: &tableName,
 			Err:   errors.Errorf("temp table %s not found", tableName),
 		}
 	} else {
-		return nil, &parsererror.TypeNotSupportedError{
+		return nil, &base.TypeNotSupportedError{
 			Err:  errors.Errorf("only full table name in table source item is supported"),
 			Type: fmt.Sprintf("%v", ctx),
 		}
@@ -695,7 +701,7 @@ func (q *querySpanExtractor) tsqlFindTableSchema(fullTableName parser.IFull_tabl
 			if normalizedSchemaName != "" && !q.isIdentifierEqual(normalizedSchemaName, schemaName) {
 				continue
 			}
-			schemaSchema := database.GetSchema(schemaName)
+			schemaSchema := database.GetSchemaMetadata(schemaName)
 			allTableNames := schemaSchema.ListTableNames()
 			for _, tableName := range allTableNames {
 				if !q.isIdentifierEqual(normalizedTableName, tableName) {
@@ -709,7 +715,7 @@ func (q *querySpanExtractor) tsqlFindTableSchema(fullTableName parser.IFull_tabl
 					Name:     table.GetProto().Name,
 					Columns: func() []string {
 						var result []string
-						for _, column := range table.GetColumns() {
+						for _, column := range table.GetProto().GetColumns() {
 							result = append(result, column.Name)
 						}
 						return result
@@ -732,14 +738,14 @@ func (q *querySpanExtractor) tsqlFindTableSchema(fullTableName parser.IFull_tabl
 					Server:   "",
 					Database: databaseName,
 					Schema:   schemaName,
-					Name:     view.GetProto().Name,
+					Name:     view.Name,
 					Columns:  columns,
 				}
 				return tableSource, nil
 			}
 		}
 	}
-	return nil, &parsererror.ResourceNotFoundError{
+	return nil, &base.ResourceNotFoundError{
 		Database: &normalizedDatabaseName,
 		Schema:   &normalizedSchemaName,
 		Table:    &normalizedTableName,
@@ -3659,14 +3665,17 @@ func unquote(name string) string {
 }
 
 func getSelectBodyFromCreateView(createView string) (string, error) {
-	parseResult, err := ParseTSQL(createView)
+	antlrASTs, err := ParseTSQL(createView)
 	if err != nil {
 		return "", err
 	}
-	if parseResult == nil {
-		return "", errors.Errorf("failed to parse CREATE VIEW statement")
+
+	if len(antlrASTs) != 1 {
+		return "", errors.Errorf("expected exactly 1 statement, got %d", len(antlrASTs))
 	}
-	tree := parseResult.Tree
+
+	ast := antlrASTs[0]
+	tree := ast.Tree
 	if tree == nil {
 		return "", errors.Errorf("parse tree is nil")
 	}

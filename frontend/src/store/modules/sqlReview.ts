@@ -3,28 +3,27 @@ import { createContextValues } from "@connectrpc/connect";
 import { pullAt, uniq } from "lodash-es";
 import { defineStore } from "pinia";
 import { computed, unref, watchEffect } from "vue";
-import { reviewConfigServiceClientConnect } from "@/grpcweb";
-import { silentContextKey } from "@/grpcweb/context-key";
+import { reviewConfigServiceClientConnect } from "@/connect";
+import { silentContextKey } from "@/connect/context-key";
 import { policyNamePrefix } from "@/store/modules/v1/common";
 import type {
+  ComposedDatabase,
+  MaybeRef,
   SchemaPolicyRule,
   SQLReviewPolicy,
-  MaybeRef,
-  ComposedDatabase,
 } from "@/types";
 import {
   PolicyType,
   TagPolicySchema,
-  SQLReviewRuleSchema,
 } from "@/types/proto-es/v1/org_policy_service_pb";
+import type { ReviewConfig } from "@/types/proto-es/v1/review_config_service_pb";
 import {
   DeleteReviewConfigRequestSchema,
-  UpdateReviewConfigRequestSchema,
-  ListReviewConfigsRequestSchema,
   GetReviewConfigRequestSchema,
+  ListReviewConfigsRequestSchema,
+  ReviewConfigSchema,
+  UpdateReviewConfigRequestSchema,
 } from "@/types/proto-es/v1/review_config_service_pb";
-import type { ReviewConfig } from "@/types/proto-es/v1/review_config_service_pb";
-import { ReviewConfigSchema } from "@/types/proto-es/v1/review_config_service_pb";
 import { usePolicyV1Store } from "./v1/policy";
 
 const reviewConfigTagName = "bb.tag.review_config";
@@ -67,25 +66,11 @@ const removeReviewConfigTag = async (resources: string[]) => {
 const convertToSQLReviewPolicy = (
   reviewConfig: ReviewConfig
 ): SQLReviewPolicy | undefined => {
-  const ruleList: SchemaPolicyRule[] = [];
-  for (const r of reviewConfig.rules) {
-    const rule: SchemaPolicyRule = {
-      type: r.type,
-      level: r.level,
-      engine: r.engine,
-      comment: r.comment,
-    };
-    if (r.payload && r.payload !== "{}") {
-      rule.payload = JSON.parse(r.payload);
-    }
-    ruleList.push(rule);
-  }
-
   return {
     id: reviewConfig.name,
     name: reviewConfig.title,
     resources: reviewConfig.resources,
-    ruleList,
+    ruleList: reviewConfig.rules, // Use proto rules directly
     enforce: reviewConfig.enabled,
   };
 };
@@ -191,15 +176,7 @@ export const useSQLReviewStore = defineStore("sqlReview", {
       }
       if (ruleList) {
         updateMask.push("rules");
-        patch.rules = ruleList.map((r) => {
-          return create(SQLReviewRuleSchema, {
-            type: r.type,
-            level: r.level,
-            engine: r.engine,
-            comment: r.comment,
-            payload: r.payload ? JSON.stringify(r.payload) : "{}",
-          });
-        });
+        patch.rules = ruleList; // Use proto rules directly
       }
 
       const request = create(UpdateReviewConfigRequestSchema, {

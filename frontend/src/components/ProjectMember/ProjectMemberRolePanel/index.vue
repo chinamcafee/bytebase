@@ -7,7 +7,7 @@
     <DrawerContent
       :title="panelTitle"
       :closable="true"
-      class="w-[72rem] max-w-[100vw] relative"
+      class="w-6xl max-w-[100vw] relative"
     >
       <div class="w-full flex flex-row justify-end items-center">
         <NButton type="primary" @click="state.showAddMemberPanel = true">
@@ -18,7 +18,7 @@
         <div class="text-lg px-1 pb-1 w-full border-b mb-3">
           <GroupNameCell :group="binding.group!" :show-icon="false" />
         </div>
-        <div class="border rounded divide-y">
+        <div class="border rounded-sm divide-y">
           <div v-for="data in groupMembers" :key="data.user.name" class="p-2">
             <GroupMemberNameCell :user="data.user" :role="data.role" />
           </div>
@@ -52,7 +52,7 @@
         <div v-for="role in roleList" :key="role.role" class="mb-4">
           <template v-if="role.singleBindingList.length > 0">
             <div
-              class="w-full px-2 py-2 flex flex-row justify-start items-center"
+              class="w-full px-2 py-2 flex flex-row justify-start items-center gap-x-1"
             >
               <span class="textlabel">{{ displayRoleTitle(role.role) }}</span>
               <NTooltip
@@ -62,15 +62,13 @@
                 "
               >
                 <template #trigger>
-                  <NButton
-                    tag="div"
-                    text
-                    class="cursor-pointer opacity-60 hover:opacity-100"
+                  <MiniActionButton
+                    type="error"
                     :disabled="!allowRemoveRole(role.role)"
-                    @click="handleDeleteRole(role.role)"
+                    @click.prevent="handleDeleteRole(role.role)"
                   >
-                    <heroicons-outline:trash class="w-4 h-4 ml-1" />
-                  </NButton>
+                    <TrashIcon class="w-4 h-4" />
+                  </MiniActionButton>
                 </template>
                 <div>
                   {{ $t("project.members.cannot-remove-last-owner") }}
@@ -138,35 +136,44 @@ import { create } from "@bufbuild/protobuf";
 import { computedAsync } from "@vueuse/core";
 import { cloneDeep, isEqual } from "lodash-es";
 import { Building2Icon, PencilIcon, TrashIcon } from "lucide-vue-next";
-import { NButton, NTag, NTooltip, NDataTable, useDialog } from "naive-ui";
 import type { DataTableColumn } from "naive-ui";
+import { NButton, NDataTable, NTag, NTooltip, useDialog } from "naive-ui";
 import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { BBButtonConfirm } from "@/bbkit";
 import type { MemberBinding } from "@/components/Member/types";
 import GroupMemberNameCell from "@/components/User/Settings/UserDataTableByGroup/cells/GroupMemberNameCell.vue";
 import GroupNameCell from "@/components/User/Settings/UserDataTableByGroup/cells/GroupNameCell.vue";
-import { Drawer, DrawerContent, InstanceV1Name } from "@/components/v2";
+import {
+  Drawer,
+  DrawerContent,
+  InstanceV1Name,
+  MiniActionButton,
+} from "@/components/v2";
 import {
   extractGroupEmail,
   extractUserId,
+  pushNotification,
   useDatabaseV1Store,
   useProjectIamPolicy,
   useProjectIamPolicyStore,
   useUserStore,
-  pushNotification,
-  batchGetOrFetchDatabases,
 } from "@/store";
-import { PresetRoleType, PRESET_ROLES, type DatabaseResource } from "@/types";
+import {
+  type DatabaseResource,
+  PRESET_ROLES,
+  PresetRoleType,
+  unknownUser,
+} from "@/types";
 import { State } from "@/types/proto-es/v1/common_pb";
 import type { Binding } from "@/types/proto-es/v1/iam_policy_pb";
 import { BindingSchema } from "@/types/proto-es/v1/iam_policy_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import {
+  checkRoleContainsAnyPermission,
   displayRoleTitle,
   hasProjectPermissionV2,
   memberMapToRolesInProjectIAM,
-  checkRoleContainsAnyPermission,
 } from "@/utils";
 import { buildConditionExpr, convertFromExpr } from "@/utils/issue/cel";
 import AddProjectMembersPanel from "../AddProjectMember/AddProjectMembersPanel.vue";
@@ -319,9 +326,8 @@ const getDataTableColumns = (
       key: "operations",
       width: 32,
       render: (singleBinding) => (
-        <div class="flex justify-end pr-2 space-x-2">
-          <NButton
-            text
+        <div class="flex justify-end pr-2 gap-x-1">
+          <MiniActionButton
             onClick={() => {
               editingBinding.value = create(BindingSchema, {
                 role: role,
@@ -332,16 +338,15 @@ const getDataTableColumns = (
             }}
           >
             <PencilIcon class="w-4 h-4" />
-          </NButton>
-          {roleList.value.filter((r) => r.role === role)[0]?.singleBindingList
-            .length > 1 && (
+          </MiniActionButton>
+          {(roleList.value.find((r) => r.role === role)?.singleBindingList
+            ?.length ?? 0) > 1 && (
             <NTooltip
               disabled={allowDeleteCondition(singleBinding)}
               v-slots={{
                 trigger: () => (
-                  <NButton
-                    text
-                    class="cursor-pointer opacity-60 hover:opacity-100"
+                  <MiniActionButton
+                    type="error"
                     disabled={!allowDeleteCondition(singleBinding)}
                     onClick={() => {
                       const item = roleList.value.find((r) => r.role === role);
@@ -355,7 +360,7 @@ const getDataTableColumns = (
                     }}
                   >
                     <TrashIcon class="w-4 h-4" />
-                  </NButton>
+                  </MiniActionButton>
                 ),
                 default: () => t("project.members.cannot-remove-last-owner"),
               }}
@@ -587,7 +592,7 @@ watch(
           Array.isArray(conditionExpr.databaseResources) &&
           conditionExpr.databaseResources.length > 0
         ) {
-          await batchGetOrFetchDatabases(
+          await databaseStore.batchGetOrFetchDatabases(
             conditionExpr.databaseResources.map(
               (resource) => resource.databaseFullName
             )
@@ -637,17 +642,13 @@ const groupMembers = computedAsync(async () => {
 
   // Fetch user data for group members
   const members = props.binding.group?.members ?? [];
-  if (members.length > 0) {
-    const memberUserIds = members.map((m) => m.member);
-    await userStore.batchGetUsers(memberUserIds);
-  }
+  await userStore.batchGetOrFetchUsers(members.map((m) => m.member));
 
   const resp = [];
   for (const member of members) {
-    const user = userStore.getUserByIdentifier(member.member);
-    if (!user) {
-      continue;
-    }
+    const user =
+      userStore.getUserByIdentifier(member.member) ??
+      unknownUser(member.member);
     resp.push({
       user,
       role: member.role,

@@ -1,5 +1,5 @@
 <template>
-  <div class="share-popover w-96 p-2 space-y-4">
+  <div class="share-popover w-96 p-2 flex flex-col gap-y-4">
     <section class="w-full flex flex-row justify-between items-center">
       <div class="pr-4">
         <h2 class="text-lg font-semibold">{{ $t("common.share") }}</h2>
@@ -17,7 +17,7 @@
           >
             <span class="pr-2">{{ $t("sql-editor.link-access") }}:</span>
             <div
-              class="border flex flex-row justify-start items-center px-2 py-1 rounded"
+              class="border flex flex-row justify-start items-center px-2 py-1 rounded-sm"
               :class="
                 allowChangeAccess
                   ? 'hover:border-accent'
@@ -29,11 +29,11 @@
             </div>
           </div>
         </template>
-        <div class="access-content space-y-2 w-80">
+        <div class="access-content flex flex-col gap-y-2 w-80">
           <div
             v-for="option in accessOptions"
             :key="option.label"
-            class="p-2 rounded-sm flex justify-between"
+            class="p-2 rounded-xs flex justify-between"
             :class="[
               allowChangeAccess && 'cursor-pointer hover:bg-gray-200',
               option.value === currentAccess.value && 'bg-gray-200',
@@ -84,31 +84,47 @@
 </template>
 
 <script lang="ts" setup>
+import { useClipboard } from "@vueuse/core";
 import { LockKeyholeIcon, UsersIcon } from "lucide-vue-next";
 import { NInput, NInputGroup, NInputGroupLabel, NPopover } from "naive-ui";
-import { ref, computed, onMounted, h } from "vue";
+import { computed, h, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { CopyButton } from "@/components/v2";
 import { SQL_EDITOR_WORKSHEET_MODULE } from "@/router/sqlEditor";
 import {
   pushNotification,
+  useCurrentUserV1,
+  useSettingV1Store,
   useSQLEditorTabStore,
   useWorkSheetStore,
-  useSettingV1Store,
-  useWorkSheetAndTabStore,
 } from "@/store";
 import type { AccessOption } from "@/types";
-import { Worksheet_Visibility } from "@/types/proto-es/v1/worksheet_service_pb";
+import {
+  type Worksheet,
+  Worksheet_Visibility,
+} from "@/types/proto-es/v1/worksheet_service_pb";
 import { extractProjectResourceName, extractWorksheetUID } from "@/utils";
+
+const props = defineProps<{
+  worksheet?: Worksheet;
+}>();
+
+const emit = defineEmits<{
+  (event: "on-updated"): void;
+}>();
 
 const { t } = useI18n();
 
 const router = useRouter();
 const tabStore = useSQLEditorTabStore();
 const worksheetV1Store = useWorkSheetStore();
-const sheetAndTabStore = useWorkSheetAndTabStore();
 const settingStore = useSettingV1Store();
+const me = useCurrentUserV1();
+
+const { copy: copyTextToClipboard, isSupported } = useClipboard({
+  legacy: true,
+});
 
 const workspaceExternalURL = computed(
   () => settingStore.workspaceProfileSetting?.externalUrl
@@ -137,11 +153,8 @@ const accessOptions = computed<AccessOption[]>(() => {
   ];
 });
 
-const sheet = computed(() => {
-  return sheetAndTabStore.currentSheet;
-});
 const allowChangeAccess = computed(() => {
-  return sheetAndTabStore.isCreator;
+  return props.worksheet?.creator === `users/${me.value.email}`;
 });
 
 const currentAccess = ref<AccessOption>(accessOptions.value[0]);
@@ -149,34 +162,46 @@ const isShowAccessPopover = ref(false);
 
 const handleChangeAccess = async (option: AccessOption) => {
   // only creator can change access
-  if (allowChangeAccess.value && sheet.value) {
+  if (allowChangeAccess.value && props.worksheet) {
     currentAccess.value = option;
     await worksheetV1Store.patchWorksheet(
       {
-        ...sheet.value,
+        ...props.worksheet,
         visibility: currentAccess.value.value,
       },
       ["visibility"]
     );
-    pushNotification({
-      module: "bytebase",
-      style: "SUCCESS",
-      title: t("common.updated"),
-    });
+
+    if (sharedTabLink.value && isSupported.value) {
+      await copyTextToClipboard(sharedTabLink.value);
+      pushNotification({
+        module: "bytebase",
+        style: "SUCCESS",
+        title: t("sql-editor.url-copied-to-clipboard"),
+      });
+    } else {
+      pushNotification({
+        module: "bytebase",
+        style: "SUCCESS",
+        title: t("common.updated"),
+      });
+    }
+
+    emit("on-updated");
   }
   isShowAccessPopover.value = false;
 };
 
 const sharedTabLink = computed(() => {
-  if (!sheet.value) {
+  if (!props.worksheet) {
     return "";
   }
 
   const route = router.resolve({
     name: SQL_EDITOR_WORKSHEET_MODULE,
     params: {
-      project: extractProjectResourceName(sheet.value.project),
-      sheet: extractWorksheetUID(sheet.value.name),
+      project: extractProjectResourceName(props.worksheet.project),
+      sheet: extractWorksheetUID(props.worksheet.name),
     },
   });
   return new URL(
@@ -186,8 +211,8 @@ const sharedTabLink = computed(() => {
 });
 
 onMounted(() => {
-  if (sheet.value) {
-    const { visibility } = sheet.value;
+  if (props.worksheet) {
+    const { visibility } = props.worksheet;
     const idx = accessOptions.value.findIndex(
       (item) => item.value === visibility
     );

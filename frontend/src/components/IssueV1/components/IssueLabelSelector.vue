@@ -46,8 +46,8 @@ export const getValidIssueLabels = (
 
 <script setup lang="ts">
 import { ExternalLinkIcon } from "lucide-vue-next";
-import { NCheckbox, NSelect, NTag, NEmpty } from "naive-ui";
 import type { SelectOption } from "naive-ui";
+import { NCheckbox, NEmpty, NSelect, NTag } from "naive-ui";
 import type { SelectBaseOption } from "naive-ui/lib/select/src/interface";
 import { computed, h } from "vue";
 import { PROJECT_V1_ROUTE_SETTINGS } from "@/router/dashboard/projectV1";
@@ -103,7 +103,7 @@ const renderLabel = (option: IssueLabelOption, selected: boolean) => {
   return h("div", { class: "flex items-center gap-x-2" }, [
     h(NCheckbox, { checked: selected, size: "small" }),
     h("div", {
-      class: "w-4 h-4 rounded cursor-pointer relative",
+      class: "w-4 h-4 rounded-sm cursor-pointer relative",
       style: `background-color: ${color};`,
       onClick: () => {},
     }),
@@ -131,7 +131,7 @@ const renderTag = ({
       default: () =>
         h("div", { class: "flex items-center gap-x-2" }, [
           h("div", {
-            class: "w-4 h-4 rounded",
+            class: "w-4 h-4 rounded-sm",
             style: `background-color: ${color};`,
           }),
           value,

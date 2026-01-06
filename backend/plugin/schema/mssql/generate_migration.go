@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/tsql-parser"
+	parser "github.com/bytebase/parser/tsql"
 	"github.com/pkg/errors"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -1082,16 +1082,20 @@ func getViewDependencies(viewDef string, schemaName string) ([]string, error) {
 	// Parse the CREATE VIEW statement to extract the query properly
 	// We need to find the AS keyword that's part of CREATE VIEW, not column aliases
 
-	parseResult, err := tsql.ParseTSQL(viewDef)
+	parseResults, err := tsql.ParseTSQL(viewDef)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to parse view definition")
+	}
+
+	if len(parseResults) != 1 {
+		return nil, errors.Errorf("expected exactly 1 statement, got %d", len(parseResults))
 	}
 
 	// Extract the query part after the CREATE VIEW statement
 	// This assumes the viewDef is a valid CREATE VIEW statement
 	// and that it contains a valid T-SQL query.
 	l := &queryClauseListener{}
-	antlr.ParseTreeWalkerDefault.Walk(l, parseResult.Tree)
+	antlr.ParseTreeWalkerDefault.Walk(l, parseResults[0].Tree)
 	if l.result == "" {
 		return []string{}, nil
 	}
@@ -1111,7 +1115,7 @@ func getViewDependencies(viewDef string, schemaName string) ([]string, error) {
 						},
 					},
 				}
-				dbMetadata := model.NewDatabaseMetadata(metadata, false, false)
+				dbMetadata := model.NewDatabaseMetadata(metadata, nil, nil, storepb.Engine_MSSQL, false)
 				return databaseName, dbMetadata, nil
 			},
 			ListDatabaseNamesFunc: func(_ context.Context, _ string) ([]string, error) {

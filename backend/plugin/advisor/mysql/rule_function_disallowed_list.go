@@ -6,13 +6,15 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
-	"github.com/pkg/errors"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -21,7 +23,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleFunctionDisallowList, &FunctionDisallowedListAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_SYSTEM_FUNCTION_DISALLOWED_LIST, &FunctionDisallowedListAdvisor{})
 }
 
 // FunctionDisallowedListAdvisor is the advisor checking for disallowed function list.
@@ -29,35 +31,34 @@ type FunctionDisallowedListAdvisor struct {
 }
 
 func (*FunctionDisallowedListAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parser result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalStringArrayTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
+	stringArrayPayload := checkCtx.Rule.GetStringArrayPayload()
 
 	var disallowList []string
-	for _, fn := range payload.List {
+	for _, fn := range stringArrayPayload.List {
 		disallowList = append(disallowList, strings.ToUpper(fn))
 	}
 
 	// Create the rule
-	rule := NewFunctionDisallowedListRule(level, string(checkCtx.Rule.Type), disallowList)
+	rule := NewFunctionDisallowedListRule(level, checkCtx.Rule.Type.String(), disallowList)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -114,7 +115,7 @@ func (r *FunctionDisallowedListRule) checkFunctionCall(ctx *mysql.FunctionCallCo
 		if slices.Contains(r.disallowList, strings.ToUpper(functionName)) {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.DisabledFunction.Int32(),
+				Code:          code.DisabledFunction.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("Function \"%s\" is disallowed, but \"%s\" uses", functionName, r.text),
 				StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),

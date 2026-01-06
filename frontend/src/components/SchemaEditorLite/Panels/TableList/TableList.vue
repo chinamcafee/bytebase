@@ -22,45 +22,22 @@
       class="schema-editor-table-list"
     />
   </div>
-
-  <Drawer
-    :show="state.showSchemaTemplateDrawer"
-    @close="state.showSchemaTemplateDrawer = false"
-  >
-    <DrawerContent :title="$t('schema-template.table-template.self')">
-      <div class="w-[calc(100vw-36rem)] min-w-[64rem] max-w-[calc(100vw-8rem)]">
-        <TableTemplates
-          :engine="engine"
-          :readonly="true"
-          @apply="handleApplyTemplate"
-        />
-      </div>
-    </DrawerContent>
-  </Drawer>
 </template>
 
 <script lang="ts" setup>
-import { create } from "@bufbuild/protobuf";
 import { useElementSize } from "@vueuse/core";
 import { pick } from "lodash-es";
 import type { DataTableColumn, DataTableInst } from "naive-ui";
 import { NCheckbox, NDataTable } from "naive-ui";
-import { computed, h, reactive, ref } from "vue";
+import { computed, h, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import ClassificationCell from "@/components/ColumnDataTable/ClassificationCell.vue";
-import { Drawer, DrawerContent, InlineInput } from "@/components/v2";
+import { InlineInput } from "@/components/v2";
 import type { ComposedDatabase } from "@/types";
-import {
-  TableCatalogSchema,
-  TableCatalog_ColumnsSchema,
-} from "@/types/proto-es/v1/database_catalog_service_pb";
 import type {
   DatabaseMetadata,
   SchemaMetadata,
   TableMetadata,
 } from "@/types/proto-es/v1/database_service_pb";
-import type { SchemaTemplateSetting_TableTemplate } from "@/types/proto-es/v1/setting_service_pb";
-import TableTemplates from "@/views/SchemaTemplate/TableTemplates.vue";
 import { useSchemaEditorContext } from "../../context";
 import { markUUID } from "../common";
 import { NameCell, OperationCell, SelectionCell } from "./components";
@@ -85,12 +62,6 @@ const emit = defineEmits<{
   ): void;
 }>();
 
-interface LocalState {
-  showFeatureModal: boolean;
-  showSchemaTemplateDrawer: boolean;
-  activeTable?: TableMetadata;
-}
-
 const { t } = useI18n();
 const {
   readonly,
@@ -99,14 +70,10 @@ const {
   markEditStatus,
   removeEditStatus,
   getSchemaStatus,
-  getTableCatalog,
   getTableStatus,
-  upsertTableCatalog,
   useConsumePendingScrollToTable,
   getAllTablesSelectionState,
   updateAllTablesSelection,
-  showClassificationColumn,
-  classificationConfig,
 } = useSchemaEditorContext();
 
 const dataTableRef = ref<DataTableInst>();
@@ -124,10 +91,6 @@ const tableBodyHeight = computed(() => {
 });
 // Use this to avoid unnecessary initial rendering
 const layoutReady = computed(() => tableHeaderHeight.value > 0);
-const state = reactive<LocalState>({
-  showFeatureModal: false,
-  showSchemaTemplateDrawer: false,
-});
 const filteredTables = computed(() => {
   const keyword = props.searchPattern?.trim();
   if (!keyword) {
@@ -135,51 +98,6 @@ const filteredTables = computed(() => {
   }
   return props.tables.filter((table) => table.name.includes(keyword));
 });
-
-const engine = computed(() => {
-  return props.db.instanceResource.engine;
-});
-
-const catalogForTable = (table: string) => {
-  return (
-    getTableCatalog({
-      database: props.db.name,
-      schema: props.schema.name,
-      table,
-    }) ??
-    create(TableCatalogSchema, {
-      name: table,
-      kind: {
-        case: "columns",
-        value: create(TableCatalog_ColumnsSchema, {}),
-      },
-    })
-  );
-};
-
-const showClassification = computed(() => {
-  return showClassificationColumn(
-    engine.value,
-    classificationConfig.value?.classificationFromConfig ?? false
-  );
-});
-
-const onClassificationSelect = (classificationId: string) => {
-  const table = state.activeTable;
-  if (!table) return;
-
-  upsertTableCatalog(
-    {
-      database: props.db.name,
-      schema: props.schema.name,
-      table: table.name,
-    },
-    (config) => (config.classification = classificationId)
-  );
-
-  state.activeTable = undefined;
-  markEditStatus(props.db, metadataForTable(table), "updated");
-};
 
 const metadataForTable = (table: TableMetadata) => {
   return {
@@ -254,28 +172,6 @@ const columns = computed(() => {
       },
     },
     {
-      key: "classification",
-      title: t("schema-editor.column.classification"),
-      resizable: true,
-      minWidth: 140,
-      maxWidth: 320,
-      hide: !showClassification.value,
-      render: (table) => {
-        const catalog = catalogForTable(table.name);
-        return h(ClassificationCell, {
-          classification: catalog.classification,
-          readonly: readonly.value,
-          disabled: isDroppedSchema.value || isDroppedTable(table),
-          engine: engine.value,
-          classificationConfig: classificationConfig.value,
-          onApply: (id: string) => {
-            state.activeTable = table;
-            onClassificationSelect(id);
-          },
-        });
-      },
-    },
-    {
       key: "engine",
       title: t("schema-editor.database.engine"),
       resizable: true,
@@ -303,7 +199,7 @@ const columns = computed(() => {
       className: "input-cell",
       render: (table) => {
         return h(InlineInput, {
-          value: table.userComment,
+          value: table.comment,
           disabled:
             readonly.value || isDroppedSchema.value || isDroppedTable(table),
           placeholder: "comment",
@@ -313,7 +209,7 @@ const columns = computed(() => {
             "--n-text-color-disabled": "rgb(var(--color-main))",
           },
           "onUpdate:value": (value) => {
-            table.userComment = value;
+            table.comment = value;
             markEditStatus(props.db, metadataForTable(table), "updated");
           },
         });
@@ -325,7 +221,7 @@ const columns = computed(() => {
       resizable: false,
       width: 30,
       hide: readonly.value,
-      className: "!px-0",
+      className: "px-0!",
       render: (table) => {
         return h(OperationCell, {
           table,
@@ -362,37 +258,6 @@ const handleRestoreTable = (table: TableMetadata) => {
   removeEditStatus(props.db, metadataForTable(table), /* recursive */ false);
 };
 
-const handleApplyTemplate = (template: SchemaTemplateSetting_TableTemplate) => {
-  state.showSchemaTemplateDrawer = false;
-  if (!template.table) {
-    return;
-  }
-  if (template.engine !== engine.value) {
-    return;
-  }
-
-  const table = template.table;
-  /* eslint-disable-next-line vue/no-mutating-props */
-  props.schema.tables.push(table);
-  const metadata = metadataForTable(table);
-
-  upsertTableCatalog(
-    {
-      database: props.db.name,
-      schema: props.schema.name,
-      table: table.name,
-    },
-    (catalog) => Object.assign(catalog, template.catalog)
-  );
-
-  markEditStatus(props.db, metadata, "created");
-  addTab({
-    type: "table",
-    database: props.db,
-    metadata,
-  });
-};
-
 const isDroppedTable = (table: TableMetadata) => {
   return statusForTable(table) === "dropped";
 };
@@ -402,7 +267,8 @@ const getTableKey = (table: TableMetadata) => {
 };
 
 const vlRef = computed(() => {
-  return (dataTableRef.value as any)?.$refs?.mainTableInstRef?.bodyInstRef
+  // biome-ignore lint/suspicious/noExplicitAny: accessing internal naive-ui refs
+  return (dataTableRef.value as any)?.$refs?.mainTableInstRef?.bodyInstRef // eslint-disable-line @typescript-eslint/no-explicit-any
     ?.virtualListRef;
 });
 useConsumePendingScrollToTable(
@@ -432,22 +298,30 @@ useConsumePendingScrollToTable(
 <style lang="postcss" scoped>
 .schema-editor-table-list
   :deep(.n-data-table-th .n-data-table-resize-button::after) {
-  @apply bg-control-bg h-2/3;
+  background-color: var(--color-control-bg);
+  height: 66.666667%;
 }
 .schema-editor-table-list :deep(.n-data-table-td.input-cell) {
-  @apply pl-0.5 pr-1 py-0;
+  padding-left: 0.125rem;
+  padding-right: 0.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 .schema-editor-table-list:not(.disable-diff-coloring)
   :deep(.n-data-table-tr.created .n-data-table-td) {
-  @apply text-green-700 !bg-green-50;
+  color: var(--color-green-700);
+  background-color: var(--color-green-50) !important;
 }
 .schema-editor-table-list:not(.disable-diff-coloring)
   :deep(.n-data-table-tr.dropped .n-data-table-td) {
-  @apply text-red-700 !bg-red-50 opacity-70;
+  color: var(--color-red-700);
+  background-color: var(--color-red-50) !important;
+  opacity: 0.7;
 }
 
 .schema-editor-table-list:not(.disable-diff-coloring)
   :deep(.n-data-table-tr.updated .n-data-table-td) {
-  @apply text-yellow-700 !bg-yellow-50;
+  color: var(--color-yellow-700);
+  background-color: var(--color-yellow-50) !important;
 }
 </style>

@@ -8,9 +8,10 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -28,7 +29,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleCurrentTimeColumnCountLimit, &ColumnCurrentTimeCountLimitAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_COLUMN_CURRENT_TIME_COUNT_LIMIT, &ColumnCurrentTimeCountLimitAdvisor{})
 }
 
 // ColumnCurrentTimeCountLimitAdvisor is the advisor checking for current time column count limit.
@@ -37,9 +38,10 @@ type ColumnCurrentTimeCountLimitAdvisor struct {
 
 // Check checks for current time column count limit.
 func (*ColumnCurrentTimeCountLimitAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -48,7 +50,7 @@ func (*ColumnCurrentTimeCountLimitAdvisor) Check(_ context.Context, checkCtx adv
 	}
 	checker := &columnCurrentTimeCountLimitChecker{
 		level:    level,
-		title:    string(checkCtx.Rule.Type),
+		title:    checkCtx.Rule.Type.String(),
 		tableSet: make(map[string]tableData),
 	}
 
@@ -95,7 +97,7 @@ func (checker *columnCurrentTimeCountLimitChecker) generateAdvice() []*storepb.A
 		if table.defaultCurrentTimeCount > maxDefaultCurrentTimeColumCount {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.DefaultCurrentTimeColumnCountExceedsLimit.Int32(),
+				Code:          code.DefaultCurrentTimeColumnCountExceedsLimit.Int32(),
 				Title:         checker.title,
 				Content:       fmt.Sprintf("Table `%s` has %d DEFAULT CURRENT_TIMESTAMP() columns. The count greater than %d.", table.tableName, table.defaultCurrentTimeCount, maxDefaultCurrentTimeColumCount),
 				StartPosition: common.ConvertANTLRLineToPosition(table.line),
@@ -104,7 +106,7 @@ func (checker *columnCurrentTimeCountLimitChecker) generateAdvice() []*storepb.A
 		if table.onUpdateCurrentTimeCount > maxOnUpdateCurrentTimeColumnCount {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.OnUpdateCurrentTimeColumnCountExceedsLimit.Int32(),
+				Code:          code.OnUpdateCurrentTimeColumnCountExceedsLimit.Int32(),
 				Title:         checker.title,
 				Content:       fmt.Sprintf("Table `%s` has %d ON UPDATE CURRENT_TIMESTAMP() columns. The count greater than %d.", table.tableName, table.onUpdateCurrentTimeCount, maxOnUpdateCurrentTimeColumnCount),
 				StartPosition: common.ConvertANTLRLineToPosition(table.line),

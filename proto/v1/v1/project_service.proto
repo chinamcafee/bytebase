@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package bytebase.v1;
 
+import "buf/validate/validate.proto";
 import "google/api/annotations.proto";
 import "google/api/client.proto";
 import "google/api/field_behavior.proto";
@@ -22,6 +23,14 @@ service ProjectService {
   rpc GetProject(GetProjectRequest) returns (Project) {
     option (google.api.http) = {get: "/v1/{name=projects/*}"};
     option (google.api.method_signature) = "name";
+    option (bytebase.v1.permission) = "bb.projects.get";
+    option (bytebase.v1.auth_method) = IAM;
+  }
+
+  // BatchGetProjects retrieves multiple projects by their names.
+  // Permissions required: bb.projects.get
+  rpc BatchGetProjects(BatchGetProjectsRequest) returns (BatchGetProjectsResponse) {
+    option (google.api.http) = {get: "/v1/projects:batchGet"};
     option (bytebase.v1.permission) = "bb.projects.get";
     option (bytebase.v1.auth_method) = IAM;
   }
@@ -113,14 +122,6 @@ service ProjectService {
     option (bytebase.v1.auth_method) = IAM;
   }
 
-  // Deprecated. No permission check implemented.
-  // Permissions required: None
-  rpc BatchGetIamPolicy(BatchGetIamPolicyRequest) returns (BatchGetIamPolicyResponse) {
-    option (google.api.http) = {get: "/v1/{scope=*/*}/iamPolicies:batchGet"};
-    option (bytebase.v1.permission) = "bb.projects.getIamPolicy";
-    option (bytebase.v1.auth_method) = CUSTOM;
-  }
-
   // Sets the IAM policy for a project.
   // Permissions required: bb.projects.setIamPolicy
   rpc SetIamPolicy(SetIamPolicyRequest) returns (IamPolicy) {
@@ -188,6 +189,20 @@ message GetProjectRequest {
   ];
 }
 
+message BatchGetProjectsRequest {
+  // The names of projects to retrieve.
+  // Format: projects/{project}
+  repeated string names = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (google.api.resource_reference) = {type: "bytebase.com/Project"}
+  ];
+}
+
+message BatchGetProjectsResponse {
+  // The projects from the specified request.
+  repeated Project projects = 1;
+}
+
 message ListProjectsRequest {
   // The maximum number of projects to return. The service may return fewer than
   // this value.
@@ -209,6 +224,14 @@ message ListProjectsRequest {
   // Check filter for SearchProjectsRequest for details.
   // Supports filtering by name, resource_id, state, and labels (e.g., labels.environment == "production").
   string filter = 4;
+
+  // The order by of projects.
+  // Support title. The default sorting order is ascending.
+  // For example:
+  // - order_by = "title"
+  // - order_by = "title desc"
+  // - order_by = "title asc"
+  string order_by = 5;
 }
 
 message ListProjectsResponse {
@@ -262,6 +285,14 @@ message SearchProjectsRequest {
   // When paginating, all other parameters provided to `SearchProjects` must match
   // the call that provided the page token.
   string page_token = 4;
+
+  // The order by of projects.
+  // Support title. The default sorting order is ascending.
+  // For example:
+  // - order_by = "title"
+  // - order_by = "title desc"
+  // - order_by = "title asc"
+  string order_by = 5;
 }
 
 message SearchProjectsResponse {
@@ -345,26 +376,6 @@ message BatchDeleteProjectsRequest {
   bool force = 2;
 }
 
-message BatchGetIamPolicyRequest {
-  // The scope of the batch get. Typically it's "projects/-".
-  string scope = 1 [(google.api.field_behavior) = REQUIRED];
-
-  repeated string names = 2;
-}
-
-message BatchGetIamPolicyResponse {
-  // Result for a single project's IAM policy.
-  message PolicyResult {
-    // The project resource name.
-    string project = 1;
-
-    // The IAM policy for the project.
-    IamPolicy policy = 2;
-  }
-  // The policy results for each requested project.
-  repeated PolicyResult policy_results = 1;
-}
-
 // A label for categorizing and organizing issues.
 message Label {
   // The label value/name.
@@ -381,50 +392,46 @@ message Project {
     pattern: "projects/{project}"
   };
 
-  reserved 2;
   // The name of the project.
   // Format: projects/{project}
   string name = 1;
 
   // The lifecycle state of the project.
-  State state = 3;
+  State state = 2;
 
   // The title or name of a project. It's not unique within the workspace.
-  string title = 4;
+  string title = 3 [(buf.validate.field).string.max_len = 200];
 
   // The list of webhooks configured for the project.
-  repeated Webhook webhooks = 11;
+  repeated Webhook webhooks = 4;
 
   // The data classification configuration ID for the project.
-  string data_classification_config_id = 12;
+  string data_classification_config_id = 5;
 
   // Labels available for tagging issues in this project.
-  repeated Label issue_labels = 13;
+  repeated Label issue_labels = 6;
 
   // Force issue labels to be used when creating an issue.
-  bool force_issue_labels = 14;
-  // Allow modifying SQL statements after issue is created.
-  bool allow_modify_statement = 15;
-  // Enable automatic issue resolution when tasks complete.
-  bool auto_resolve_issue = 16;
+  bool force_issue_labels = 7;
+
   // Enforce issue title to be created by user instead of generated by Bytebase.
-  bool enforce_issue_title = 17;
+  bool enforce_issue_title = 10;
 
   // Whether to automatically enable backup for database changes.
-  bool auto_enable_backup = 18;
+  bool auto_enable_backup = 11;
 
   // Whether to skip backup errors and continue with data migration.
-  bool skip_backup_errors = 19;
+  bool skip_backup_errors = 12;
 
   // Whether to enable database tenant mode for PostgreSQL.
   // If enabled, issues will include "set role <db_owner>" statement.
-  bool postgres_database_tenant_mode = 20;
+  bool postgres_database_tenant_mode = 13;
 
   // Whether to allow issue creators to self-approve their own issues.
-  bool allow_self_approval = 21;
+  bool allow_self_approval = 14;
 
   // Execution retry policy for task runs.
-  ExecutionRetryPolicy execution_retry_policy = 22;
+  ExecutionRetryPolicy execution_retry_policy = 15;
 
   // Execution retry policy configuration.
   message ExecutionRetryPolicy {
@@ -434,18 +441,24 @@ message Project {
 
   // The maximum number of database rows to sample during CI data validation.
   // Without specification, sampling is disabled, resulting in full validation.
-  int32 ci_sampling_size = 23;
+  int32 ci_sampling_size = 16;
 
   // The maximum number of parallel tasks allowed during rollout execution.
-  int32 parallel_tasks_per_rollout = 24;
+  int32 parallel_tasks_per_rollout = 17;
 
   // Labels are key-value pairs that can be attached to the project.
   // For example, { "environment": "production", "team": "backend" }
-  map<string, string> labels = 25;
+  map<string, string> labels = 18;
 
   // Whether to enforce SQL review checks to pass before issue creation.
   // If enabled, issues cannot be created when SQL review finds errors.
-  bool enforce_sql_review = 26;
+  bool enforce_sql_review = 19;
+
+  // Whether to require issue approval before rollout.
+  bool require_issue_approval = 20;
+
+  // Whether to require plan check to have no error before rollout.
+  bool require_plan_check_no_error = 21;
 }
 
 message AddWebhookRequest {
@@ -505,26 +518,8 @@ message Webhook {
   string name = 1;
 
   // Webhook integration type.
-  enum Type {
-    // Unspecified type.
-    TYPE_UNSPECIFIED = 0;
-    // Slack integration.
-    SLACK = 1;
-    // Discord integration.
-    DISCORD = 2;
-    // Microsoft Teams integration.
-    TEAMS = 3;
-    // DingTalk integration.
-    DINGTALK = 4;
-    // Feishu integration.
-    FEISHU = 5;
-    // WeCom (WeChat Work) integration.
-    WECOM = 6;
-    // Lark integration.
-    LARK = 8;
-  }
   // type is the type of the webhook.
-  Type type = 2 [(google.api.field_behavior) = REQUIRED];
+  WebhookType type = 2 [(google.api.field_behavior) = REQUIRED];
 
   // title is the title of the webhook.
   string title = 3 [(google.api.field_behavior) = REQUIRED];
@@ -540,15 +535,11 @@ message Webhook {
   // notification_types is the list of activities types that the webhook is interested in.
   // Bytebase will only send notifications to the webhook if the activity type is in the list.
   // It should not be empty, and should be a subset of the following:
-  // - ISSUE_CREATE
-  // - ISSUE_COMMENT_CREATE
-  // - ISSUE_FIELD_UPDATE
-  // - ISSUE_STATUS_UPDATE
-  // - ISSUE_APPROVAL_NOTIFY
-  // - ISSUE_PIPELINE_STAGE_STATUS_UPDATE
-  // - ISSUE_PIPELINE_TASK_RUN_STATUS_UPDATE
-  // - NOTIFY_ISSUE_APPROVED
-  // - NOTIFY_PIPELINE_ROLLOUT
+  // - ISSUE_CREATED
+  // - ISSUE_APPROVAL_REQUESTED
+  // - ISSUE_SENT_BACK
+  // - PIPELINE_FAILED
+  // - PIPELINE_COMPLETED
   repeated Activity.Type notification_types = 5 [(google.api.field_behavior) = UNORDERED_LIST];
 }
 
@@ -558,27 +549,15 @@ message Activity {
   enum Type {
     // Unspecified type.
     TYPE_UNSPECIFIED = 0;
-    // Notifications via webhooks.
-    //
-    // NOTIFY_ISSUE_APPROVED represents the issue approved notification.
-    NOTIFY_ISSUE_APPROVED = 23;
-    // NOTIFY_PIPELINE_ROLLOUT represents the pipeline rollout notification.
-    NOTIFY_PIPELINE_ROLLOUT = 24;
-    // Issue related activity types.
-    //
-    // ISSUE_CREATE represents creating an issue.
-    ISSUE_CREATE = 1;
-    // ISSUE_COMMENT_CREATE represents commenting on an issue.
-    ISSUE_COMMENT_CREATE = 2;
-    // ISSUE_FIELD_UPDATE represents updating the issue field, likes title, description, etc.
-    ISSUE_FIELD_UPDATE = 3;
-    // ISSUE_STATUS_UPDATE represents the issue status change, including OPEN, CLOSE, CANCEL fow now.
-    ISSUE_STATUS_UPDATE = 4;
-    // ISSUE_APPROVAL_NOTIFY is the type for notifying issue approval.
-    ISSUE_APPROVAL_NOTIFY = 21;
-    // ISSUE_PIPELINE_STAGE_STATUS_UPDATE represents the pipeline stage status change, including BEGIN, END for now.
-    ISSUE_PIPELINE_STAGE_STATUS_UPDATE = 5;
-    // ISSUE_PIPELINE_TASK_RUN_STATUS_UPDATE represents the pipeline task run status change, including PENDING, RUNNING, DONE, FAILED, CANCELED.
-    ISSUE_PIPELINE_TASK_RUN_STATUS_UPDATE = 22;
+    // ISSUE_CREATED represents a new issue creation event.
+    ISSUE_CREATED = 10;
+    // ISSUE_APPROVAL_REQUESTED represents an approval request event.
+    ISSUE_APPROVAL_REQUESTED = 11;
+    // ISSUE_SENT_BACK represents an issue being sent back by an approver.
+    ISSUE_SENT_BACK = 12;
+    // PIPELINE_FAILED represents a pipeline failure event.
+    PIPELINE_FAILED = 13;
+    // PIPELINE_COMPLETED represents a pipeline completion event.
+    PIPELINE_COMPLETED = 14;
   }
 }

@@ -1,5 +1,5 @@
 <template>
-  <div class="w-full mx-auto space-y-4">
+  <div class="w-full mx-auto flex flex-col gap-y-4">
     <div class="textinfolabel">
       {{ $t("project.members.description") }}
       <LearnMoreLink
@@ -14,25 +14,33 @@
             v-model:value="state.searchText"
             :placeholder="$t('settings.members.search-member')"
           />
-          <NButton
-            v-if="state.selectedTab === 'users' && allowEdit"
-            :disabled="state.selectedMembers.length === 0"
-            @click="handleRevokeSelectedMembers"
+          <PermissionGuardWrapper
+            v-slot="slotProps"
+            :project="project"
+            :permissions="['bb.projects.setIamPolicy']"
           >
-            {{ $t("settings.members.revoke-access") }}
-          </NButton>
+            <div class="flex gap-x-2">
+              <NButton
+                v-if="state.selectedTab === 'users'"
+                :disabled="slotProps.disabled || state.selectedMembers.length === 0"
+                @click="handleRevokeSelectedMembers"
+              >
+                {{ $t("settings.members.revoke-access") }}
+              </NButton>
+              <NButton
+                type="primary"
+                :disabled="slotProps.disabled"
+                @click="state.showAddMemberPanel = true"
+              >
+                <template #icon>
+                  <heroicons-outline:user-add class="w-4 h-4" />
+                </template>
+                {{ $t("settings.members.grant-access") }}
+              </NButton>
+            </div>
+          </PermissionGuardWrapper>
           <NButton
-            v-if="allowEdit"
-            type="primary"
-            @click="state.showAddMemberPanel = true"
-          >
-            <template #icon>
-              <heroicons-outline:user-add class="w-4 h-4" />
-            </template>
-            {{ $t("settings.members.grant-access") }}
-          </NButton>
-          <NButton
-            v-else-if="shouldShowRequestRoleButton"
+            v-if="shouldShowRequestRoleButton"
             type="primary"
             @click="state.showRequestRolePanel = true"
           >
@@ -102,7 +110,6 @@
 </template>
 
 <script lang="ts" setup>
-import { computedAsync } from "@vueuse/core";
 import { cloneDeep } from "lodash-es";
 import { NButton, NTabPane, NTabs, useDialog } from "naive-ui";
 import { computed, reactive } from "vue";
@@ -112,6 +119,7 @@ import MemberDataTable from "@/components/Member/MemberDataTable/index.vue";
 import MemberDataTableByRole from "@/components/Member/MemberDataTableByRole.vue";
 import type { MemberBinding } from "@/components/Member/types";
 import { getMemberBindings } from "@/components/Member/utils";
+import PermissionGuardWrapper from "@/components/Permission/PermissionGuardWrapper.vue";
 import {
   extractUserId,
   pushNotification,
@@ -123,9 +131,9 @@ import {
   useWorkspaceV1Store,
 } from "@/store";
 import {
+  groupBindingPrefix,
   PRESET_WORKSPACE_ROLES,
   PresetRoleType,
-  groupBindingPrefix,
 } from "@/types";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
@@ -148,7 +156,6 @@ interface LocalState {
 
 const props = defineProps<{
   project: Project;
-  allowEdit: boolean;
 }>();
 
 const { t } = useI18n();
@@ -196,7 +203,7 @@ const shouldShowRequestRoleButton = computed(() => {
 
 const workspaceRoles = computed(() => new Set(PRESET_WORKSPACE_ROLES));
 
-const memberBindings = computedAsync(() => {
+const memberBindings = computed(() => {
   return getMemberBindings({
     policies: [
       {
@@ -211,7 +218,7 @@ const memberBindings = computedAsync(() => {
     searchText: state.searchText,
     ignoreRoles: workspaceRoles.value,
   });
-}, []);
+});
 
 const selectMember = (binding: MemberBinding) => {
   state.editingMember = binding.binding;

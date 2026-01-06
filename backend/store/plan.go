@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -16,7 +15,6 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/bytebase/bytebase/backend/common"
-	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/common/qb"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
@@ -25,16 +23,15 @@ import (
 // PlanMessage is the message for plan.
 type PlanMessage struct {
 	ProjectID   string
-	PipelineUID *int
 	Name        string
 	Description string
 	Config      *storepb.PlanConfig
 	// output only
-	UID        int64
-	CreatorUID int
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	Deleted    bool
+	UID       int64
+	Creator   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	Deleted   bool
 }
 
 // FindPlanMessage is the message to find a plan.
@@ -42,7 +39,8 @@ type FindPlanMessage struct {
 	UID        *int64
 	ProjectID  *string
 	ProjectIDs *[]string
-	PipelineID *int
+
+	HasRollout *bool
 
 	Limit  *int
 	Offset *int
@@ -55,13 +53,15 @@ type UpdatePlanMessage struct {
 	UID         int64
 	Name        *string
 	Description *string
-	Specs       *[]*storepb.PlanConfig_Spec
-	Deployment  **storepb.PlanConfig_Deployment
-	Deleted     *bool
+	// Config replaces the entire plan config.
+	// Callers should clone the existing config and modify only the fields they want to change.
+	// Example: config := proto.CloneOf(plan.Config); config.HasRollout = true; patch.Config = config
+	Config  *storepb.PlanConfig
+	Deleted *bool
 }
 
 // CreatePlan creates a new plan.
-func (s *Store) CreatePlan(ctx context.Context, plan *PlanMessage, creatorUID int) (*PlanMessage, error) {
+func (s *Store) CreatePlan(ctx context.Context, plan *PlanMessage, creator string) (*PlanMessage, error) {
 	config, err := protojson.Marshal(plan.Config)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to marshal plan config")
@@ -69,16 +69,15 @@ func (s *Store) CreatePlan(ctx context.Context, plan *PlanMessage, creatorUID in
 
 	q := qb.Q().Space(`
 		INSERT INTO plan (
-			creator_id,
+			creator,
 			project,
-			pipeline_id,
 			name,
 			description,
 			config
 		) VALUES (
-			?, ?, ?, ?, ?, ?
+			?, ?, ?, ?, ?
 		) RETURNING id, created_at, updated_at
-	`, creatorUID, plan.ProjectID, plan.PipelineUID, plan.Name, plan.Description, config)
+	`, creator, plan.ProjectID, plan.Name, plan.Description, config)
 
 	query, args, err := q.ToSQL()
 	if err != nil {
@@ -101,7 +100,7 @@ func (s *Store) CreatePlan(ctx context.Context, plan *PlanMessage, creatorUID in
 	}
 
 	plan.UID = id
-	plan.CreatorUID = creatorUID
+	plan.Creator = creator
 	return plan, nil
 }
 
@@ -115,14 +114,6 @@ func (s *Store) GetPlan(ctx context.Context, find *FindPlanMessage) (*PlanMessag
 		return nil, nil
 	}
 	if len(plans) > 1 {
-		slog.Error("expect to find one plan, found multiple",
-			slog.Int("count", len(plans)),
-			slog.Any("uid", find.UID),
-			slog.Any("project_id", find.ProjectID),
-			slog.Any("project_ids", find.ProjectIDs),
-			slog.Any("pipeline_id", find.PipelineID),
-			log.BBStack("stack"),
-		)
 		return nil, errors.Errorf("expect to find one plan, found %d", len(plans))
 	}
 	return plans[0], nil
@@ -133,11 +124,10 @@ func (s *Store) ListPlans(ctx context.Context, find *FindPlanMessage) ([]*PlanMe
 	q := qb.Q().Space(`
 		SELECT
 			plan.id,
-			plan.creator_id,
+			plan.creator,
 			plan.created_at,
 			plan.updated_at,
 			plan.project,
-			plan.pipeline_id,
 			plan.name,
 			plan.description,
 			plan.config,
@@ -163,8 +153,12 @@ func (s *Store) ListPlans(ctx context.Context, find *FindPlanMessage) ([]*PlanMe
 			q.And("plan.project = ANY(?)", *v)
 		}
 	}
-	if v := find.PipelineID; v != nil {
-		q.And("plan.pipeline_id = ?", *v)
+	if v := find.HasRollout; v != nil {
+		if *v {
+			q.And("plan.config->>'hasRollout' = ?", "true")
+		} else {
+			q.And("(plan.config->>'hasRollout' IS NULL OR plan.config->>'hasRollout' = ?)", "false")
+		}
 	}
 
 	q.Space("ORDER BY id DESC")
@@ -200,11 +194,10 @@ func (s *Store) ListPlans(ctx context.Context, find *FindPlanMessage) ([]*PlanMe
 		var config []byte
 		if err := rows.Scan(
 			&plan.UID,
-			&plan.CreatorUID,
+			&plan.Creator,
 			&plan.CreatedAt,
 			&plan.UpdatedAt,
 			&plan.ProjectID,
-			&plan.PipelineUID,
 			&plan.Name,
 			&plan.Description,
 			&config,
@@ -228,8 +221,8 @@ func (s *Store) ListPlans(ctx context.Context, find *FindPlanMessage) ([]*PlanMe
 	return plans, nil
 }
 
-// UpdatePlan updates an existing plan.
-func (s *Store) UpdatePlan(ctx context.Context, patch *UpdatePlanMessage) error {
+// UpdatePlan updates an existing plan and returns the updated plan.
+func (s *Store) UpdatePlan(ctx context.Context, patch *UpdatePlanMessage) (*PlanMessage, error) {
 	set := []string{"updated_at = ?"}
 	args := []any{time.Now()}
 
@@ -245,57 +238,59 @@ func (s *Store) UpdatePlan(ctx context.Context, patch *UpdatePlanMessage) error 
 		set = append(set, "deleted = ?")
 		args = append(args, *v)
 	}
-
-	var payloadSets []string
-	if v := patch.Specs; v != nil {
-		config, err := protojson.Marshal(&storepb.PlanConfig{
-			Specs: *v,
-		})
+	if v := patch.Config; v != nil {
+		config, err := protojson.Marshal(v)
 		if err != nil {
-			return errors.Wrapf(err, "failed to marshal plan config")
+			return nil, errors.Wrapf(err, "failed to marshal plan config")
 		}
-		payloadSets = append(payloadSets, "jsonb_build_object('specs', (?)::JSONB->'specs')")
+		set = append(set, "config = ?")
 		args = append(args, config)
-	}
-	if v := patch.Deployment; v != nil {
-		p, err := protojson.Marshal(*v)
-		if err != nil {
-			return errors.Wrapf(err, "failed to marshal deployment")
-		}
-		payloadSets = append(payloadSets, "jsonb_build_object('deployment', (?)::JSONB)")
-		args = append(args, p)
-	}
-	if len(payloadSets) > 0 {
-		set = append(set, fmt.Sprintf("config = config || %s", strings.Join(payloadSets, " || ")))
 	}
 
 	args = append(args, patch.UID)
-	q := qb.Q().Space(fmt.Sprintf("UPDATE plan SET %s WHERE id = ?", strings.Join(set, ", ")), args...)
+	q := qb.Q().Space(fmt.Sprintf("UPDATE plan SET %s WHERE id = ? RETURNING id, creator, created_at, updated_at, project, name, description, config, deleted", strings.Join(set, ", ")), args...)
 
 	query, finalArgs, err := q.ToSQL()
 	if err != nil {
-		return errors.Wrapf(err, "failed to build sql")
+		return nil, errors.Wrapf(err, "failed to build sql")
 	}
 
 	tx, err := s.GetDB().BeginTx(ctx, nil)
 	if err != nil {
-		return errors.Wrapf(err, "failed to begin transaction")
+		return nil, errors.Wrapf(err, "failed to begin transaction")
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, query, finalArgs...); err != nil {
-		return errors.Wrapf(err, "failed to update plan")
+	plan := PlanMessage{
+		Config: &storepb.PlanConfig{},
+	}
+	var config []byte
+	if err := tx.QueryRowContext(ctx, query, finalArgs...).Scan(
+		&plan.UID,
+		&plan.Creator,
+		&plan.CreatedAt,
+		&plan.UpdatedAt,
+		&plan.ProjectID,
+		&plan.Name,
+		&plan.Description,
+		&config,
+		&plan.Deleted,
+	); err != nil {
+		return nil, errors.Wrapf(err, "failed to update plan")
+	}
+	if err := common.ProtojsonUnmarshaler.Unmarshal(config, plan.Config); err != nil {
+		return nil, errors.Wrapf(err, "failed to unmarshal plan config")
 	}
 
 	if err := tx.Commit(); err != nil {
-		return errors.Wrapf(err, "failed to commit transaction")
+		return nil, errors.Wrapf(err, "failed to commit transaction")
 	}
 
-	return nil
+	return &plan, nil
 }
 
 // GetListPlanFilter parses a CEL filter expression into a query builder query for listing plans.
-func (s *Store) GetListPlanFilter(ctx context.Context, filter string) (*qb.Query, error) {
+func GetListPlanFilter(filter string) (*qb.Query, error) {
 	if filter == "" {
 		return nil, nil
 	}
@@ -330,20 +325,20 @@ func (s *Store) GetListPlanFilter(ctx context.Context, filter string) (*qb.Query
 				variable, value := getVariableAndValueFromExpr(expr)
 				switch variable {
 				case "creator":
-					user, err := s.getUserByIdentifier(ctx, value.(string))
-					if err != nil {
-						return nil, errors.Errorf("failed to get user %v with error %v", value, err.Error())
+					creatorEmail := strings.TrimPrefix(value.(string), "users/")
+					if creatorEmail == "" {
+						return nil, errors.New("invalid empty creator identifier")
 					}
-					return qb.Q().Space("plan.creator_id = ?", user.ID), nil
-				case "has_pipeline":
-					hasPipeline, ok := value.(bool)
+					return qb.Q().Space("plan.creator = ?", creatorEmail), nil
+				case "has_rollout":
+					hasRollout, ok := value.(bool)
 					if !ok {
-						return nil, errors.Errorf(`"has_pipeline" should be bool`)
+						return nil, errors.Errorf(`"has_rollout" should be bool`)
 					}
-					if !hasPipeline {
-						return qb.Q().Space("plan.pipeline_id IS NULL"), nil
+					if !hasRollout {
+						return qb.Q().Space("(plan.config->>'hasRollout' IS NULL OR plan.config->>'hasRollout' = ?)", "false"), nil
 					}
-					return qb.Q().Space("plan.pipeline_id IS NOT NULL"), nil
+					return qb.Q().Space("plan.config->>'hasRollout' = ?", "true"), nil
 				case "has_issue":
 					hasIssue, ok := value.(bool)
 					if !ok {
@@ -438,19 +433,4 @@ func (s *Store) GetListPlanFilter(ctx context.Context, filter string) (*qb.Query
 		return nil, err
 	}
 	return qb.Q().Space("(?)", q), nil
-}
-
-func (s *Store) getUserByIdentifier(ctx context.Context, identifier string) (*UserMessage, error) {
-	email := strings.TrimPrefix(identifier, "users/")
-	if email == "" {
-		return nil, errors.New("invalid empty creator identifier")
-	}
-	user, err := s.GetUserByEmail(ctx, email)
-	if err != nil {
-		return nil, errors.Errorf(`failed to find user "%s" with error: %v`, email, err)
-	}
-	if user == nil {
-		return nil, errors.Errorf("cannot found user %s", email)
-	}
-	return user, nil
 }

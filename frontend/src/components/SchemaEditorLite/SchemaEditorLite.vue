@@ -4,37 +4,37 @@
     v-bind="$attrs"
   >
     <MaskSpinner v-if="combinedLoading" />
-    <Splitpanes
-      class="default-theme w-full flex-1 flex flex-row overflow-hidden relative"
+    <NSplit
+      :min="0.15"
+      :max="0.4"
+      :default-size="0.25"
+      :resize-trigger-size="1"
     >
-      <Pane min-size="15" size="25">
+      <template #1>
         <Aside
           v-if="ready"
           @update-is-editing="$emit('update-is-editing', $event)"
         />
-      </Pane>
-      <Pane min-size="60" size="75">
+      </template>
+      <template #2>
         <Editor v-if="ready" />
-      </Pane>
-    </Splitpanes>
+      </template>
+    </NSplit>
   </div>
 </template>
 
 <script lang="ts" setup>
 import { cloneDeep } from "lodash-es";
-import { Splitpanes, Pane } from "splitpanes";
-import "splitpanes/dist/splitpanes.css";
-import { computed, onMounted, toRef } from "vue";
+import { NSplit } from "naive-ui";
+import { computed, toRef } from "vue";
 import MaskSpinner from "@/components/misc/MaskSpinner.vue";
 import { useEmitteryEventListener } from "@/composables/useEmitteryEventListener";
-import { useSettingV1Store } from "@/store";
 import type { DatabaseMetadata } from "@/types/proto-es/v1/database_service_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
-import { Setting_SettingName } from "@/types/proto-es/v1/setting_service_pb";
 import Aside from "./Aside";
-import Editor from "./Editor.vue";
 import { useAlgorithm } from "./algorithm";
 import { provideSchemaEditorContext } from "./context";
+import Editor from "./Editor.vue";
 import type { EditTarget, RolloutObject } from "./types";
 
 const props = defineProps<{
@@ -51,15 +51,6 @@ const emit = defineEmits<{
   (event: "update-is-editing", objects: RolloutObject[]): void;
 }>();
 
-const settingStore = useSettingV1Store();
-
-// Prepare schema template contexts.
-onMounted(async () => {
-  await settingStore.getOrFetchSettingByName(
-    Setting_SettingName.SCHEMA_TEMPLATE
-  );
-});
-
 const targets = computed(() => {
   return props.targets ?? [];
 });
@@ -72,19 +63,9 @@ const combinedLoading = computed(() => {
   return props.loading || !ready.value;
 });
 
-const classificationConfig = computed(() => {
-  if (!props.project.dataClassificationConfigId) {
-    return;
-  }
-  return settingStore.getProjectClassification(
-    props.project.dataClassificationConfigId
-  );
-});
-
 const context = provideSchemaEditorContext({
   targets,
   project: toRef(props, "project"),
-  classificationConfig,
   readonly: toRef(props, "readonly"),
   selectedRolloutObjects: toRef(props, "selectedRolloutObjects"),
   hidePreview: toRef(props, "hidePreview"),
@@ -161,32 +142,3 @@ defineExpose({
   isDirty: context.isDirty,
 });
 </script>
-
-<style lang="postcss" scoped>
-/* splitpanes pane style */
-.bb-schema-editor :deep(.splitpanes.default-theme .splitpanes__pane) {
-  @apply bg-transparent !transition-none;
-}
-
-.bb-schema-editor :deep(.splitpanes.default-theme .splitpanes__splitter) {
-  @apply bg-gray-100 border-none;
-}
-
-.bb-schema-editor :deep(.splitpanes.default-theme .splitpanes__splitter:hover) {
-  @apply bg-indigo-300;
-}
-
-.bb-schema-editor
-  :deep(.splitpanes.default-theme .splitpanes__splitter::before),
-.bb-schema-editor
-  :deep(.splitpanes.default-theme .splitpanes__splitter::after) {
-  @apply bg-gray-700 opacity-50 text-white;
-}
-
-.bb-schema-editor
-  :deep(.splitpanes.default-theme .splitpanes__splitter:hover::before),
-.bb-schema-editor
-  :deep(.splitpanes.default-theme .splitpanes__splitter:hover::after) {
-  @apply bg-white opacity-100;
-}
-</style>

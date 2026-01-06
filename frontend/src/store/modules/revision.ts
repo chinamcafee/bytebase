@@ -1,15 +1,14 @@
 import { create } from "@bufbuild/protobuf";
 import { defineStore } from "pinia";
 import { computed, reactive } from "vue";
-import { revisionServiceClientConnect } from "@/grpcweb";
+import { revisionServiceClientConnect } from "@/connect";
 import type { Pagination } from "@/types";
 import type { Revision } from "@/types/proto-es/v1/revision_service_pb";
 import {
-  ListRevisionsRequestSchema,
-  GetRevisionRequestSchema,
   DeleteRevisionRequestSchema,
+  GetRevisionRequestSchema,
+  ListRevisionsRequestSchema,
 } from "@/types/proto-es/v1/revision_service_pb";
-import { DEFAULT_PAGE_SIZE } from "./common";
 import { revisionNamePrefix } from "./v1/common";
 
 export const useRevisionStore = defineStore("revision", () => {
@@ -25,7 +24,7 @@ export const useRevisionStore = defineStore("revision", () => {
   ) => {
     const request = create(ListRevisionsRequestSchema, {
       parent: database,
-      pageSize: pagination?.pageSize || DEFAULT_PAGE_SIZE,
+      pageSize: pagination?.pageSize,
       pageToken: pagination?.pageToken,
     });
     const resp = await revisionServiceClientConnect.listRevisions(request);

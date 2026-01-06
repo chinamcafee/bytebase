@@ -11,6 +11,7 @@ import (
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 )
 
 var (
@@ -19,7 +20,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleColumnNaming, &NamingColumnConventionAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_NAMING_COLUMN, &NamingColumnConventionAdvisor{})
 }
 
 // NamingColumnConventionAdvisor is the advisor checking for column naming convention.
@@ -28,22 +29,33 @@ type NamingColumnConventionAdvisor struct {
 
 // Check checks for column naming convention.
 func (*NamingColumnConventionAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	root, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	format, maxLength, err := advisor.UnmarshalNamingRulePayloadAsRegexp(checkCtx.Rule.Payload)
+	namingPayload := checkCtx.Rule.GetNamingPayload()
+	if namingPayload == nil {
+		return nil, errors.New("naming_payload is required for this rule")
+	}
+
+	format, err := regexp.Compile(namingPayload.Format)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to compile regex format %q", namingPayload.Format)
+	}
+
+	maxLength := int(namingPayload.MaxLength)
+	if maxLength == 0 {
+		maxLength = advisor.DefaultNameLengthLimit
 	}
 	checker := &namingColumnConventionChecker{
 		level:     level,
-		title:     string(checkCtx.Rule.Type),
+		title:     checkCtx.Rule.Type.String(),
 		format:    format,
 		maxLength: maxLength,
 	}
@@ -116,7 +128,7 @@ func (v *namingColumnConventionChecker) Enter(in ast.Node) (ast.Node, bool) {
 		if !v.format.MatchString(column.name) {
 			v.adviceList = append(v.adviceList, &storepb.Advice{
 				Status:        v.level,
-				Code:          advisor.NamingColumnConventionMismatch.Int32(),
+				Code:          code.NamingColumnConventionMismatch.Int32(),
 				Title:         v.title,
 				Content:       fmt.Sprintf("`%s`.`%s` mismatches column naming convention, naming format should be %q", tableName, column.name, v.format),
 				StartPosition: common.ConvertANTLRLineToPosition(column.line),
@@ -125,7 +137,7 @@ func (v *namingColumnConventionChecker) Enter(in ast.Node) (ast.Node, bool) {
 		if v.maxLength > 0 && len(column.name) > v.maxLength {
 			v.adviceList = append(v.adviceList, &storepb.Advice{
 				Status:        v.level,
-				Code:          advisor.NamingColumnConventionMismatch.Int32(),
+				Code:          code.NamingColumnConventionMismatch.Int32(),
 				Title:         v.title,
 				Content:       fmt.Sprintf("`%s`.`%s` mismatches column naming convention, its length should be within %d characters", tableName, column.name, v.maxLength),
 				StartPosition: common.ConvertANTLRLineToPosition(column.line),

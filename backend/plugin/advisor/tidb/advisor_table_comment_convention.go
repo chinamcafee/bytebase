@@ -7,11 +7,11 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 )
 
 var (
@@ -20,7 +20,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleTableCommentConvention, &TableCommentConventionAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_TABLE_COMMENT, &TableCommentConventionAdvisor{})
 }
 
 // TableCommentConventionAdvisor is the advisor checking for table comment convention.
@@ -29,24 +29,21 @@ type TableCommentConventionAdvisor struct {
 
 // Check checks for table comment convention.
 func (*TableCommentConventionAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalCommentConventionRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
+	commentPayload := checkCtx.Rule.GetCommentConventionPayload()
 	checker := &tableCommentConventionChecker{
-		level:                level,
-		title:                string(checkCtx.Rule.Type),
-		payload:              payload,
-		classificationConfig: checkCtx.ClassificationConfig,
+		level:   level,
+		title:   checkCtx.Rule.Type.String(),
+		payload: commentPayload,
 	}
 
 	for _, stmt := range stmtList {
@@ -59,13 +56,12 @@ func (*TableCommentConventionAdvisor) Check(_ context.Context, checkCtx advisor.
 }
 
 type tableCommentConventionChecker struct {
-	adviceList           []*storepb.Advice
-	level                storepb.Advice_Status
-	title                string
-	text                 string
-	line                 int
-	payload              *advisor.CommentConventionRulePayload
-	classificationConfig *storepb.DataClassificationSetting_DataClassificationConfig
+	adviceList []*storepb.Advice
+	level      storepb.Advice_Status
+	title      string
+	text       string
+	line       int
+	payload    *storepb.SQLReviewRule_CommentConventionRulePayload
 }
 
 // Enter implements the ast.Visitor interface.
@@ -75,31 +71,20 @@ func (checker *tableCommentConventionChecker) Enter(in ast.Node) (ast.Node, bool
 		if checker.payload.Required && !exist {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.CommentEmpty.Int32(),
+				Code:          code.CommentEmpty.Int32(),
 				Title:         checker.title,
 				Content:       fmt.Sprintf("Table `%s` requires comments", node.Table.Name.O),
 				StartPosition: common.ConvertANTLRLineToPosition(checker.line),
 			})
 		}
-		if checker.payload.MaxLength >= 0 && len(comment) > checker.payload.MaxLength {
+		if checker.payload.MaxLength >= 0 && int32(len(comment)) > checker.payload.MaxLength {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.CommentTooLong.Int32(),
+				Code:          code.CommentTooLong.Int32(),
 				Title:         checker.title,
 				Content:       fmt.Sprintf("The length of table `%s` comment should be within %d characters", node.Table.Name.O, checker.payload.MaxLength),
 				StartPosition: common.ConvertANTLRLineToPosition(checker.line),
 			})
-		}
-		if checker.payload.RequiredClassification {
-			if classification, _ := common.GetClassificationAndUserComment(comment, checker.classificationConfig); classification == "" {
-				checker.adviceList = append(checker.adviceList, &storepb.Advice{
-					Status:        checker.level,
-					Code:          advisor.CommentMissingClassification.Int32(),
-					Title:         checker.title,
-					Content:       fmt.Sprintf("Table `%s` comment requires classification", node.Table.Name.O),
-					StartPosition: common.ConvertANTLRLineToPosition(checker.line),
-				})
-			}
 		}
 	}
 

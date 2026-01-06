@@ -8,7 +8,7 @@ import (
 	"unicode"
 
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
@@ -1215,7 +1215,7 @@ func prepareTrickyParserAndScanner(statement string, caretLine int, caretOffset 
 	return parser, lexer, scanner
 }
 
-func notEmptySQLCount(list []base.SingleSQL) int {
+func notEmptySQLCount(list []base.Statement) int {
 	count := 0
 	for _, sql := range list {
 		if !sql.Empty {
@@ -1235,10 +1235,16 @@ func skipHeadingSQLs(statement string, caretLine int, caretOffset int) (string, 
 
 	start := 0
 	for i, sql := range list {
-		// sql.End uses 1-based line and column
+		// Both caretLine and End.Line are 1-based
+		// End.Column is 1-based exclusive (points after the last character)
+		// caretOffset is 0-based
 		sqlEndLine := int(sql.End.GetLine())
 		sqlEndColumn := int(sql.End.GetColumn())
-		if sqlEndLine > caretLine || (sqlEndLine == caretLine && sqlEndColumn >= caretOffset) {
+		// Use > for End.Column comparison because it's exclusive (points after last char)
+		// A 0-based offset of N corresponds to 1-based position N+1
+		// Exclusive End.Column of N means last char is at 1-based position N-1 (0-based N-2)
+		// So caret is in this statement if: sqlEndColumn > caretOffset+1, i.e., sqlEndColumn > caretOffset
+		if sqlEndLine > caretLine || (sqlEndLine == caretLine && sqlEndColumn > caretOffset) {
 			start = i
 			if i == 0 {
 				// The caret is in the first SQL statement, so we don't need to skip any SQL statements.
@@ -1250,7 +1256,9 @@ func skipHeadingSQLs(statement string, caretLine int, caretOffset int) (string, 
 			if caretLine == previousSQLEndLine {
 				// The caret is in the same line as the last line of the previous SQL statement.
 				// We need to adjust the caret offset.
-				newCaretOffset = caretOffset - previousSQLEndColumn
+				// previousSQLEndColumn is 1-based exclusive, caretOffset is 0-based
+				// New offset = caretOffset - (previousSQLEndColumn - 1) = caretOffset - previousSQLEndColumn + 1
+				newCaretOffset = caretOffset - previousSQLEndColumn + 1
 			}
 			break
 		}
@@ -1413,21 +1421,20 @@ func (m CompletionMap) insertColumns(c *Completer, databases, tables map[string]
 		}
 
 		for table := range tables {
-			tableMeta := c.metadataCache[database].GetSchema("").GetTable(table)
+			tableMeta := c.metadataCache[database].GetSchemaMetadata("").GetTable(table)
 			if tableMeta == nil {
 				continue
 			}
-			for _, column := range tableMeta.GetColumns() {
+			for _, column := range tableMeta.GetProto().GetColumns() {
 				definition := fmt.Sprintf("%s | %s", table, column.Type)
 				if !column.Nullable {
 					definition += ", NOT NULL"
 				}
-				comment := column.UserComment
 				m.Insert(base.Candidate{
 					Type:       base.CandidateTypeColumn,
 					Text:       c.quotedIdentifierIfNeeded(column.Name),
 					Definition: definition,
-					Comment:    comment,
+					Comment:    column.Comment,
 				})
 			}
 		}
@@ -1445,7 +1452,7 @@ func (m CompletionMap) insertAllColumns(c *Completer) {
 
 	metadata := c.metadataCache[c.defaultDatabase]
 	for _, schema := range metadata.ListSchemaNames() {
-		schemaMeta := metadata.GetSchema(schema)
+		schemaMeta := metadata.GetSchemaMetadata(schema)
 		if schemaMeta == nil {
 			continue
 		}
@@ -1454,17 +1461,16 @@ func (m CompletionMap) insertAllColumns(c *Completer) {
 			if tableMeta == nil {
 				continue
 			}
-			for _, column := range tableMeta.GetColumns() {
+			for _, column := range tableMeta.GetProto().GetColumns() {
 				definition := fmt.Sprintf("%s | %s", table, column.Type)
 				if !column.Nullable {
 					definition += ", NOT NULL"
 				}
-				comment := column.UserComment
 				m.Insert(base.Candidate{
 					Type:       base.CandidateTypeColumn,
 					Text:       c.quotedIdentifierIfNeeded(column.Name),
 					Definition: definition,
-					Comment:    comment,
+					Comment:    column.Comment,
 				})
 			}
 		}
@@ -1495,7 +1501,7 @@ func (c *Completer) listTables(database string) []string {
 		c.metadataCache[database] = metadata
 	}
 
-	return c.metadataCache[database].GetSchema("").ListTableNames()
+	return c.metadataCache[database].GetSchemaMetadata("").ListTableNames()
 }
 
 func (c *Completer) listViews(database string) []string {
@@ -1507,7 +1513,7 @@ func (c *Completer) listViews(database string) []string {
 		c.metadataCache[database] = metadata
 	}
 
-	return c.metadataCache[database].GetSchema("").ListViewNames()
+	return c.metadataCache[database].GetSchemaMetadata("").ListViewNames()
 }
 
 func (c *Completer) quotedIdentifierIfNeeded(s string) string {

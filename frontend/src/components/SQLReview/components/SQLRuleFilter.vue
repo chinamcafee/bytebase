@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-3">
+  <div class="gap-y-3">
     <SQLReviewCategoryTabFilter
       :value="params.selectedCategory"
       :rule-list="ruleList"
@@ -21,7 +21,7 @@
             :is-checked-level="(level) => params.checkedLevel.has(level)"
             @toggle-checked-level="$emit('toggle-checked-level', $event)"
           />
-          <div v-if="supportSelect" class="flex items-center space-x-2">
+          <div v-if="supportSelect" class="flex items-center gap-x-2">
             <NCheckbox
               :checked="selectedRuleCount === ruleList.length"
               :indeterminate="
@@ -35,7 +35,7 @@
           </div>
           <SearchBox
             ref="searchField"
-            class="ml-auto mt-2 md:mt-0 md:!max-w-72"
+            class="ml-auto mt-2 md:mt-0 md:max-w-72!"
             style="max-width: 100%"
             :value="params.searchText"
             :placeholder="$t('common.filter-by-name')"
@@ -53,10 +53,10 @@
 import { NCheckbox, NDivider } from "naive-ui";
 import { SearchBox } from "@/components/v2";
 import type { RuleTemplateV2 } from "@/types";
-import { getRuleLocalization } from "@/types";
-import type { SQLReviewRuleLevel } from "@/types/proto-es/v1/org_policy_service_pb";
-import SQLReviewCategoryTabFilter from "./SQLReviewCategoryTabFilter.vue";
+import { getRuleLocalization, ruleTypeToString } from "@/types";
+import { SQLReviewRule_Level } from "@/types/proto-es/v1/review_config_service_pb";
 import type { RuleListWithCategory } from "./SQLReviewCategoryTabFilter.vue";
+import SQLReviewCategoryTabFilter from "./SQLReviewCategoryTabFilter.vue";
 import SQLReviewLevelFilter from "./SQLReviewLevelFilter.vue";
 import type { SQLRuleFilterParams } from "./useSQLRuleFilter";
 
@@ -76,7 +76,7 @@ const props = withDefaults(
 );
 
 defineEmits<{
-  (event: "toggle-checked-level", level: SQLReviewRuleLevel): void;
+  (event: "toggle-checked-level", level: SQLReviewRule_Level): void;
   (event: "toggle-select-all", select: boolean): void;
   (event: "change-category", category: string): void;
   (event: "change-search-text", keyword: string): void;
@@ -110,8 +110,11 @@ const filterRule = (rule: RuleTemplateV2) => {
 const filterRuleByKeyword = (rule: RuleTemplateV2, searchText: string) => {
   const keyword = searchText.trim().toLowerCase();
   if (!keyword) return true;
-  if (rule.type.toLowerCase().includes(keyword)) return true;
-  const localization = getRuleLocalization(rule.type, rule.engine);
+  if (ruleTypeToString(rule.type).toLowerCase().includes(keyword)) return true;
+  const localization = getRuleLocalization(
+    ruleTypeToString(rule.type),
+    rule.engine
+  );
   if (localization.title.toLowerCase().includes(keyword)) return true;
   if (localization.description.toLowerCase().includes(keyword)) return true;
   return false;

@@ -2,20 +2,18 @@
 // @generated from file v1/sheet_service.proto (package bytebase.v1, syntax proto3)
 /* eslint-disable */
 
-import { enumDesc, fileDesc, messageDesc, serviceDesc, tsEnum } from "@bufbuild/protobuf/codegenv2";
+import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import { file_google_api_annotations } from "../google/api/annotations_pb";
 import { file_google_api_client } from "../google/api/client_pb";
 import { file_google_api_field_behavior } from "../google/api/field_behavior_pb";
 import { file_google_api_resource } from "../google/api/resource_pb";
-import { file_google_protobuf_field_mask, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import { file_v1_annotation } from "./annotation_pb";
-import { file_v1_common } from "./common_pb";
 
 /**
  * Describes the file v1/sheet_service.proto.
  */
 export const file_v1_sheet_service = /*@__PURE__*/
-  fileDesc("ChZ2MS9zaGVldF9zZXJ2aWNlLnByb3RvEgtieXRlYmFzZS52MSJqChJDcmVhdGVTaGVldFJlcXVlc3QSLAoGcGFyZW50GAEgASgJQhzgQQL6QRYKFGJ5dGViYXNlLmNvbS9Qcm9qZWN0EiYKBXNoZWV0GAIgASgLMhIuYnl0ZWJhc2UudjEuU2hlZXRCA+BBAiKAAQoYQmF0Y2hDcmVhdGVTaGVldHNSZXF1ZXN0EiwKBnBhcmVudBgBIAEoCUIc4EEC+kEWChRieXRlYmFzZS5jb20vUHJvamVjdBI2CghyZXF1ZXN0cxgCIAMoCzIfLmJ5dGViYXNlLnYxLkNyZWF0ZVNoZWV0UmVxdWVzdEID4EECIj8KGUJhdGNoQ3JlYXRlU2hlZXRzUmVzcG9uc2USIgoGc2hlZXRzGAEgAygLMhIuYnl0ZWJhc2UudjEuU2hlZXQiSAoPR2V0U2hlZXRSZXF1ZXN0EigKBG5hbWUYASABKAlCGuBBAvpBFAoSYnl0ZWJhc2UuY29tL1NoZWV0EgsKA3JhdxgCIAEoCCKEAQoSVXBkYXRlU2hlZXRSZXF1ZXN0EiYKBXNoZWV0GAEgASgLMhIuYnl0ZWJhc2UudjEuU2hlZXRCA+BBAhIvCgt1cGRhdGVfbWFzaxgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5GaWVsZE1hc2sSFQoNYWxsb3dfbWlzc2luZxgDIAEoCCLAAgoFU2hlZXQSFAoEbmFtZRgBIAEoCUIG4EEC4EEFEhIKBXRpdGxlGAMgASgJQgPgQQISFAoHY3JlYXRvchgEIAEoCUID4EEDEjQKC2NyZWF0ZV90aW1lGAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEID4EEDEhQKB2NvbnRlbnQYByABKAxCA+BBAhIZCgxjb250ZW50X3NpemUYCCABKANCA+BBAxIqCgdwYXlsb2FkGA0gASgLMhkuYnl0ZWJhc2UudjEuU2hlZXRQYXlsb2FkEigKBmVuZ2luZRgOIAEoDjITLmJ5dGViYXNlLnYxLkVuZ2luZUID4EECOjrqQTcKEmJ5dGViYXNlLmNvbS9TaGVldBIhcHJvamVjdHMve3Byb2plY3R9L3NoZWV0cy97c2hlZXR9IpoBCgxTaGVldFBheWxvYWQSLAoEdHlwZRgBIAEoDjIeLmJ5dGViYXNlLnYxLlNoZWV0UGF5bG9hZC5UeXBlEisKCGNvbW1hbmRzGAQgAygLMhkuYnl0ZWJhc2UudjEuU2hlZXRDb21tYW5kIi8KBFR5cGUSFAoQVFlQRV9VTlNQRUNJRklFRBAAEhEKDVNDSEVNQV9ERVNJR04QASIqCgxTaGVldENvbW1hbmQSDQoFc3RhcnQYASABKAUSCwoDZW5kGAIgASgFMoYFCgxTaGVldFNlcnZpY2USmAEKC0NyZWF0ZVNoZWV0Eh8uYnl0ZWJhc2UudjEuQ3JlYXRlU2hlZXRSZXF1ZXN0GhIuYnl0ZWJhc2UudjEuU2hlZXQiVNpBDHBhcmVudCxzaGVldIrqMBBiYi5zaGVldHMuY3JlYXRlkOowAYLT5JMCJzoFc2hlZXQiHi92MS97cGFyZW50PXByb2plY3RzLyp9L3NoZWV0cxKxAQoRQmF0Y2hDcmVhdGVTaGVldHMSJS5ieXRlYmFzZS52MS5CYXRjaENyZWF0ZVNoZWV0c1JlcXVlc3QaJi5ieXRlYmFzZS52MS5CYXRjaENyZWF0ZVNoZWV0c1Jlc3BvbnNlIk2K6jAQYmIuc2hlZXRzLmNyZWF0ZZDqMAGC0+STAi86ASoiKi92MS97cGFyZW50PXByb2plY3RzLyp9L3NoZWV0czpiYXRjaENyZWF0ZRKAAQoIR2V0U2hlZXQSHC5ieXRlYmFzZS52MS5HZXRTaGVldFJlcXVlc3QaEi5ieXRlYmFzZS52MS5TaGVldCJC2kEEbmFtZYrqMA1iYi5zaGVldHMuZ2V0kOowAYLT5JMCIBIeL3YxL3tuYW1lPXByb2plY3RzLyovc2hlZXRzLyp9EqMBCgtVcGRhdGVTaGVldBIfLmJ5dGViYXNlLnYxLlVwZGF0ZVNoZWV0UmVxdWVzdBoSLmJ5dGViYXNlLnYxLlNoZWV0Il/aQRFzaGVldCx1cGRhdGVfbWFza4rqMBBiYi5zaGVldHMudXBkYXRlkOowAYLT5JMCLToFc2hlZXQyJC92MS97c2hlZXQubmFtZT1wcm9qZWN0cy8qL3NoZWV0cy8qfUI2WjRnaXRodWIuY29tL2J5dGViYXNlL2J5dGViYXNlL2JhY2tlbmQvZ2VuZXJhdGVkLWdvL3YxYgZwcm90bzM", [file_google_api_annotations, file_google_api_client, file_google_api_field_behavior, file_google_api_resource, file_google_protobuf_field_mask, file_google_protobuf_timestamp, file_v1_annotation, file_v1_common]);
+  fileDesc("ChZ2MS9zaGVldF9zZXJ2aWNlLnByb3RvEgtieXRlYmFzZS52MSJqChJDcmVhdGVTaGVldFJlcXVlc3QSLAoGcGFyZW50GAEgASgJQhzgQQL6QRYKFGJ5dGViYXNlLmNvbS9Qcm9qZWN0EiYKBXNoZWV0GAIgASgLMhIuYnl0ZWJhc2UudjEuU2hlZXRCA+BBAiKAAQoYQmF0Y2hDcmVhdGVTaGVldHNSZXF1ZXN0EiwKBnBhcmVudBgBIAEoCUIc4EEC+kEWChRieXRlYmFzZS5jb20vUHJvamVjdBI2CghyZXF1ZXN0cxgCIAMoCzIfLmJ5dGViYXNlLnYxLkNyZWF0ZVNoZWV0UmVxdWVzdEID4EECIj8KGUJhdGNoQ3JlYXRlU2hlZXRzUmVzcG9uc2USIgoGc2hlZXRzGAEgAygLMhIuYnl0ZWJhc2UudjEuU2hlZXQiSAoPR2V0U2hlZXRSZXF1ZXN0EigKBG5hbWUYASABKAlCGuBBAvpBFAoSYnl0ZWJhc2UuY29tL1NoZWV0EgsKA3JhdxgCIAEoCCKKAQoFU2hlZXQSFAoEbmFtZRgBIAEoCUIG4EEC4EEFEhQKB2NvbnRlbnQYAiABKAxCA+BBAhIZCgxjb250ZW50X3NpemUYAyABKANCA+BBAzo66kE3ChJieXRlYmFzZS5jb20vU2hlZXQSIXByb2plY3RzL3twcm9qZWN0fS9zaGVldHMve3NoZWV0fTLgAwoMU2hlZXRTZXJ2aWNlEpgBCgtDcmVhdGVTaGVldBIfLmJ5dGViYXNlLnYxLkNyZWF0ZVNoZWV0UmVxdWVzdBoSLmJ5dGViYXNlLnYxLlNoZWV0IlTaQQxwYXJlbnQsc2hlZXSK6jAQYmIuc2hlZXRzLmNyZWF0ZZDqMAGC0+STAic6BXNoZWV0Ih4vdjEve3BhcmVudD1wcm9qZWN0cy8qfS9zaGVldHMSsQEKEUJhdGNoQ3JlYXRlU2hlZXRzEiUuYnl0ZWJhc2UudjEuQmF0Y2hDcmVhdGVTaGVldHNSZXF1ZXN0GiYuYnl0ZWJhc2UudjEuQmF0Y2hDcmVhdGVTaGVldHNSZXNwb25zZSJNiuowEGJiLnNoZWV0cy5jcmVhdGWQ6jABgtPkkwIvOgEqIiovdjEve3BhcmVudD1wcm9qZWN0cy8qfS9zaGVldHM6YmF0Y2hDcmVhdGUSgAEKCEdldFNoZWV0EhwuYnl0ZWJhc2UudjEuR2V0U2hlZXRSZXF1ZXN0GhIuYnl0ZWJhc2UudjEuU2hlZXQiQtpBBG5hbWWK6jANYmIuc2hlZXRzLmdldJDqMAGC0+STAiASHi92MS97bmFtZT1wcm9qZWN0cy8qL3NoZWV0cy8qfUKnAQoPY29tLmJ5dGViYXNlLnYxQhFTaGVldFNlcnZpY2VQcm90b1ABWjRnaXRodWIuY29tL2J5dGViYXNlL2J5dGViYXNlL2JhY2tlbmQvZ2VuZXJhdGVkLWdvL3YxogIDQlhYqgILQnl0ZWJhc2UuVjHKAgtCeXRlYmFzZVxWMeICF0J5dGViYXNlXFYxXEdQQk1ldGFkYXRh6gIMQnl0ZWJhc2U6OlYxYgZwcm90bzM", [file_google_api_annotations, file_google_api_client, file_google_api_field_behavior, file_google_api_resource, file_v1_annotation]);
 
 /**
  * Describes the message bytebase.v1.CreateSheetRequest.
@@ -46,46 +44,11 @@ export const GetSheetRequestSchema = /*@__PURE__*/
   messageDesc(file_v1_sheet_service, 3);
 
 /**
- * Describes the message bytebase.v1.UpdateSheetRequest.
- * Use `create(UpdateSheetRequestSchema)` to create a new message.
- */
-export const UpdateSheetRequestSchema = /*@__PURE__*/
-  messageDesc(file_v1_sheet_service, 4);
-
-/**
  * Describes the message bytebase.v1.Sheet.
  * Use `create(SheetSchema)` to create a new message.
  */
 export const SheetSchema = /*@__PURE__*/
-  messageDesc(file_v1_sheet_service, 5);
-
-/**
- * Describes the message bytebase.v1.SheetPayload.
- * Use `create(SheetPayloadSchema)` to create a new message.
- */
-export const SheetPayloadSchema = /*@__PURE__*/
-  messageDesc(file_v1_sheet_service, 6);
-
-/**
- * Describes the enum bytebase.v1.SheetPayload.Type.
- */
-export const SheetPayload_TypeSchema = /*@__PURE__*/
-  enumDesc(file_v1_sheet_service, 6, 0);
-
-/**
- * Type of the SheetPayload.
- *
- * @generated from enum bytebase.v1.SheetPayload.Type
- */
-export const SheetPayload_Type = /*@__PURE__*/
-  tsEnum(SheetPayload_TypeSchema);
-
-/**
- * Describes the message bytebase.v1.SheetCommand.
- * Use `create(SheetCommandSchema)` to create a new message.
- */
-export const SheetCommandSchema = /*@__PURE__*/
-  messageDesc(file_v1_sheet_service, 7);
+  messageDesc(file_v1_sheet_service, 4);
 
 /**
  * SheetService manages SQL scripts and saved queries.

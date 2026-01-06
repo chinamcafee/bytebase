@@ -16,16 +16,16 @@
           class="w-full h-full relative flex flex-col justify-start items-start overflow-y-auto pb-2"
         >
           <div
-            class="w-full h-auto flex flex-col justify-start items-start sticky top-0 z-[1]"
+            class="w-full h-auto flex flex-col justify-start items-start sticky top-0 z-1"
           >
             <div
-              class="w-full bg-white border-b p-2 px-3 flex flex-row justify-between items-center sticky top-0 z-[1]"
+              class="w-full bg-white border-b p-2 px-3 flex flex-row justify-between items-center sticky top-0 z-1"
             >
               <span class="text-sm">{{
                 $t("database.sync-schema.target-databases")
               }}</span>
               <button
-                class="p-0.5 rounded bg-gray-100 hover:shadow hover:opacity-80"
+                class="p-0.5 rounded-sm bg-gray-100 hover:shadow-sm hover:opacity-80"
                 @click="state.showSelectDatabasePanel = true"
               >
                 <heroicons-outline:plus class="w-4 h-auto" />
@@ -63,10 +63,10 @@
             <div
               v-for="database of shownDatabaseList"
               :key="database.name"
-              class="w-full group flex flex-row justify-start items-center px-2 py-1 leading-8 cursor-pointer text-sm text-ellipsis whitespace-nowrap rounded hover:bg-gray-50"
+              class="w-full group flex flex-row justify-start items-center px-2 py-1 leading-8 cursor-pointer text-sm text-ellipsis whitespace-nowrap rounded-sm hover:bg-gray-50"
               :class="
                 database.name === state.selectedDatabaseName
-                  ? '!bg-gray-100'
+                  ? 'bg-gray-100!'
                   : ''
               "
               @click="() => (state.selectedDatabaseName = database.name)"
@@ -86,7 +86,7 @@
               </NEllipsis>
               <div class="grow"></div>
               <button
-                class="hidden shrink-0 group-hover:block ml-1 p-0.5 rounded bg-white hover:shadow"
+                class="hidden shrink-0 group-hover:block ml-1 p-0.5 rounded-sm bg-white hover:shadow-sm"
                 @click.stop="handleUnselectDatabase(database)"
               >
                 <heroicons-outline:minus class="w-4 h-auto text-gray-500" />
@@ -136,7 +136,7 @@
         </div>
         <div
           v-show="state.isLoading"
-          class="absolute inset-0 z-10 bg-white bg-opacity-40 backdrop-blur-sm w-full h-full flex flex-col justify-center items-center"
+          class="absolute inset-0 z-10 bg-white bg-opacity-40 backdrop-blur-xs w-full h-full flex flex-col justify-center items-center"
         >
           <BBSpin />
           <span class="mt-1">{{ $t("common.loading") }}</span>
@@ -158,17 +158,25 @@
 <script lang="ts" setup>
 import { create } from "@bufbuild/protobuf";
 import { head } from "lodash-es";
-import { NEllipsis, NTabs, NTabPane } from "naive-ui";
+import { NEllipsis, NTabPane, NTabs } from "naive-ui";
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { BBSpin } from "@/bbkit";
 import { InstanceV1EngineIcon } from "@/components/v2";
-import { useDatabaseV1Store, useEnvironmentV1Store } from "@/store";
-import { isValidDatabaseName, type ComposedDatabase } from "@/types";
+import {
+  useChangelogStore,
+  useDatabaseV1Store,
+  useEnvironmentV1Store,
+} from "@/store";
+import { type ComposedDatabase, isValidDatabaseName } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
-import { DiffSchemaRequestSchema } from "@/types/proto-es/v1/database_service_pb";
+import {
+  ChangelogView,
+  DiffSchemaRequestSchema,
+} from "@/types/proto-es/v1/database_service_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
+import { isValidChangelogName } from "@/utils/v1/changelog";
 import DiffViewPanel from "./DiffViewPanel.vue";
 import SourceSchemaInfo from "./SourceSchemaInfo.vue";
 import TargetDatabasesSelectPanel from "./TargetDatabasesSelectPanel.vue";
@@ -192,6 +200,7 @@ const props = defineProps<{
 
 const { t } = useI18n();
 const route = useRoute();
+const changelogStore = useChangelogStore();
 const environmentV1Store = useEnvironmentV1Store();
 const databaseStore = useDatabaseV1Store();
 const diffViewerRef = ref<HTMLDivElement>();
@@ -212,7 +221,19 @@ const schemaDiffCache = ref<
   >
 >({});
 
-const sourceSchemaDisplayString = ref<string>(props.sourceSchemaString);
+const sourceSchemaDisplayString = computed(() => {
+  // For rollback, swap source and target for proper diff display
+  // In diff viewer: original (left) = target, modified (right) = source
+  // For rollback: we want left=#103 (current), right=#102 (previous)
+  const isRollback = isValidChangelogName(
+    props.changelogSourceSchema?.targetChangelogName
+  );
+  if (isRollback && state.selectedDatabaseName) {
+    // Return previous changelog schema as "source" (will show on RIGHT)
+    return databaseSchemaCache.value[state.selectedDatabaseName] || "";
+  }
+  return props.sourceSchemaString;
+});
 
 const targetDatabaseList = computed(() => {
   return state.selectedDatabaseNameList.map((name) => {
@@ -221,6 +242,14 @@ const targetDatabaseList = computed(() => {
 });
 
 const targetSchemaDisplayString = computed(() => {
+  // For rollback, swap source and target for proper diff display
+  const isRollback = isValidChangelogName(
+    props.changelogSourceSchema?.targetChangelogName
+  );
+  if (isRollback) {
+    // Return current changelog schema as "target" (will show on LEFT)
+    return props.sourceSchemaString;
+  }
   return state.selectedDatabaseName
     ? databaseSchemaCache.value[state.selectedDatabaseName]
     : "";
@@ -315,27 +344,57 @@ watch(
         continue;
       }
       const db = databaseStore.getDatabaseByName(name);
-      const schema = await databaseStore.fetchDatabaseSchema(db.name);
-      databaseSchemaCache.value[name] = schema.schema;
+      // For rollback, fetch the previous changelog's schema instead of current DB schema
+      const isRollback = isValidChangelogName(
+        props.changelogSourceSchema?.targetChangelogName
+      );
+      if (isRollback) {
+        // Fetch the previous changelog schema
+        const previousChangelog =
+          await changelogStore.getOrFetchChangelogByName(
+            props.changelogSourceSchema?.targetChangelogName ?? "",
+            ChangelogView.FULL
+          );
+        databaseSchemaCache.value[name] = previousChangelog?.schema ?? "";
+      } else {
+        // Normal sync: fetch current database schema
+        const schema = await databaseStore.fetchDatabaseSchema(db.name);
+        databaseSchemaCache.value[name] = schema.schema;
+      }
       if (schemaDiffCache.value[name]) {
         continue;
       } else {
-        // Use changelog name if source is from changelog, otherwise use schema string
-        const diffRequest = props.changelogSourceSchema?.changelogName
+        // For rollback: compare two changelogs (current vs previous)
+        // This shows what needs to be done to revert the current changelog
+        const isRollback = isValidChangelogName(
+          props.changelogSourceSchema?.targetChangelogName
+        );
+        const diffRequest = isRollback
           ? create(DiffSchemaRequestSchema, {
-              name: db.name,
+              // name = current changelog (the one being rolled back)
+              name: props.changelogSourceSchema?.changelogName ?? "",
               target: {
                 case: "changelog",
-                value: props.changelogSourceSchema.changelogName,
+                // target = previous changelog (the state we want to achieve)
+                value: props.changelogSourceSchema?.targetChangelogName ?? "",
               },
             })
-          : create(DiffSchemaRequestSchema, {
-              name: db.name,
-              target: {
-                case: "schema",
-                value: props.sourceSchemaString,
-              },
-            });
+          : // Normal sync: compare database with source schema
+            isValidChangelogName(props.changelogSourceSchema?.changelogName)
+            ? create(DiffSchemaRequestSchema, {
+                name: db.name,
+                target: {
+                  case: "changelog",
+                  value: props.changelogSourceSchema?.changelogName ?? "",
+                },
+              })
+            : create(DiffSchemaRequestSchema, {
+                name: db.name,
+                target: {
+                  case: "schema",
+                  value: props.sourceSchemaString,
+                },
+              });
 
         const diffResp = await databaseStore.diffSchema(diffRequest);
         const schemaDiff = diffResp.diff ?? "";

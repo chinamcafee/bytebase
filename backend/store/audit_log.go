@@ -17,15 +17,6 @@ import (
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 )
 
-type AuditLogMethod string
-
-// The methods other than v1 api.
-const AuditLogMethodProjectRepositoryPush AuditLogMethod = "bb.project.repository.push"
-
-func (m AuditLogMethod) String() string {
-	return string(m)
-}
-
 type AuditLog struct {
 	ID        int
 	CreatedAt time.Time
@@ -37,7 +28,7 @@ type AuditLogFind struct {
 	FilterQ     *qb.Query
 	Limit       *int
 	Offset      *int
-	OrderByKeys []OrderByKey
+	OrderByKeys []*OrderByKey
 }
 
 func (s *Store) CreateAuditLog(ctx context.Context, payload *storepb.AuditLog) error {
@@ -131,7 +122,7 @@ func (s *Store) SearchAuditLogs(ctx context.Context, find *AuditLogFind) ([]*Aud
 	return logs, nil
 }
 
-func GetSearchAuditLogsFilter(ctx context.Context, s *Store, filter string) (*qb.Query, error) {
+func GetSearchAuditLogsFilter(filter string) (*qb.Query, error) {
 	if filter == "" {
 		return nil, nil
 	}
@@ -182,22 +173,6 @@ func GetSearchAuditLogsFilter(ctx context.Context, s *Store, filter string) (*qb
 				default:
 					return nil, errors.Errorf("unknown variable %s", variable)
 				}
-				if variable == "user" {
-					// Convert user email to user id.
-					// e.g. users/y@bb.com -> users/101
-					email := strings.TrimPrefix(value, "users/")
-					if email == "" {
-						return nil, errors.New("invalid empty creator identifier")
-					}
-					user, err := s.GetUserByEmail(ctx, email)
-					if err != nil {
-						return nil, errors.Wrapf(err, `failed to find user "%s"`, email)
-					}
-					if user == nil {
-						return nil, errors.Errorf("cannot found user %s", email)
-					}
-					value = fmt.Sprintf("%s%d", common.UserNamePrefix, user.ID)
-				}
 				return qb.Q().Space(fmt.Sprintf("payload->>'%s' = ?", variable), value), nil
 
 			case celoperators.GreaterEquals, celoperators.LessEquals:
@@ -233,4 +208,43 @@ func GetSearchAuditLogsFilter(ctx context.Context, s *Store, filter string) (*qb
 		return nil, err
 	}
 	return qb.Q().Space("(?)", q), nil
+}
+
+// ApplyRetentionFilter merges retention-based filtering with user-provided filters.
+func ApplyRetentionFilter(userFilterQ *qb.Query, cutoff *time.Time) *qb.Query {
+	if cutoff == nil {
+		return userFilterQ
+	}
+
+	retentionQ := qb.Q().Space("created_at >= ?", *cutoff)
+	if userFilterQ == nil {
+		return qb.Q().Space("(?)", retentionQ)
+	}
+
+	// Combine with existing filter using AND
+	q := qb.Q()
+	q.Space("?", userFilterQ)
+	q.And("?", retentionQ)
+	return qb.Q().Space("(?)", q)
+}
+
+func GetAuditLogOrders(orderBy string) ([]*OrderByKey, error) {
+	keys, err := parseOrderBy(orderBy)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	if len(keys) > 1 || keys[0].Key != "create_time" {
+		return nil, errors.Errorf(`only support order by "create_time"`)
+	}
+
+	return []*OrderByKey{
+		{
+			Key:       "created_at",
+			SortOrder: keys[0].SortOrder,
+		},
+	}, nil
 }

@@ -5,7 +5,7 @@
         ? $t('schema-editor.actions.create-view')
         : $t('schema-editor.actions.rename')
     "
-    class="shadow-inner outline outline-gray-200"
+    class="shadow-inner outline-solid outline-gray-200"
     @close="dismissModal"
   >
     <div class="w-72">
@@ -40,8 +40,8 @@ import type { ComposedDatabase } from "@/types";
 import type {
   DatabaseMetadata,
   SchemaMetadata,
+  ViewMetadata,
 } from "@/types/proto-es/v1/database_service_pb";
-import type { ViewMetadata } from "@/types/proto-es/v1/database_service_pb";
 import { ViewMetadataSchema } from "@/types/proto-es/v1/database_service_pb";
 import { useSchemaEditorContext } from "../context";
 

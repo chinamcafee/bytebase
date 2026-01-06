@@ -2,7 +2,7 @@ package tsql
 
 import (
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/tsql-parser"
+	parser "github.com/bytebase/parser/tsql"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
@@ -13,18 +13,25 @@ func init() {
 }
 
 func ValidateSQLForEditor(statement string) (bool, bool, error) {
-	parseResult, err := ParseTSQL(statement)
+	antlrASTs, err := ParseTSQL(statement)
 	if err != nil {
 		return false, false, err
 	}
-	if parseResult == nil {
+	if len(antlrASTs) == 0 {
 		return false, false, nil
 	}
 
 	l := &queryValidateListener{
 		valid: true,
 	}
-	antlr.ParseTreeWalkerDefault.Walk(l, parseResult.Tree)
+
+	for _, ast := range antlrASTs {
+		antlr.ParseTreeWalkerDefault.Walk(l, ast.Tree)
+		if !l.valid {
+			break
+		}
+	}
+
 	return l.valid, l.valid, nil
 }
 

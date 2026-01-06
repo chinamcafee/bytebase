@@ -5,8 +5,9 @@
     :fetch-list="fetchDatabases"
     :class="customClass"
     :footer-class="footerClass"
+    :order-keys="['name', 'project', 'instance']"
   >
-    <template #table="{ list, loading }">
+    <template #table="{ list, loading, sorters, onSortersUpdate }">
       <DatabaseV1Table
         v-bind="$attrs"
         :key="`database-table.${parent}`"
@@ -14,6 +15,8 @@
         :database-list="list"
         :keyword="filter.query"
         :row-click="handleDatabaseClick"
+        :sorters="sorters"
+        @update:sorters="onSortersUpdate"
       />
     </template>
   </PagedTable>
@@ -24,7 +27,7 @@ import { ref, watch } from "vue";
 import type { ComponentExposed } from "vue-component-type-helpers";
 import { useRouter } from "vue-router";
 import PagedTable from "@/components/v2/Model/PagedTable.vue";
-import { useDatabaseV1Store, type DatabaseFilter } from "@/store";
+import { type DatabaseFilter, useDatabaseV1Store } from "@/store";
 import type { ComposedDatabase } from "@/types";
 import { autoDatabaseRoute } from "@/utils";
 import DatabaseV1Table from "./DatabaseV1Table.vue";
@@ -59,16 +62,19 @@ const fetchDatabases = async ({
   pageToken,
   pageSize,
   refresh,
+  orderBy,
 }: {
   pageToken: string;
   pageSize: number;
   refresh?: boolean;
+  orderBy?: string;
 }) => {
   const { nextPageToken, databases } = await databaseStore.fetchDatabases({
     pageToken,
     pageSize,
     parent: props.parent,
     filter: props.filter,
+    orderBy,
     // Skip cache removal when refresh is false (loading more data).
     skipCacheRemoval: !refresh,
   });
@@ -79,7 +85,7 @@ const fetchDatabases = async ({
 };
 
 watch(
-  () => [props.filter, props.parent],
+  [() => props.filter, () => props.parent],
   () => databasePagedTable.value?.refresh(),
   { deep: true }
 );

@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pkg/errors"
+
+	"github.com/pingcap/tidb/pkg/parser/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -20,7 +22,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleUKNaming, &NamingUKConventionAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_NAMING_INDEX_UK, &NamingUKConventionAdvisor{})
 }
 
 // NamingUKConventionAdvisor is the advisor checking for unique key naming convention.
@@ -29,9 +31,10 @@ type NamingUKConventionAdvisor struct {
 
 // Check checks for index naming convention.
 func (*NamingUKConventionAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	root, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -39,17 +42,31 @@ func (*NamingUKConventionAdvisor) Check(_ context.Context, checkCtx advisor.Cont
 		return nil, err
 	}
 
-	format, templateList, maxLength, err := advisor.UnmarshalNamingRulePayloadAsTemplate(advisor.SQLReviewRuleType(checkCtx.Rule.Type), checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	namingPayload := checkCtx.Rule.GetNamingPayload()
+	if namingPayload == nil {
+		return nil, errors.New("naming_payload is required for this rule")
+	}
+
+	format := namingPayload.Format
+	templateList, _ := advisor.ParseTemplateTokens(format)
+
+	for _, key := range templateList {
+		if _, ok := advisor.TemplateNamingTokens[checkCtx.Rule.Type][key]; !ok {
+			return nil, errors.Errorf("invalid template %s for rule %s", key, checkCtx.Rule.Type)
+		}
+	}
+
+	maxLength := int(namingPayload.MaxLength)
+	if maxLength == 0 {
+		maxLength = advisor.DefaultNameLengthLimit
 	}
 	checker := &namingUKConventionChecker{
-		level:        level,
-		title:        string(checkCtx.Rule.Type),
-		format:       format,
-		maxLength:    maxLength,
-		templateList: templateList,
-		catalog:      checkCtx.Catalog,
+		level:            level,
+		title:            checkCtx.Rule.Type.String(),
+		format:           format,
+		maxLength:        maxLength,
+		templateList:     templateList,
+		originalMetadata: checkCtx.OriginalMetadata,
 	}
 	for _, stmtNode := range root {
 		(stmtNode).Accept(checker)
@@ -59,13 +76,13 @@ func (*NamingUKConventionAdvisor) Check(_ context.Context, checkCtx advisor.Cont
 }
 
 type namingUKConventionChecker struct {
-	adviceList   []*storepb.Advice
-	level        storepb.Advice_Status
-	title        string
-	format       string
-	maxLength    int
-	templateList []string
-	catalog      *catalog.Finder
+	adviceList       []*storepb.Advice
+	level            storepb.Advice_Status
+	title            string
+	format           string
+	maxLength        int
+	templateList     []string
+	originalMetadata *model.DatabaseMetadata
 }
 
 // Enter implements the ast.Visitor interface.
@@ -77,7 +94,7 @@ func (checker *namingUKConventionChecker) Enter(in ast.Node) (ast.Node, bool) {
 		if err != nil {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:  checker.level,
-				Code:    advisor.Internal.Int32(),
+				Code:    code.Internal.Int32(),
 				Title:   "Internal error for unique key naming convention rule",
 				Content: fmt.Sprintf("%q meet internal error %q", in.Text(), err.Error()),
 			})
@@ -86,7 +103,7 @@ func (checker *namingUKConventionChecker) Enter(in ast.Node) (ast.Node, bool) {
 		if !regex.MatchString(indexData.indexName) {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.NamingUKConventionMismatch.Int32(),
+				Code:          code.NamingUKConventionMismatch.Int32(),
 				Title:         checker.title,
 				Content:       fmt.Sprintf("Unique key in table `%s` mismatches the naming convention, expect %q but found `%s`", indexData.tableName, regex, indexData.indexName),
 				StartPosition: common.ConvertANTLRLineToPosition(indexData.line),
@@ -95,7 +112,7 @@ func (checker *namingUKConventionChecker) Enter(in ast.Node) (ast.Node, bool) {
 		if checker.maxLength > 0 && len(indexData.indexName) > checker.maxLength {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.NamingUKConventionMismatch.Int32(),
+				Code:          code.NamingUKConventionMismatch.Int32(),
 				Title:         checker.title,
 				Content:       fmt.Sprintf("Unique key `%s` in table `%s` mismatches the naming convention, its length should be within %d characters", indexData.indexName, indexData.tableName, checker.maxLength),
 				StartPosition: common.ConvertANTLRLineToPosition(indexData.line),
@@ -141,19 +158,20 @@ func (checker *namingUKConventionChecker) getMetaDataList(in ast.Node) []*indexM
 		for _, spec := range node.Specs {
 			switch spec.Tp {
 			case ast.AlterTableRenameIndex:
-				_, index := checker.catalog.Origin.FindIndex(&catalog.IndexFind{
-					TableName: node.Table.Name.String(),
-					IndexName: spec.FromKey.String(),
-				})
+				schema := checker.originalMetadata.GetSchemaMetadata("")
+				var index *model.IndexMetadata
+				if schema != nil {
+					index = schema.GetIndex(spec.FromKey.String())
+				}
 				if index == nil {
 					continue
 				}
-				if !index.Unique() {
+				if !index.GetProto().GetUnique() {
 					// Index naming convention should in advisor_naming_index_convention.go
 					continue
 				}
 				metaData := map[string]string{
-					advisor.ColumnListTemplateToken: strings.Join(index.ExpressionList(), "_"),
+					advisor.ColumnListTemplateToken: strings.Join(index.GetProto().GetExpressions(), "_"),
 					advisor.TableNameTemplateToken:  node.Table.Name.String(),
 				}
 				res = append(res, &indexMetaData{

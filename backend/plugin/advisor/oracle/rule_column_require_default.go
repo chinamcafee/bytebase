@@ -7,12 +7,13 @@ import (
 	"slices"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/plsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -20,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_ORACLE, advisor.SchemaRuleColumnRequireDefault, &ColumnRequireDefaultAdvisor{})
+	advisor.Register(storepb.Engine_ORACLE, storepb.SQLReviewRule_COLUMN_REQUIRE_DEFAULT, &ColumnRequireDefaultAdvisor{})
 }
 
 // ColumnRequireDefaultAdvisor is the advisor checking for column default requirement.
@@ -29,20 +30,26 @@ type ColumnRequireDefaultAdvisor struct {
 
 // Check checks for column default requirement.
 func (*ColumnRequireDefaultAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	rule := NewColumnRequireDefaultRule(level, string(checkCtx.Rule.Type), checkCtx.CurrentDatabase)
+	rule := NewColumnRequireDefaultRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase)
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList()
 }
@@ -111,7 +118,7 @@ func (r *ColumnRequireDefaultRule) GetAdviceList() ([]*storepb.Advice, error) {
 		line := r.noDefaultColumns[columnID]
 		r.AddAdvice(
 			r.level,
-			advisor.NoDefault.Int32(),
+			code.NoDefault.Int32(),
 			fmt.Sprintf("Column %q doesn't have default value", lastIdentifier(columnID)),
 			common.ConvertANTLRLineToPosition(line),
 		)
@@ -134,7 +141,7 @@ func (r *ColumnRequireDefaultRule) handleColumnDefinition(ctx *parser.Column_def
 	columnName := normalizeIdentifier(ctx.Column_name(), r.currentDatabase)
 	columnID := fmt.Sprintf(`%s.%s`, r.tableName, columnName)
 	if ctx.DEFAULT() == nil {
-		r.noDefaultColumns[columnID] = ctx.GetStart().GetLine()
+		r.noDefaultColumns[columnID] = r.baseLine + ctx.GetStart().GetLine()
 	} else {
 		delete(r.noDefaultColumns, columnID)
 	}

@@ -1,16 +1,14 @@
 <template>
-  <div class="h-full flex flex-col gap-y-2">
+  <div class="h-full flex flex-col gap-y-1">
     <div class="flex items-center justify-between">
-      <div class="flex items-center gap-x-4">
-        <div class="flex items-center gap-x-1 text-sm">
-          <span
-            class="text-base"
-            :class="isEmpty(state.statement) ? 'text-red-600' : ''"
-          >
-            {{ statementTitle }}
-          </span>
-          <RequiredStar v-if="isEmpty(state.statement)" />
-        </div>
+      <div class="flex items-center gap-x-1">
+        <span
+          class="text-base"
+          :class="isEmpty(state.statement) ? 'text-red-600' : ''"
+        >
+          {{ statementTitle }}
+        </span>
+        <RequiredStar v-if="isEmpty(state.statement)" />
       </div>
       <div class="flex items-center justify-end gap-x-2">
         <template v-if="isCreating">
@@ -21,6 +19,16 @@
           >
             {{ $t("issue.upload-sql") }}
           </SQLUploadButton>
+          <NButton
+            v-if="shouldShowSchemaEditorButton && targetDatabaseNames.length > 0"
+            size="small"
+            @click="handleOpenSchemaEditor"
+          >
+            <template #icon>
+              <TableIcon />
+            </template>
+            {{ $t("schema-editor.self") }}
+          </NButton>
         </template>
 
         <template v-else>
@@ -63,6 +71,16 @@
               {{ $t("issue.upload-sql") }}
             </SQLUploadButton>
             <NButton
+              v-if="shouldShowSchemaEditorButton"
+              size="small"
+              @click="handleOpenSchemaEditor"
+            >
+              <template #icon>
+                <TableIcon />
+              </template>
+              {{ $t("schema-editor.self") }}
+            </NButton>
+            <NButton
               v-if="editorState.isEditing.value"
               size="small"
               :disabled="!allowSaveSQL"
@@ -93,9 +111,9 @@
       </template>
     </BBAttention>
 
-    <div class="relative flex-1 min-h-[200px] max-h-[50vh]">
+    <div class="relative flex-1">
       <MonacoEditor
-        class="w-full h-full min-h-[200px] border rounded overflow-hidden"
+        class="w-full h-full border rounded-sm overflow-hidden"
         :filename="filename"
         :content="state.statement"
         :language="language"
@@ -128,8 +146,8 @@
     v-model:show="state.showEditorModal"
     :title="statementTitle"
     :trap-focus="true"
-    header-class="!border-b-0"
-    container-class="!pt-0 !overflow-hidden"
+    header-class="border-b-0!"
+    container-class="pt-0! overflow-hidden!"
   >
     <div
       id="modal-editor-container"
@@ -160,41 +178,48 @@
       />
     </div>
   </BBModal>
+
+  <SchemaEditorDrawer
+    v-if="shouldShowSchemaEditorButton"
+    v-model:show="state.showSchemaEditorDrawer"
+    :databaseNames="targetDatabaseNames"
+    :project="project"
+    @insert="handleInsertSQL"
+  />
 </template>
 
 <script setup lang="ts">
 import { create } from "@bufbuild/protobuf";
-import { cloneDeep, includes, isEmpty } from "lodash-es";
-import { ExpandIcon } from "lucide-vue-next";
+import { cloneDeep, isEmpty } from "lodash-es";
+import { ExpandIcon, TableIcon } from "lucide-vue-next";
 import { NButton, NTooltip, useDialog } from "naive-ui";
 import { v1 as uuidv1 } from "uuid";
-import { computed, reactive, watch } from "vue";
+import { computed, reactive, ref, watch, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { BBAttention, BBModal } from "@/bbkit";
 import { MonacoEditor } from "@/components/MonacoEditor";
 import { extensionNameOfLanguage } from "@/components/MonacoEditor/utils";
+import SQLUploadButton from "@/components/misc/SQLUploadButton.vue";
 import { ErrorList } from "@/components/Plan/components/common";
 import {
   createEmptyLocalSheet,
-  databaseEngineForSpec,
   databaseForSpec,
-  usePlanContext,
   planCheckRunListForSpec,
+  usePlanContext,
 } from "@/components/Plan/logic";
 import { useEditorState } from "@/components/Plan/logic/useEditorState";
 import RequiredStar from "@/components/RequiredStar.vue";
 import DownloadSheetButton from "@/components/Sheet/DownloadSheetButton.vue";
-import SQLUploadButton from "@/components/misc/SQLUploadButton.vue";
-import { planServiceClientConnect } from "@/grpcweb";
+import { planServiceClientConnect } from "@/connect";
 import {
   pushNotification,
   useCurrentProjectV1,
+  useDatabaseV1Store,
   useSheetV1Store,
 } from "@/store";
 import type { SQLDialect } from "@/types";
-import { dialectOfEngineV1 } from "@/types";
+import { dialectOfEngineV1, isValidDatabaseGroupName } from "@/types";
 import { UpdatePlanRequestSchema } from "@/types/proto-es/v1/plan_service_pb";
-import { Task_Status } from "@/types/proto-es/v1/rollout_service_pb";
 import { SheetSchema } from "@/types/proto-es/v1/sheet_service_pb";
 import {
   getSheetStatement,
@@ -202,28 +227,32 @@ import {
   setSheetStatement,
   useInstanceV1EditorLanguage,
 } from "@/utils";
+import { engineSupportsSchemaEditor } from "@/utils/schemaEditor";
 import { useSelectedSpec } from "../../SpecDetailView/context";
-import { useSQLAdviceMarkers } from "../useSQLAdviceMarkers";
+import SchemaEditorDrawer from "../SchemaEditorDrawer.vue";
 import { useSpecSheet } from "../useSpecSheet";
+import { useSQLAdviceMarkers } from "../useSQLAdviceMarkers";
 
 type LocalState = {
   statement: string;
   showEditorModal: boolean;
   isUploadingFile: boolean;
+  showSchemaEditorDrawer: boolean;
 };
 
 const { t } = useI18n();
 const dialog = useDialog();
 const { project } = useCurrentProjectV1();
-const { isCreating, plan, planCheckRuns, rollout, events, readonly } =
+const { isCreating, plan, planCheckRuns, events, readonly, allowEdit } =
   usePlanContext();
-const selectedSpec = useSelectedSpec();
+const { selectedSpec, getDatabaseTargets, targets } = useSelectedSpec();
 const editorState = useEditorState();
 
 const state = reactive<LocalState>({
   statement: "",
   showEditorModal: false,
   isUploadingFile: false,
+  showSchemaEditorDrawer: false,
 });
 
 const database = computed(() => {
@@ -285,8 +314,8 @@ const isSheetOversize = computed(() => {
 const denyEditStatementReasons = computed(() => {
   const reasons: string[] = [];
 
-  // Check if the project allows modifying statements.
-  if (!project.value.allowModifyStatement && plan.value.issue) {
+  // Check if the plan has been rolled out.
+  if (plan.value.hasRollout) {
     reasons.push(t("issue.error.statement-cannot-be-modified"));
   }
 
@@ -307,27 +336,11 @@ const shouldShowEditButton = computed(() => {
   if (editorState.isEditing.value) {
     return false;
   }
-  if (plan.value.rollout && rollout?.value) {
-    const tasks = rollout.value.stages
-      .flatMap((stage) => stage.tasks)
-      .filter((task) => task.specId === selectedSpec.value.id);
-    if (
-      tasks.some((task) =>
-        includes(
-          [
-            Task_Status.RUNNING,
-            Task_Status.PENDING,
-            Task_Status.DONE,
-            Task_Status.SKIPPED,
-          ],
-          task.status
-        )
-      )
-    ) {
-      return false;
-    }
+  // Hide edit button for plans that have a rollout.
+  if (plan.value.hasRollout) {
+    return false;
   }
-  return true;
+  return allowEdit.value;
 });
 
 const allowSaveSQL = computed((): boolean => {
@@ -347,6 +360,44 @@ const allowSaveSQL = computed((): boolean => {
   return true;
 });
 
+const shouldShowSchemaEditorButton = computed(() => {
+  const spec = selectedSpec.value;
+
+  // Check config exists and is the right type
+  if (!spec?.config || spec.config.case !== "changeDatabaseConfig") {
+    return false;
+  }
+
+  // Now TypeScript knows config.value is Plan_ChangeDatabaseConfig
+  // Only for regular DDL (not gh-ost) schema changes
+  if (spec.config.value.enableGhost) {
+    return false;
+  }
+
+  // Only if at least one database engine supports schema editor
+  const targets = spec.config.value.targets || [];
+  if (targets.length === 0) {
+    return false;
+  }
+
+  // Check if at least one target database supports schema editor
+  const databaseStore = useDatabaseV1Store();
+  return targets.some((targetName) => {
+    if (isValidDatabaseGroupName(targetName)) {
+      return false;
+    }
+    const db = databaseStore.getDatabaseByName(targetName);
+    return engineSupportsSchemaEditor(db.instanceResource.engine);
+  });
+});
+
+const targetDatabaseNames = ref<string[]>([]);
+
+watchEffect(async () => {
+  const result = await getDatabaseTargets(targets.value);
+  targetDatabaseNames.value = result.databaseTargets;
+});
+
 const beginEdit = () => {
   editorState.setEditingState(true);
 };
@@ -362,6 +413,18 @@ const saveEdit = async () => {
 const cancelEdit = () => {
   state.statement = sheetStatement.value;
   editorState.setEditingState(false);
+};
+
+const handleOpenSchemaEditor = () => {
+  state.showSchemaEditorDrawer = true;
+};
+
+const handleInsertSQL = (sql: string) => {
+  // Append generated SQL to existing content
+  const currentSQL = state.statement;
+  const newSQL = currentSQL ? `${currentSQL}\n\n${sql}` : sql;
+  handleStatementChange(newSQL);
+  state.showSchemaEditorDrawer = false;
 };
 
 const showOverwriteConfirmDialog = () => {
@@ -400,13 +463,10 @@ const handleUpdateStatementAndOverwrite = async (
   await handleUpdateStatement(statement, filename);
 };
 
-const handleUpdateStatement = async (statement: string, filename: string) => {
+const handleUpdateStatement = async (statement: string, _filename: string) => {
   try {
     state.isUploadingFile = true;
     handleStatementChange(statement);
-    if (sheet.value) {
-      sheet.value.title = filename;
-    }
   } finally {
     state.isUploadingFile = false;
   }
@@ -432,11 +492,8 @@ const updateStatement = async (statement: string) => {
       `Unsupported spec type for plan update ${JSON.stringify(specToPatch)}`
     );
   }
-  const specEngine = await databaseEngineForSpec(specToPatch);
   const sheet = create(SheetSchema, {
     ...createEmptyLocalSheet(),
-    title: plan.value.title,
-    engine: specEngine,
   });
   setSheetStatement(sheet, statement);
   const createdSheet = await useSheetV1Store().createSheet(

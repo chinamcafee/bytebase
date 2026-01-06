@@ -6,13 +6,16 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/plsql-parser"
 	"github.com/pkg/errors"
+
+	"github.com/antlr4-go/antlr/v4"
+	parser "github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -20,7 +23,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_ORACLE, advisor.SchemaRuleColumnMaximumVarcharLength, &ColumnMaximumVarcharLengthAdvisor{})
+	advisor.Register(storepb.Engine_ORACLE, storepb.SQLReviewRule_COLUMN_MAXIMUM_VARCHAR_LENGTH, &ColumnMaximumVarcharLengthAdvisor{})
 }
 
 // ColumnMaximumVarcharLengthAdvisor is the advisor checking for maximum varchar length.
@@ -29,28 +32,34 @@ type ColumnMaximumVarcharLengthAdvisor struct {
 
 // Check checks for maximum varchar length.
 func (*ColumnMaximumVarcharLengthAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalNumberTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	numberPayload := checkCtx.Rule.GetNumberPayload()
+	if numberPayload == nil {
+		return nil, errors.New("number_payload is required for this rule")
 	}
 
-	if payload.Number <= 0 {
+	if int(numberPayload.Number) <= 0 {
 		return nil, nil
 	}
 
-	rule := NewColumnMaximumVarcharLengthRule(level, string(checkCtx.Rule.Type), payload.Number)
+	rule := NewColumnMaximumVarcharLengthRule(level, checkCtx.Rule.Type.String(), int(numberPayload.Number))
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList()
 }
@@ -111,8 +120,8 @@ func (r *ColumnMaximumVarcharLengthRule) handleDatatype(ctx *parser.DatatypeCont
 
 	r.AddAdvice(
 		r.level,
-		advisor.VarcharLengthExceedsLimit.Int32(),
+		code.VarcharLengthExceedsLimit.Int32(),
 		fmt.Sprintf("The maximum varchar length is %d.", r.maximum),
-		common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),
+		common.ConvertANTLRLineToPosition(r.baseLine+ctx.GetStart().GetLine()),
 	)
 }

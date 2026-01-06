@@ -5,13 +5,16 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
 	"github.com/pkg/errors"
+
+	"github.com/antlr4-go/antlr/v4"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -20,7 +23,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleStatementInsertRowLimit, &InsertRowLimitAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_STATEMENT_INSERT_ROW_LIMIT, &InsertRowLimitAdvisor{})
 }
 
 // InsertRowLimitAdvisor is the advisor checking for insert row limit.
@@ -29,32 +32,34 @@ type InsertRowLimitAdvisor struct {
 
 // Check checks for insert row limit.
 func (*InsertRowLimitAdvisor) Check(ctx context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	list, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql ParseResult")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	payload, err := advisor.UnmarshalNumberTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	numberPayload := checkCtx.Rule.GetNumberPayload()
+	if numberPayload == nil {
+		return nil, errors.New("number_payload is required for this rule")
 	}
 
 	checker := &insertRowLimitChecker{
 		level:  level,
-		title:  string(checkCtx.Rule.Type),
-		maxRow: payload.Number,
+		title:  checkCtx.Rule.Type.String(),
+		maxRow: int(numberPayload.Number),
 		driver: checkCtx.Driver,
 		ctx:    ctx,
 	}
 
-	for _, stmt := range list {
-		checker.baseLine = stmt.BaseLine
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		checker.baseLine = stmt.BaseLine()
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 		if checker.explainCount >= common.MaximumLintExplainSize {
 			break
 		}
@@ -107,7 +112,7 @@ func (checker *insertRowLimitChecker) handleInsertQueryExpression(ctx mysql.IIns
 	if err != nil {
 		checker.adviceList = append(checker.adviceList, &storepb.Advice{
 			Status:        checker.level,
-			Code:          advisor.InsertTooManyRows.Int32(),
+			Code:          code.InsertTooManyRows.Int32(),
 			Title:         checker.title,
 			Content:       fmt.Sprintf("\"%s\" dry runs failed: %s", checker.text, err.Error()),
 			StartPosition: common.ConvertANTLRLineToPosition(checker.line),
@@ -118,7 +123,7 @@ func (checker *insertRowLimitChecker) handleInsertQueryExpression(ctx mysql.IIns
 	if err != nil {
 		checker.adviceList = append(checker.adviceList, &storepb.Advice{
 			Status:        checker.level,
-			Code:          advisor.Internal.Int32(),
+			Code:          code.Internal.Int32(),
 			Title:         checker.title,
 			Content:       fmt.Sprintf("failed to get row count for \"%s\": %s", checker.text, err.Error()),
 			StartPosition: common.ConvertANTLRLineToPosition(checker.line),
@@ -126,7 +131,7 @@ func (checker *insertRowLimitChecker) handleInsertQueryExpression(ctx mysql.IIns
 	} else if rowCount > int64(checker.maxRow) {
 		checker.adviceList = append(checker.adviceList, &storepb.Advice{
 			Status:        checker.level,
-			Code:          advisor.InsertTooManyRows.Int32(),
+			Code:          code.InsertTooManyRows.Int32(),
 			Title:         checker.title,
 			Content:       fmt.Sprintf("\"%s\" inserts %d rows. The count exceeds %d.", checker.text, rowCount, checker.maxRow),
 			StartPosition: common.ConvertANTLRLineToPosition(checker.line),
@@ -149,7 +154,7 @@ func (checker *insertRowLimitChecker) handleNoInsertQueryExpression(ctx mysql.II
 	if len(allValues) > checker.maxRow {
 		checker.adviceList = append(checker.adviceList, &storepb.Advice{
 			Status:        checker.level,
-			Code:          advisor.InsertTooManyRows.Int32(),
+			Code:          code.InsertTooManyRows.Int32(),
 			Title:         checker.title,
 			Content:       fmt.Sprintf("\"%s\" inserts %d rows. The count exceeds %d.", checker.text, len(allValues), checker.maxRow),
 			StartPosition: common.ConvertANTLRLineToPosition(checker.line),

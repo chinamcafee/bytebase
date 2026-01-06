@@ -1,6 +1,6 @@
 <template>
   <NTag
-    :class="[selected && 'shadow']"
+    :class="[selected && 'shadow-sm']"
     :type="tagType"
     round
     :bordered="selected"
@@ -38,15 +38,15 @@
 
 <script setup lang="ts">
 import { maxBy } from "lodash-es";
-import { CheckIcon, TriangleAlertIcon, CircleAlertIcon } from "lucide-vue-next";
+import { CheckIcon, CircleAlertIcon, TriangleAlertIcon } from "lucide-vue-next";
 import { NTag } from "naive-ui";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { TaskSpinner } from "@/components/IssueV1/components/common";
 import type { PlanCheckRun } from "@/types/proto-es/v1/plan_service_pb";
 import {
+  PlanCheckRun_Result_Type,
   PlanCheckRun_Status,
-  PlanCheckRun_Type,
 } from "@/types/proto-es/v1/plan_service_pb";
 import { Advice_Level } from "@/types/proto-es/v1/sql_service_pb";
 import { extractPlanCheckRunUID } from "@/utils";
@@ -54,7 +54,7 @@ import { planCheckRunResultStatus } from "./common";
 
 const props = defineProps<{
   planCheckRuns: PlanCheckRun[];
-  type: PlanCheckRun_Type;
+  type: PlanCheckRun_Result_Type;
   clickable?: boolean;
   selected?: boolean;
 }>();
@@ -108,21 +108,17 @@ const resultStatus = computed(() => {
 });
 
 const title = computed(() => {
-  const { type } = latestPlanCheckRun.value;
-  switch (type) {
-    case PlanCheckRun_Type.DATABASE_STATEMENT_FAKE_ADVISE:
-      return t("task.check-type.fake");
-    case PlanCheckRun_Type.DATABASE_STATEMENT_ADVISE:
+  // Use the type prop directly instead of getting from checkRun
+  switch (props.type) {
+    case PlanCheckRun_Result_Type.STATEMENT_ADVISE:
       return t("task.check-type.sql-review.self");
-    case PlanCheckRun_Type.DATABASE_CONNECT:
-      return t("task.check-type.connection");
-    case PlanCheckRun_Type.DATABASE_GHOST_SYNC:
+    case PlanCheckRun_Result_Type.GHOST_SYNC:
       return t("task.check-type.ghost-sync");
-    case PlanCheckRun_Type.DATABASE_STATEMENT_SUMMARY_REPORT:
+    case PlanCheckRun_Result_Type.STATEMENT_SUMMARY_REPORT:
       return t("task.check-type.summary-report");
     default:
-      console.assert(false, `Missing PlanCheckType name of "${type}"`);
-      return type;
+      console.assert(false, `Missing PlanCheckType name of "${props.type}"`);
+      return String(props.type);
   }
 });
 </script>

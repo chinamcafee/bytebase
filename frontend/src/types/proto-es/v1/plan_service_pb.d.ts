@@ -5,9 +5,8 @@
 import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 import type { FieldMask, Timestamp } from "@bufbuild/protobuf/wkt";
-import type { DatabaseChangeType, ExportFormat, MigrationType, Position, State } from "./common_pb";
+import type { ExportFormat, Position, State } from "./common_pb";
 import type { Advice_Level } from "./sql_service_pb";
-import type { ChangedResources } from "./database_service_pb";
 
 /**
  * Describes the file v1/plan_service.proto.
@@ -66,6 +65,31 @@ export declare type ListPlansRequest = Message<"bytebase.v1.ListPlansRequest"> &
    * @generated from field: string page_token = 3;
    */
   pageToken: string;
+
+  /**
+   * Filter is used to filter plans returned in the list.
+   * The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
+   *
+   * Supported filters:
+   * - creator: the plan creator full name in "users/{email or id}" format, support "==" operator.
+   * - create_time: the plan create time in "2006-01-02T15:04:05Z07:00" format, support ">=" or "<=" operator.
+   * - has_rollout: whether the plan has rollout, support "==" operator, the value should be "true" or "false".
+   * - has_issue: the plan has issue or not, support "==" operator, the value should be "true" or "false".
+   * - title: the plan title, support "==" operator for exact match and ".matches()" operator for case-insensitive substring match.
+   * - spec_type: the plan spec config type, support "==" operator, the value should be "create_database_config", "change_database_config", or "export_data_config".
+   * - state: the plan state, support "==" operator, the value should be "ACTIVE" or "DELETED".
+   *
+   * For example:
+   * creator == "users/ed@bytebase.com" && create_time >= "2025-01-02T15:04:05Z07:00"
+   * has_rollout == false && has_issue == true
+   * title == "My Plan"
+   * title.matches("database migration")
+   * spec_type == "change_database_config"
+   * state == "ACTIVE"
+   *
+   * @generated from field: string filter = 4;
+   */
+  filter: string;
 };
 
 /**
@@ -99,98 +123,6 @@ export declare type ListPlansResponse = Message<"bytebase.v1.ListPlansResponse">
  * Use `create(ListPlansResponseSchema)` to create a new message.
  */
 export declare const ListPlansResponseSchema: GenMessage<ListPlansResponse>;
-
-/**
- * @generated from message bytebase.v1.SearchPlansRequest
- */
-export declare type SearchPlansRequest = Message<"bytebase.v1.SearchPlansRequest"> & {
-  /**
-   * The parent, which owns this collection of plans.
-   * Format: projects/{project}
-   * Use "projects/-" to list all plans from all projects.
-   *
-   * @generated from field: string parent = 1;
-   */
-  parent: string;
-
-  /**
-   * The maximum number of plans to return. The service may return fewer than
-   * this value.
-   * If unspecified, at most 10 plans will be returned.
-   * The maximum value is 1000; values above 1000 will be coerced to 1000.
-   *
-   * @generated from field: int32 page_size = 2;
-   */
-  pageSize: number;
-
-  /**
-   * A page token, received from a previous `SearchPlans` call.
-   * Provide this to retrieve the subsequent page.
-   *
-   * When paginating, all other parameters provided to `SearchPlans` must match
-   * the call that provided the page token.
-   *
-   * @generated from field: string page_token = 3;
-   */
-  pageToken: string;
-
-  /**
-   * Filter is used to filter plans returned in the list.
-   * The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
-   *
-   * Supported filters:
-   * - creator: the plan creator full name in "users/{email or id}" format, support "==" operator.
-   * - create_time: the plan create time in "2006-01-02T15:04:05Z07:00" format, support ">=" or "<=" operator.
-   * - has_pipeline: the plan has pipeline or not, support "==" operator, the value should be "true" or "false".
-   * - has_issue: the plan has issue or not, support "==" operator, the value should be "true" or "false".
-   * - title: the plan title, support "==" operator for exact match and ".matches()" operator for case-insensitive substring match.
-   * - spec_type: the plan spec config type, support "==" operator, the value should be "create_database_config", "change_database_config", or "export_data_config".
-   * - state: the plan state, support "==" operator, the value should be "ACTIVE" or "DELETED".
-   *
-   * For example:
-   * creator == "users/ed@bytebase.com" && create_time >= "2025-01-02T15:04:05Z07:00"
-   * has_pipeline == false && has_issue == true
-   * title == "My Plan"
-   * title.matches("database migration")
-   * spec_type == "change_database_config"
-   * state == "ACTIVE"
-   *
-   * @generated from field: string filter = 4;
-   */
-  filter: string;
-};
-
-/**
- * Describes the message bytebase.v1.SearchPlansRequest.
- * Use `create(SearchPlansRequestSchema)` to create a new message.
- */
-export declare const SearchPlansRequestSchema: GenMessage<SearchPlansRequest>;
-
-/**
- * @generated from message bytebase.v1.SearchPlansResponse
- */
-export declare type SearchPlansResponse = Message<"bytebase.v1.SearchPlansResponse"> & {
-  /**
-   * The plans from the specified request.
-   *
-   * @generated from field: repeated bytebase.v1.Plan plans = 1;
-   */
-  plans: Plan[];
-
-  /**
-   * A token, which can be sent as `page_token` to retrieve the next page.
-   * If this field is omitted, there are no subsequent pages.
-   *
-   * @generated from field: string next_page_token = 2;
-   */
-  nextPageToken: string;
-};
-
-/**
- * Describes the message bytebase.v1.SearchPlansResponse.
- * Use `create(SearchPlansResponseSchema)` to create a new message.
- */
-export declare const SearchPlansResponseSchema: GenMessage<SearchPlansResponse>;
 
 /**
  * @generated from message bytebase.v1.CreatePlanRequest
@@ -284,32 +216,23 @@ export declare type Plan = Message<"bytebase.v1.Plan"> & {
   issue: string;
 
   /**
-   * The rollout associated with the plan.
-   * Can be empty.
-   * Format: projects/{project}/rollouts/{rollout}
-   *
-   * @generated from field: string rollout = 15;
-   */
-  rollout: string;
-
-  /**
    * The title of the plan.
    *
-   * @generated from field: string title = 4;
+   * @generated from field: string title = 5;
    */
   title: string;
 
   /**
    * The description of the plan.
    *
-   * @generated from field: string description = 5;
+   * @generated from field: string description = 6;
    */
   description: string;
 
   /**
    * The deployment specs for the plan.
    *
-   * @generated from field: repeated bytebase.v1.Plan.Spec specs = 14;
+   * @generated from field: repeated bytebase.v1.Plan.Spec specs = 7;
    */
   specs: Plan_Spec[];
 
@@ -343,9 +266,11 @@ export declare type Plan = Message<"bytebase.v1.Plan"> & {
   planCheckRunStatusCount: { [key: string]: number };
 
   /**
-   * @generated from field: bytebase.v1.Plan.Deployment deployment = 13;
+   * Whether the plan has started the rollout.
+   *
+   * @generated from field: bool has_rollout = 12;
    */
-  deployment?: Plan_Deployment;
+  hasRollout: boolean;
 };
 
 /**
@@ -361,7 +286,7 @@ export declare type Plan_Spec = Message<"bytebase.v1.Plan.Spec"> & {
   /**
    * A UUID4 string that uniquely identifies the Spec.
    *
-   * @generated from field: string id = 5;
+   * @generated from field: string id = 1;
    */
   id: string;
 
@@ -370,19 +295,19 @@ export declare type Plan_Spec = Message<"bytebase.v1.Plan.Spec"> & {
    */
   config: {
     /**
-     * @generated from field: bytebase.v1.Plan.CreateDatabaseConfig create_database_config = 1;
+     * @generated from field: bytebase.v1.Plan.CreateDatabaseConfig create_database_config = 2;
      */
     value: Plan_CreateDatabaseConfig;
     case: "createDatabaseConfig";
   } | {
     /**
-     * @generated from field: bytebase.v1.Plan.ChangeDatabaseConfig change_database_config = 2;
+     * @generated from field: bytebase.v1.Plan.ChangeDatabaseConfig change_database_config = 3;
      */
     value: Plan_ChangeDatabaseConfig;
     case: "changeDatabaseConfig";
   } | {
     /**
-     * @generated from field: bytebase.v1.Plan.ExportDataConfig export_data_config = 7;
+     * @generated from field: bytebase.v1.Plan.ExportDataConfig export_data_config = 4;
      */
     value: Plan_ExportDataConfig;
     case: "exportDataConfig";
@@ -474,7 +399,7 @@ export declare type Plan_ChangeDatabaseConfig = Message<"bytebase.v1.Plan.Change
    * Multi-database format: [instances/{instance-id}/databases/{database-name}].
    * Single database group format: [projects/{project}/databaseGroups/{databaseGroup}].
    *
-   * @generated from field: repeated string targets = 10;
+   * @generated from field: repeated string targets = 1;
    */
   targets: string[];
 
@@ -490,36 +415,28 @@ export declare type Plan_ChangeDatabaseConfig = Message<"bytebase.v1.Plan.Change
    * The resource name of the release.
    * Format: projects/{project}/releases/{release}
    *
-   * @generated from field: string release = 9;
+   * @generated from field: string release = 3;
    */
   release: string;
 
   /**
-   * Type is the database change type.
-   *
-   * @generated from field: bytebase.v1.DatabaseChangeType type = 3;
-   */
-  type: DatabaseChangeType;
-
-  /**
-   * migration_type is the migration type for imperative schema migration.
-   * It is only set when type is MIGRATE.
-   *
-   * @generated from field: bytebase.v1.MigrationType migration_type = 11;
-   */
-  migrationType: MigrationType;
-
-  /**
-   * @generated from field: map<string, string> ghost_flags = 7;
+   * @generated from field: map<string, string> ghost_flags = 5;
    */
   ghostFlags: { [key: string]: string };
 
   /**
    * If set, a backup of the modified data will be created automatically before any changes are applied.
    *
-   * @generated from field: bool enable_prior_backup = 8;
+   * @generated from field: bool enable_prior_backup = 6;
    */
   enablePriorBackup: boolean;
+
+  /**
+   * Whether to use gh-ost for online schema migration.
+   *
+   * @generated from field: bool enable_ghost = 7;
+   */
+  enableGhost: boolean;
 };
 
 /**
@@ -537,7 +454,7 @@ export declare type Plan_ExportDataConfig = Message<"bytebase.v1.Plan.ExportData
    * Multi-database format: [instances/{instance-id}/databases/{database-name}].
    * Single database group format: [projects/{project}/databaseGroups/{databaseGroup}].
    *
-   * @generated from field: repeated string targets = 5;
+   * @generated from field: repeated string targets = 1;
    */
   targets: string[];
 
@@ -572,116 +489,23 @@ export declare type Plan_ExportDataConfig = Message<"bytebase.v1.Plan.ExportData
 export declare const Plan_ExportDataConfigSchema: GenMessage<Plan_ExportDataConfig>;
 
 /**
- * @generated from message bytebase.v1.Plan.Deployment
+ * @generated from message bytebase.v1.GetPlanCheckRunRequest
  */
-export declare type Plan_Deployment = Message<"bytebase.v1.Plan.Deployment"> & {
+export declare type GetPlanCheckRunRequest = Message<"bytebase.v1.GetPlanCheckRunRequest"> & {
   /**
-   * The environments deploy order.
+   * The name of the plan check run to retrieve.
+   * Format: projects/{project}/plans/{plan}/planCheckRun
    *
-   * @generated from field: repeated string environments = 1;
+   * @generated from field: string name = 1;
    */
-  environments: string[];
-
-  /**
-   * The database group mapping.
-   *
-   * @generated from field: repeated bytebase.v1.Plan.Deployment.DatabaseGroupMapping database_group_mappings = 2;
-   */
-  databaseGroupMappings: Plan_Deployment_DatabaseGroupMapping[];
+  name: string;
 };
 
 /**
- * Describes the message bytebase.v1.Plan.Deployment.
- * Use `create(Plan_DeploymentSchema)` to create a new message.
+ * Describes the message bytebase.v1.GetPlanCheckRunRequest.
+ * Use `create(GetPlanCheckRunRequestSchema)` to create a new message.
  */
-export declare const Plan_DeploymentSchema: GenMessage<Plan_Deployment>;
-
-/**
- * @generated from message bytebase.v1.Plan.Deployment.DatabaseGroupMapping
- */
-export declare type Plan_Deployment_DatabaseGroupMapping = Message<"bytebase.v1.Plan.Deployment.DatabaseGroupMapping"> & {
-  /**
-   * Format: projects/{project}/databaseGroups/{databaseGroup}.
-   *
-   * @generated from field: string database_group = 1;
-   */
-  databaseGroup: string;
-
-  /**
-   * Format: instances/{instance-id}/databases/{database-name}.
-   *
-   * @generated from field: repeated string databases = 2;
-   */
-  databases: string[];
-};
-
-/**
- * Describes the message bytebase.v1.Plan.Deployment.DatabaseGroupMapping.
- * Use `create(Plan_Deployment_DatabaseGroupMappingSchema)` to create a new message.
- */
-export declare const Plan_Deployment_DatabaseGroupMappingSchema: GenMessage<Plan_Deployment_DatabaseGroupMapping>;
-
-/**
- * @generated from message bytebase.v1.ListPlanCheckRunsRequest
- */
-export declare type ListPlanCheckRunsRequest = Message<"bytebase.v1.ListPlanCheckRunsRequest"> & {
-  /**
-   * The parent, which owns this collection of plan check runs.
-   * Format: projects/{project}/plans/{plan}
-   *
-   * @generated from field: string parent = 1;
-   */
-  parent: string;
-
-  /**
-   * If set to true, only the latest plan check run will be returned.
-   *
-   * @generated from field: bool latest_only = 2;
-   */
-  latestOnly: boolean;
-
-  /**
-   * Filter is used to filter plan check runs returned in the list.
-   * The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
-   *
-   * Supported filters:
-   * - status: the plan check run status, support "==" and "in" operator, check the Status enum in the PlanCheckRun message for the values.
-   * - result_status: the plan check run result status, support "==" and "in" operator, check the Result.Status enum in the PlanCheckRun message for the values.
-   *
-   * For example:
-   * status in ["DONE", "FAILED"]
-   * status == "RUNNING"
-   * result_status in ["SUCCESS", "ERROR"]
-   * result_status == "WARNING"
-   *
-   * @generated from field: string filter = 3;
-   */
-  filter: string;
-};
-
-/**
- * Describes the message bytebase.v1.ListPlanCheckRunsRequest.
- * Use `create(ListPlanCheckRunsRequestSchema)` to create a new message.
- */
-export declare const ListPlanCheckRunsRequestSchema: GenMessage<ListPlanCheckRunsRequest>;
-
-/**
- * @generated from message bytebase.v1.ListPlanCheckRunsResponse
- */
-export declare type ListPlanCheckRunsResponse = Message<"bytebase.v1.ListPlanCheckRunsResponse"> & {
-  /**
-   * The plan check runs from the specified request.
-   *
-   * @generated from field: repeated bytebase.v1.PlanCheckRun plan_check_runs = 1;
-   */
-  planCheckRuns: PlanCheckRun[];
-};
-
-/**
- * Describes the message bytebase.v1.ListPlanCheckRunsResponse.
- * Use `create(ListPlanCheckRunsResponseSchema)` to create a new message.
- */
-export declare const ListPlanCheckRunsResponseSchema: GenMessage<ListPlanCheckRunsResponse>;
+export declare const GetPlanCheckRunRequestSchema: GenMessage<GetPlanCheckRunRequest>;
 
 /**
  * @generated from message bytebase.v1.RunPlanChecksRequest
@@ -724,94 +548,66 @@ export declare type RunPlanChecksResponse = Message<"bytebase.v1.RunPlanChecksRe
 export declare const RunPlanChecksResponseSchema: GenMessage<RunPlanChecksResponse>;
 
 /**
- * @generated from message bytebase.v1.BatchCancelPlanCheckRunsRequest
+ * @generated from message bytebase.v1.CancelPlanCheckRunRequest
  */
-export declare type BatchCancelPlanCheckRunsRequest = Message<"bytebase.v1.BatchCancelPlanCheckRunsRequest"> & {
+export declare type CancelPlanCheckRunRequest = Message<"bytebase.v1.CancelPlanCheckRunRequest"> & {
   /**
-   * The name of the parent of the planChecks.
-   * Format: projects/{project}/plans/{plan}
+   * The name of the plan check run to cancel.
+   * Format: projects/{project}/plans/{plan}/planCheckRun
    *
-   * @generated from field: string parent = 1;
+   * @generated from field: string name = 1;
    */
-  parent: string;
-
-  /**
-   * TODO(d): update this API.
-   * The planCheckRuns to cancel.
-   * Format: projects/{project}/plans/{plan}/planCheckRuns/{planCheckRun}
-   *
-   * @generated from field: repeated string plan_check_runs = 2;
-   */
-  planCheckRuns: string[];
+  name: string;
 };
 
 /**
- * Describes the message bytebase.v1.BatchCancelPlanCheckRunsRequest.
- * Use `create(BatchCancelPlanCheckRunsRequestSchema)` to create a new message.
+ * Describes the message bytebase.v1.CancelPlanCheckRunRequest.
+ * Use `create(CancelPlanCheckRunRequestSchema)` to create a new message.
  */
-export declare const BatchCancelPlanCheckRunsRequestSchema: GenMessage<BatchCancelPlanCheckRunsRequest>;
+export declare const CancelPlanCheckRunRequestSchema: GenMessage<CancelPlanCheckRunRequest>;
 
 /**
- * @generated from message bytebase.v1.BatchCancelPlanCheckRunsResponse
+ * @generated from message bytebase.v1.CancelPlanCheckRunResponse
  */
-export declare type BatchCancelPlanCheckRunsResponse = Message<"bytebase.v1.BatchCancelPlanCheckRunsResponse"> & {
+export declare type CancelPlanCheckRunResponse = Message<"bytebase.v1.CancelPlanCheckRunResponse"> & {
 };
 
 /**
- * Describes the message bytebase.v1.BatchCancelPlanCheckRunsResponse.
- * Use `create(BatchCancelPlanCheckRunsResponseSchema)` to create a new message.
+ * Describes the message bytebase.v1.CancelPlanCheckRunResponse.
+ * Use `create(CancelPlanCheckRunResponseSchema)` to create a new message.
  */
-export declare const BatchCancelPlanCheckRunsResponseSchema: GenMessage<BatchCancelPlanCheckRunsResponse>;
+export declare const CancelPlanCheckRunResponseSchema: GenMessage<CancelPlanCheckRunResponse>;
 
 /**
  * @generated from message bytebase.v1.PlanCheckRun
  */
 export declare type PlanCheckRun = Message<"bytebase.v1.PlanCheckRun"> & {
   /**
-   * Format: projects/{project}/plans/{plan}/planCheckRuns/{planCheckRun}
+   * Format: projects/{project}/plans/{plan}/planCheckRun
    *
    * @generated from field: string name = 1;
    */
   name: string;
 
   /**
-   * @generated from field: bytebase.v1.PlanCheckRun.Type type = 3;
-   */
-  type: PlanCheckRun_Type;
-
-  /**
-   * @generated from field: bytebase.v1.PlanCheckRun.Status status = 4;
+   * @generated from field: bytebase.v1.PlanCheckRun.Status status = 3;
    */
   status: PlanCheckRun_Status;
 
   /**
-   * Format: instances/{instance}/databases/{database}
-   *
-   * @generated from field: string target = 5;
-   */
-  target: string;
-
-  /**
-   * Format: project/{project}/sheets/{sheet}
-   *
-   * @generated from field: string sheet = 6;
-   */
-  sheet: string;
-
-  /**
-   * @generated from field: repeated bytebase.v1.PlanCheckRun.Result results = 7;
+   * @generated from field: repeated bytebase.v1.PlanCheckRun.Result results = 6;
    */
   results: PlanCheckRun_Result[];
 
   /**
    * error is set if the Status is FAILED.
    *
-   * @generated from field: string error = 8;
+   * @generated from field: string error = 7;
    */
   error: string;
 
   /**
-   * @generated from field: google.protobuf.Timestamp create_time = 9;
+   * @generated from field: google.protobuf.Timestamp create_time = 8;
    */
   createTime?: Timestamp;
 };
@@ -845,6 +641,19 @@ export declare type PlanCheckRun_Result = Message<"bytebase.v1.PlanCheckRun.Resu
    * @generated from field: int32 code = 4;
    */
   code: number;
+
+  /**
+   * Target identification for consolidated results.
+   * Format: instances/{instance}/databases/{database}
+   *
+   * @generated from field: string target = 7;
+   */
+  target: string;
+
+  /**
+   * @generated from field: bytebase.v1.PlanCheckRun.Result.Type type = 8;
+   */
+  type: PlanCheckRun_Result_Type;
 
   /**
    * @generated from oneof bytebase.v1.PlanCheckRun.Result.report
@@ -885,11 +694,6 @@ export declare type PlanCheckRun_Result_SqlSummaryReport = Message<"bytebase.v1.
    * @generated from field: int64 affected_rows = 3;
    */
   affectedRows: bigint;
-
-  /**
-   * @generated from field: bytebase.v1.ChangedResources changed_resources = 4;
-   */
-  changedResources?: ChangedResources;
 };
 
 /**
@@ -922,56 +726,34 @@ export declare type PlanCheckRun_Result_SqlReviewReport = Message<"bytebase.v1.P
 export declare const PlanCheckRun_Result_SqlReviewReportSchema: GenMessage<PlanCheckRun_Result_SqlReviewReport>;
 
 /**
- * @generated from enum bytebase.v1.PlanCheckRun.Type
+ * @generated from enum bytebase.v1.PlanCheckRun.Result.Type
  */
-export enum PlanCheckRun_Type {
+export enum PlanCheckRun_Result_Type {
   /**
-   * Unspecified check type.
-   *
    * @generated from enum value: TYPE_UNSPECIFIED = 0;
    */
   TYPE_UNSPECIFIED = 0,
 
   /**
-   * Fake advise check for testing purposes without executing against database.
-   *
-   * @generated from enum value: DATABASE_STATEMENT_FAKE_ADVISE = 1;
+   * @generated from enum value: STATEMENT_ADVISE = 1;
    */
-  DATABASE_STATEMENT_FAKE_ADVISE = 1,
+  STATEMENT_ADVISE = 1,
 
   /**
-   * SQL review check that analyzes statements against configured SQL review rules.
-   *
-   * @generated from enum value: DATABASE_STATEMENT_ADVISE = 3;
+   * @generated from enum value: STATEMENT_SUMMARY_REPORT = 2;
    */
-  DATABASE_STATEMENT_ADVISE = 3,
+  STATEMENT_SUMMARY_REPORT = 2,
 
   /**
-   * Summary report check that generates impact analysis for the statements.
-   *
-   * @generated from enum value: DATABASE_STATEMENT_SUMMARY_REPORT = 5;
+   * @generated from enum value: GHOST_SYNC = 3;
    */
-  DATABASE_STATEMENT_SUMMARY_REPORT = 5,
-
-  /**
-   * Connection check that verifies database connectivity.
-   *
-   * @generated from enum value: DATABASE_CONNECT = 6;
-   */
-  DATABASE_CONNECT = 6,
-
-  /**
-   * Ghost sync check that validates gh-ost online schema change compatibility.
-   *
-   * @generated from enum value: DATABASE_GHOST_SYNC = 7;
-   */
-  DATABASE_GHOST_SYNC = 7,
+  GHOST_SYNC = 3,
 }
 
 /**
- * Describes the enum bytebase.v1.PlanCheckRun.Type.
+ * Describes the enum bytebase.v1.PlanCheckRun.Result.Type.
  */
-export declare const PlanCheckRun_TypeSchema: GenEnum<PlanCheckRun_Type>;
+export declare const PlanCheckRun_Result_TypeSchema: GenEnum<PlanCheckRun_Result_Type>;
 
 /**
  * @generated from enum bytebase.v1.PlanCheckRun.Status
@@ -1037,17 +819,6 @@ export declare const PlanService: GenService<{
     output: typeof ListPlansResponseSchema;
   },
   /**
-   * Search for plans that the caller has the bb.plans.get permission on and also satisfy the specified filter & query.
-   * Permissions required: bb.plans.get
-   *
-   * @generated from rpc bytebase.v1.PlanService.SearchPlans
-   */
-  searchPlans: {
-    methodKind: "unary";
-    input: typeof SearchPlansRequestSchema;
-    output: typeof SearchPlansResponseSchema;
-  },
-  /**
    * Creates a new deployment plan.
    * Permissions required: bb.plans.create
    *
@@ -1071,15 +842,15 @@ export declare const PlanService: GenService<{
     output: typeof PlanSchema;
   },
   /**
-   * Lists plan check runs for a deployment plan.
-   * Permissions required: bb.planCheckRuns.list
+   * Gets the plan check run for a deployment plan.
+   * Permissions required: bb.planCheckRuns.get
    *
-   * @generated from rpc bytebase.v1.PlanService.ListPlanCheckRuns
+   * @generated from rpc bytebase.v1.PlanService.GetPlanCheckRun
    */
-  listPlanCheckRuns: {
+  getPlanCheckRun: {
     methodKind: "unary";
-    input: typeof ListPlanCheckRunsRequestSchema;
-    output: typeof ListPlanCheckRunsResponseSchema;
+    input: typeof GetPlanCheckRunRequestSchema;
+    output: typeof PlanCheckRunSchema;
   },
   /**
    * Executes validation checks on a deployment plan.
@@ -1093,15 +864,15 @@ export declare const PlanService: GenService<{
     output: typeof RunPlanChecksResponseSchema;
   },
   /**
-   * Cancels multiple plan check runs.
+   * Cancels the plan check run for a deployment plan.
    * Permissions required: bb.planCheckRuns.run
    *
-   * @generated from rpc bytebase.v1.PlanService.BatchCancelPlanCheckRuns
+   * @generated from rpc bytebase.v1.PlanService.CancelPlanCheckRun
    */
-  batchCancelPlanCheckRuns: {
+  cancelPlanCheckRun: {
     methodKind: "unary";
-    input: typeof BatchCancelPlanCheckRunsRequestSchema;
-    output: typeof BatchCancelPlanCheckRunsResponseSchema;
+    input: typeof CancelPlanCheckRunRequestSchema;
+    output: typeof CancelPlanCheckRunResponseSchema;
   },
 }>;
 

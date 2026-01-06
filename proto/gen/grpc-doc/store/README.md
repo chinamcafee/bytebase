@@ -10,11 +10,10 @@
   
     - [Engine](#bytebase-store-Engine)
     - [ExportFormat](#bytebase-store-ExportFormat)
-    - [MaskingLevel](#bytebase-store-MaskingLevel)
-    - [MigrationType](#bytebase-store-MigrationType)
     - [RiskLevel](#bytebase-store-RiskLevel)
     - [SchemaChangeType](#bytebase-store-SchemaChangeType)
     - [VCSType](#bytebase-store-VCSType)
+    - [WebhookType](#bytebase-store-WebhookType)
   
 - [store/advice.proto](#store_advice-proto)
     - [Advice](#bytebase-store-Advice)
@@ -35,18 +34,7 @@
   
     - [AuditLog.Severity](#bytebase-store-AuditLog-Severity)
   
-- [store/changelist.proto](#store_changelist-proto)
-    - [Changelist](#bytebase-store-Changelist)
-    - [Changelist.Change](#bytebase-store-Changelist-Change)
-  
 - [store/changelog.proto](#store_changelog-proto)
-    - [ChangedResourceDatabase](#bytebase-store-ChangedResourceDatabase)
-    - [ChangedResourceFunction](#bytebase-store-ChangedResourceFunction)
-    - [ChangedResourceProcedure](#bytebase-store-ChangedResourceProcedure)
-    - [ChangedResourceSchema](#bytebase-store-ChangedResourceSchema)
-    - [ChangedResourceTable](#bytebase-store-ChangedResourceTable)
-    - [ChangedResourceView](#bytebase-store-ChangedResourceView)
-    - [ChangedResources](#bytebase-store-ChangedResources)
     - [ChangelogPayload](#bytebase-store-ChangelogPayload)
   
     - [ChangelogPayload.Type](#bytebase-store-ChangelogPayload-Type)
@@ -66,6 +54,8 @@
     - [DimensionalConfig](#bytebase-store-DimensionalConfig)
     - [EnumTypeMetadata](#bytebase-store-EnumTypeMetadata)
     - [EventMetadata](#bytebase-store-EventMetadata)
+    - [EventTriggerMetadata](#bytebase-store-EventTriggerMetadata)
+    - [ExcludeConstraintMetadata](#bytebase-store-ExcludeConstraintMetadata)
     - [ExtensionMetadata](#bytebase-store-ExtensionMetadata)
     - [ExternalTableMetadata](#bytebase-store-ExternalTableMetadata)
     - [ForeignKeyMetadata](#bytebase-store-ForeignKeyMetadata)
@@ -149,9 +139,6 @@
     - [DataSourceExternalSecret.SecretType](#bytebase-store-DataSourceExternalSecret-SecretType)
     - [DataSourceType](#bytebase-store-DataSourceType)
   
-- [store/instance_change_history.proto](#store_instance_change_history-proto)
-    - [InstanceChangeHistoryPayload](#bytebase-store-InstanceChangeHistoryPayload)
-  
 - [store/issue.proto](#store_issue-proto)
     - [GrantRequest](#bytebase-store-GrantRequest)
     - [Issue](#bytebase-store-Issue)
@@ -159,73 +146,55 @@
     - [Issue.Status](#bytebase-store-Issue-Status)
     - [Issue.Type](#bytebase-store-Issue-Type)
   
-- [store/task_run.proto](#store_task_run-proto)
-    - [PriorBackupDetail](#bytebase-store-PriorBackupDetail)
-    - [PriorBackupDetail.Item](#bytebase-store-PriorBackupDetail-Item)
-    - [PriorBackupDetail.Item.Table](#bytebase-store-PriorBackupDetail-Item-Table)
-    - [SchedulerInfo](#bytebase-store-SchedulerInfo)
-    - [SchedulerInfo.WaitingCause](#bytebase-store-SchedulerInfo-WaitingCause)
-    - [TaskRun](#bytebase-store-TaskRun)
-    - [TaskRunResult](#bytebase-store-TaskRunResult)
-  
-    - [TaskRun.Status](#bytebase-store-TaskRun-Status)
-  
 - [store/issue_comment.proto](#store_issue_comment-proto)
     - [IssueCommentPayload](#bytebase-store-IssueCommentPayload)
     - [IssueCommentPayload.Approval](#bytebase-store-IssueCommentPayload-Approval)
     - [IssueCommentPayload.IssueUpdate](#bytebase-store-IssueCommentPayload-IssueUpdate)
-    - [IssueCommentPayload.StageEnd](#bytebase-store-IssueCommentPayload-StageEnd)
-    - [IssueCommentPayload.TaskPriorBackup](#bytebase-store-IssueCommentPayload-TaskPriorBackup)
-    - [IssueCommentPayload.TaskPriorBackup.Table](#bytebase-store-IssueCommentPayload-TaskPriorBackup-Table)
-    - [IssueCommentPayload.TaskUpdate](#bytebase-store-IssueCommentPayload-TaskUpdate)
+    - [IssueCommentPayload.PlanSpecUpdate](#bytebase-store-IssueCommentPayload-PlanSpecUpdate)
+  
+- [store/oauth2.proto](#store_oauth2-proto)
+    - [OAuth2AuthorizationCodeConfig](#bytebase-store-OAuth2AuthorizationCodeConfig)
+    - [OAuth2ClientConfig](#bytebase-store-OAuth2ClientConfig)
   
 - [store/plan.proto](#store_plan-proto)
     - [PlanConfig](#bytebase-store-PlanConfig)
     - [PlanConfig.ChangeDatabaseConfig](#bytebase-store-PlanConfig-ChangeDatabaseConfig)
     - [PlanConfig.ChangeDatabaseConfig.GhostFlagsEntry](#bytebase-store-PlanConfig-ChangeDatabaseConfig-GhostFlagsEntry)
     - [PlanConfig.CreateDatabaseConfig](#bytebase-store-PlanConfig-CreateDatabaseConfig)
-    - [PlanConfig.Deployment](#bytebase-store-PlanConfig-Deployment)
-    - [PlanConfig.Deployment.DatabaseGroupMapping](#bytebase-store-PlanConfig-Deployment-DatabaseGroupMapping)
     - [PlanConfig.ExportDataConfig](#bytebase-store-PlanConfig-ExportDataConfig)
     - [PlanConfig.Spec](#bytebase-store-PlanConfig-Spec)
   
-    - [PlanConfig.ChangeDatabaseConfig.Type](#bytebase-store-PlanConfig-ChangeDatabaseConfig-Type)
-  
 - [store/plan_check_run.proto](#store_plan_check_run-proto)
-    - [PlanCheckRunConfig](#bytebase-store-PlanCheckRunConfig)
-    - [PlanCheckRunConfig.GhostFlagsEntry](#bytebase-store-PlanCheckRunConfig-GhostFlagsEntry)
+    - [ChangedResourceDatabase](#bytebase-store-ChangedResourceDatabase)
+    - [ChangedResourceSchema](#bytebase-store-ChangedResourceSchema)
+    - [ChangedResourceTable](#bytebase-store-ChangedResourceTable)
+    - [ChangedResources](#bytebase-store-ChangedResources)
     - [PlanCheckRunResult](#bytebase-store-PlanCheckRunResult)
     - [PlanCheckRunResult.Result](#bytebase-store-PlanCheckRunResult-Result)
     - [PlanCheckRunResult.Result.SqlReviewReport](#bytebase-store-PlanCheckRunResult-Result-SqlReviewReport)
     - [PlanCheckRunResult.Result.SqlSummaryReport](#bytebase-store-PlanCheckRunResult-Result-SqlSummaryReport)
   
-    - [PlanCheckRunConfig.ChangeDatabaseType](#bytebase-store-PlanCheckRunConfig-ChangeDatabaseType)
+    - [PlanCheckType](#bytebase-store-PlanCheckType)
   
 - [store/policy.proto](#store_policy-proto)
     - [Binding](#bytebase-store-Binding)
     - [DataSourceQueryPolicy](#bytebase-store-DataSourceQueryPolicy)
     - [EnvironmentTierPolicy](#bytebase-store-EnvironmentTierPolicy)
     - [IamPolicy](#bytebase-store-IamPolicy)
-    - [MaskingExceptionPolicy](#bytebase-store-MaskingExceptionPolicy)
-    - [MaskingExceptionPolicy.MaskingException](#bytebase-store-MaskingExceptionPolicy-MaskingException)
+    - [MaskingExemptionPolicy](#bytebase-store-MaskingExemptionPolicy)
+    - [MaskingExemptionPolicy.Exemption](#bytebase-store-MaskingExemptionPolicy-Exemption)
     - [MaskingRulePolicy](#bytebase-store-MaskingRulePolicy)
     - [MaskingRulePolicy.MaskingRule](#bytebase-store-MaskingRulePolicy-MaskingRule)
     - [Policy](#bytebase-store-Policy)
     - [QueryDataPolicy](#bytebase-store-QueryDataPolicy)
     - [RolloutPolicy](#bytebase-store-RolloutPolicy)
-    - [RolloutPolicy.Checkers](#bytebase-store-RolloutPolicy-Checkers)
-    - [RolloutPolicy.Checkers.RequiredStatusChecks](#bytebase-store-RolloutPolicy-Checkers-RequiredStatusChecks)
-    - [SQLReviewRule](#bytebase-store-SQLReviewRule)
     - [TagPolicy](#bytebase-store-TagPolicy)
     - [TagPolicy.TagsEntry](#bytebase-store-TagPolicy-TagsEntry)
   
     - [DataSourceQueryPolicy.Restriction](#bytebase-store-DataSourceQueryPolicy-Restriction)
     - [EnvironmentTierPolicy.EnvironmentTier](#bytebase-store-EnvironmentTierPolicy-EnvironmentTier)
-    - [MaskingExceptionPolicy.MaskingException.Action](#bytebase-store-MaskingExceptionPolicy-MaskingException-Action)
     - [Policy.Resource](#bytebase-store-Policy-Resource)
     - [Policy.Type](#bytebase-store-Policy-Type)
-    - [RolloutPolicy.Checkers.PlanCheckEnforcement](#bytebase-store-RolloutPolicy-Checkers-PlanCheckEnforcement)
-    - [SQLReviewRuleLevel](#bytebase-store-SQLReviewRuleLevel)
   
 - [store/project.proto](#store_project-proto)
     - [Label](#bytebase-store-Label)
@@ -238,7 +207,6 @@
     - [ProjectWebhook](#bytebase-store-ProjectWebhook)
   
     - [Activity.Type](#bytebase-store-Activity-Type)
-    - [ProjectWebhook.Type](#bytebase-store-ProjectWebhook-Type)
   
 - [store/query_history.proto](#store_query_history-proto)
     - [QueryHistoryPayload](#bytebase-store-QueryHistoryPayload)
@@ -250,6 +218,16 @@
   
 - [store/review_config.proto](#store_review_config-proto)
     - [ReviewConfigPayload](#bytebase-store-ReviewConfigPayload)
+    - [SQLReviewRule](#bytebase-store-SQLReviewRule)
+    - [SQLReviewRule.CommentConventionRulePayload](#bytebase-store-SQLReviewRule-CommentConventionRulePayload)
+    - [SQLReviewRule.NamingCaseRulePayload](#bytebase-store-SQLReviewRule-NamingCaseRulePayload)
+    - [SQLReviewRule.NamingRulePayload](#bytebase-store-SQLReviewRule-NamingRulePayload)
+    - [SQLReviewRule.NumberRulePayload](#bytebase-store-SQLReviewRule-NumberRulePayload)
+    - [SQLReviewRule.StringArrayRulePayload](#bytebase-store-SQLReviewRule-StringArrayRulePayload)
+    - [SQLReviewRule.StringRulePayload](#bytebase-store-SQLReviewRule-StringRulePayload)
+  
+    - [SQLReviewRule.Level](#bytebase-store-SQLReviewRule-Level)
+    - [SQLReviewRule.Type](#bytebase-store-SQLReviewRule-Type)
   
 - [store/revision.proto](#store_revision-proto)
     - [RevisionPayload](#bytebase-store-RevisionPayload)
@@ -265,12 +243,13 @@
     - [Algorithm.MD5Mask](#bytebase-store-Algorithm-MD5Mask)
     - [Algorithm.RangeMask](#bytebase-store-Algorithm-RangeMask)
     - [Algorithm.RangeMask.Slice](#bytebase-store-Algorithm-RangeMask-Slice)
-    - [Announcement](#bytebase-store-Announcement)
     - [AppIMSetting](#bytebase-store-AppIMSetting)
     - [AppIMSetting.DingTalk](#bytebase-store-AppIMSetting-DingTalk)
     - [AppIMSetting.Feishu](#bytebase-store-AppIMSetting-Feishu)
+    - [AppIMSetting.IMSetting](#bytebase-store-AppIMSetting-IMSetting)
     - [AppIMSetting.Lark](#bytebase-store-AppIMSetting-Lark)
     - [AppIMSetting.Slack](#bytebase-store-AppIMSetting-Slack)
+    - [AppIMSetting.Teams](#bytebase-store-AppIMSetting-Teams)
     - [AppIMSetting.Wecom](#bytebase-store-AppIMSetting-Wecom)
     - [DataClassificationSetting](#bytebase-store-DataClassificationSetting)
     - [DataClassificationSetting.DataClassificationConfig](#bytebase-store-DataClassificationSetting-DataClassificationConfig)
@@ -280,35 +259,45 @@
     - [EnvironmentSetting](#bytebase-store-EnvironmentSetting)
     - [EnvironmentSetting.Environment](#bytebase-store-EnvironmentSetting-Environment)
     - [EnvironmentSetting.Environment.TagsEntry](#bytebase-store-EnvironmentSetting-Environment-TagsEntry)
-    - [PasswordRestrictionSetting](#bytebase-store-PasswordRestrictionSetting)
-    - [SCIMSetting](#bytebase-store-SCIMSetting)
-    - [SchemaTemplateSetting](#bytebase-store-SchemaTemplateSetting)
-    - [SchemaTemplateSetting.ColumnType](#bytebase-store-SchemaTemplateSetting-ColumnType)
-    - [SchemaTemplateSetting.FieldTemplate](#bytebase-store-SchemaTemplateSetting-FieldTemplate)
-    - [SchemaTemplateSetting.TableTemplate](#bytebase-store-SchemaTemplateSetting-TableTemplate)
     - [SemanticTypeSetting](#bytebase-store-SemanticTypeSetting)
     - [SemanticTypeSetting.SemanticType](#bytebase-store-SemanticTypeSetting-SemanticType)
+    - [SystemSetting](#bytebase-store-SystemSetting)
     - [WorkspaceApprovalSetting](#bytebase-store-WorkspaceApprovalSetting)
     - [WorkspaceApprovalSetting.Rule](#bytebase-store-WorkspaceApprovalSetting-Rule)
     - [WorkspaceProfileSetting](#bytebase-store-WorkspaceProfileSetting)
+    - [WorkspaceProfileSetting.Announcement](#bytebase-store-WorkspaceProfileSetting-Announcement)
+    - [WorkspaceProfileSetting.PasswordRestriction](#bytebase-store-WorkspaceProfileSetting-PasswordRestriction)
   
     - [AISetting.Provider](#bytebase-store-AISetting-Provider)
     - [Algorithm.InnerOuterMask.MaskType](#bytebase-store-Algorithm-InnerOuterMask-MaskType)
-    - [Announcement.AlertLevel](#bytebase-store-Announcement-AlertLevel)
-    - [DatabaseChangeMode](#bytebase-store-DatabaseChangeMode)
     - [SettingName](#bytebase-store-SettingName)
+    - [WorkspaceApprovalSetting.Rule.Source](#bytebase-store-WorkspaceApprovalSetting-Rule-Source)
+    - [WorkspaceProfileSetting.Announcement.AlertLevel](#bytebase-store-WorkspaceProfileSetting-Announcement-AlertLevel)
+    - [WorkspaceProfileSetting.DatabaseChangeMode](#bytebase-store-WorkspaceProfileSetting-DatabaseChangeMode)
   
-- [store/sheet.proto](#store_sheet-proto)
-    - [SheetPayload](#bytebase-store-SheetPayload)
+- [store/signal.proto](#store_signal-proto)
+    - [Signal](#bytebase-store-Signal)
+  
+    - [Signal.Type](#bytebase-store-Signal-Type)
   
 - [store/task.proto](#store_task-proto)
     - [Task](#bytebase-store-Task)
     - [Task.FlagsEntry](#bytebase-store-Task-FlagsEntry)
-    - [TaskReleaseSource](#bytebase-store-TaskReleaseSource)
   
     - [Task.Type](#bytebase-store-Task-Type)
   
+- [store/task_run.proto](#store_task_run-proto)
+    - [SchedulerInfo](#bytebase-store-SchedulerInfo)
+    - [SchedulerInfo.WaitingCause](#bytebase-store-SchedulerInfo-WaitingCause)
+    - [TaskRun](#bytebase-store-TaskRun)
+    - [TaskRunResult](#bytebase-store-TaskRunResult)
+  
+    - [TaskRun.Status](#bytebase-store-TaskRun-Status)
+  
 - [store/task_run_log.proto](#store_task_run_log-proto)
+    - [PriorBackupDetail](#bytebase-store-PriorBackupDetail)
+    - [PriorBackupDetail.Item](#bytebase-store-PriorBackupDetail-Item)
+    - [PriorBackupDetail.Item.Table](#bytebase-store-PriorBackupDetail-Item-Table)
     - [TaskRunLog](#bytebase-store-TaskRunLog)
     - [TaskRunLog.CommandExecute](#bytebase-store-TaskRunLog-CommandExecute)
     - [TaskRunLog.CommandResponse](#bytebase-store-TaskRunLog-CommandResponse)
@@ -318,21 +307,25 @@
     - [TaskRunLog.DatabaseSyncStart](#bytebase-store-TaskRunLog-DatabaseSyncStart)
     - [TaskRunLog.PriorBackupEnd](#bytebase-store-TaskRunLog-PriorBackupEnd)
     - [TaskRunLog.PriorBackupStart](#bytebase-store-TaskRunLog-PriorBackupStart)
+    - [TaskRunLog.ReleaseFileExecute](#bytebase-store-TaskRunLog-ReleaseFileExecute)
     - [TaskRunLog.RetryInfo](#bytebase-store-TaskRunLog-RetryInfo)
     - [TaskRunLog.SchemaDumpEnd](#bytebase-store-TaskRunLog-SchemaDumpEnd)
     - [TaskRunLog.SchemaDumpStart](#bytebase-store-TaskRunLog-SchemaDumpStart)
-    - [TaskRunLog.TaskRunStatusUpdate](#bytebase-store-TaskRunLog-TaskRunStatusUpdate)
     - [TaskRunLog.TransactionControl](#bytebase-store-TaskRunLog-TransactionControl)
   
-    - [TaskRunLog.TaskRunStatusUpdate.Status](#bytebase-store-TaskRunLog-TaskRunStatusUpdate-Status)
     - [TaskRunLog.TransactionControl.Type](#bytebase-store-TaskRunLog-TransactionControl-Type)
     - [TaskRunLog.Type](#bytebase-store-TaskRunLog-Type)
   
 - [store/user.proto](#store_user-proto)
     - [MFAConfig](#bytebase-store-MFAConfig)
     - [UserProfile](#bytebase-store-UserProfile)
+    - [WorkloadIdentityConfig](#bytebase-store-WorkloadIdentityConfig)
   
     - [PrincipalType](#bytebase-store-PrincipalType)
+    - [WorkloadIdentityConfig.ProviderType](#bytebase-store-WorkloadIdentityConfig-ProviderType)
+  
+- [store/worksheet.proto](#store_worksheet-proto)
+    - [WorkSheetOrganizerPayload](#bytebase-store-WorkSheetOrganizerPayload)
   
 - [Scalar Value Types](#scalar-value-types)
 
@@ -395,6 +388,8 @@ Examples: - &#34;SELECT * FROM t&#34; - column 8 is &#39;*&#39; - &#34;SELECT �
 
 ### Range
 Range represents a span within a text or sequence.
+Whether the indices are byte offsets or character indices depends on the context.
+Check the documentation of the field using Range for specific semantics.
 
 
 | Field | Type | Label | Description |
@@ -431,17 +426,17 @@ Engine represents the type of database system.
 | REDSHIFT | 12 |  |
 | MARIADB | 13 |  |
 | OCEANBASE | 14 |  |
-| STARROCKS | 18 |  |
-| DORIS | 19 |  |
-| HIVE | 20 |  |
-| ELASTICSEARCH | 21 |  |
-| BIGQUERY | 22 |  |
-| DYNAMODB | 23 |  |
-| DATABRICKS | 24 |  |
-| COCKROACHDB | 25 |  |
-| COSMOSDB | 26 |  |
-| TRINO | 27 |  |
-| CASSANDRA | 28 |  |
+| STARROCKS | 15 |  |
+| DORIS | 16 |  |
+| HIVE | 17 |  |
+| ELASTICSEARCH | 18 |  |
+| BIGQUERY | 19 |  |
+| DYNAMODB | 20 |  |
+| DATABRICKS | 21 |  |
+| COCKROACHDB | 22 |  |
+| COSMOSDB | 23 |  |
+| TRINO | 24 |  |
+| CASSANDRA | 25 |  |
 
 
 
@@ -457,34 +452,6 @@ ExportFormat represents the file format for exported data.
 | JSON | 2 |  |
 | SQL | 3 |  |
 | XLSX | 4 |  |
-
-
-
-<a name="bytebase-store-MaskingLevel"></a>
-
-### MaskingLevel
-MaskingLevel represents the level of data masking applied to sensitive information.
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| MASKING_LEVEL_UNSPECIFIED | 0 |  |
-| NONE | 1 | No masking applied. |
-| PARTIAL | 2 | Partial masking (e.g., showing first/last characters). |
-| FULL | 3 | Full masking (all characters masked). |
-
-
-
-<a name="bytebase-store-MigrationType"></a>
-
-### MigrationType
-MigrationType represents the type of database migration.
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| MIGRATION_TYPE_UNSPECIFIED | 0 |  |
-| DDL | 1 | DDL changes (Data Definition Language) for schema modifications. |
-| DML | 2 | DML changes (Data Manipulation Language) for data modifications. |
-| GHOST | 3 | Online schema migration using gh-ost tool. |
 
 
 
@@ -527,6 +494,24 @@ VCSType represents the type of version control system.
 | GITLAB | 2 |  |
 | BITBUCKET | 3 |  |
 | AZURE_DEVOPS | 4 |  |
+
+
+
+<a name="bytebase-store-WebhookType"></a>
+
+### WebhookType
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| WEBHOOK_TYPE_UNSPECIFIED | 0 | Unspecified type. |
+| SLACK | 1 | Slack integration. |
+| DISCORD | 2 | Discord integration. |
+| TEAMS | 3 | Microsoft Teams integration. |
+| DINGTALK | 4 | DingTalk integration. |
+| FEISHU | 5 | Feishu integration. |
+| WECOM | 6 | WeCom (WeChat Work) integration. |
+| LARK | 7 | Lark integration. |
 
 
  
@@ -617,7 +602,6 @@ ApprovalTemplate defines the approval workflow and requirements for an issue.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| id | [string](#string) |  | The unique identifier for the approval template. Built-in templates use &#34;bb.&#34; prefix (e.g., &#34;bb.project-owner&#34;, &#34;bb.workspace-dba&#34;). Custom templates use a UUID or other unique identifier. |
 | flow | [ApprovalFlow](#bytebase-store-ApprovalFlow) |  | The approval workflow specification. |
 | title | [string](#string) |  | Human-readable title of the approval template. |
 | description | [string](#string) |  | Detailed description of when this template applies. |
@@ -638,8 +622,6 @@ IssuePayloadApproval records the approval template used and approval history for
 | approval_template | [ApprovalTemplate](#bytebase-store-ApprovalTemplate) |  | The approval template being used for this issue. |
 | approvers | [IssuePayloadApproval.Approver](#bytebase-store-IssuePayloadApproval-Approver) | repeated | List of approvers and their current status. |
 | approval_finding_done | [bool](#bool) |  | Whether the system has finished finding a matching approval template. False means the backend is still searching for matching templates. |
-| approval_finding_error | [string](#string) |  | Error message if approval template finding failed. |
-| risk_level | [RiskLevel](#bytebase-store-RiskLevel) |  | The assessed risk level for this issue. |
 
 
 
@@ -655,7 +637,7 @@ Approver represents a user who can approve or reject an issue.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | status | [IssuePayloadApproval.Approver.Status](#bytebase-store-IssuePayloadApproval-Approver-Status) |  | The current approval status. |
-| principal_id | [int32](#int32) |  | The ID of the principal who is the approver. |
+| principal | [string](#string) |  | The principal who is the approver. Format: users/{email}. |
 
 
 
@@ -703,7 +685,7 @@ Status represents the approver&#39;s decision state.
 | parent | [string](#string) |  | The project or workspace the audit log belongs to. Formats: - projects/{project} - workspaces/{workspace} |
 | method | [string](#string) |  | Example: /bytebase.v1.SQLService/Query |
 | resource | [string](#string) |  | The resource name. Example: projects/{project} |
-| user | [string](#string) |  | Format: users/{userUID}. |
+| user | [string](#string) |  | Format: users/{email}. |
 | severity | [AuditLog.Severity](#bytebase-store-AuditLog-Severity) |  |  |
 | request | [string](#string) |  | Marshalled request. |
 | response | [string](#string) |  | Marshalled response. Some fields are omitted because they are too large or contain sensitive information. |
@@ -761,173 +743,10 @@ Metadata about the request.
 
 
 
-<a name="store_changelist-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## store/changelist.proto
-
-
-
-<a name="bytebase-store-Changelist"></a>
-
-### Changelist
-Changelist represents a collection of database changes that can be applied together.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| description | [string](#string) |  | Human-readable description of this changelist. |
-| changes | [Changelist.Change](#bytebase-store-Changelist-Change) | repeated | The list of changes in this changelist. |
-
-
-
-
-
-
-<a name="bytebase-store-Changelist-Change"></a>
-
-### Changelist.Change
-Change represents a single database modification within the changelist.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| sheet | [string](#string) |  | Resource name of the sheet containing the SQL statements. |
-| source | [string](#string) |  | The source where this change originated from. Format: instances/{instance}/databases/{database}/changelogs/{changelog} for changes from changelog. Empty for raw SQL changes. |
-
-
-
-
-
- 
-
- 
-
- 
-
- 
-
-
-
 <a name="store_changelog-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
 ## store/changelog.proto
-
-
-
-<a name="bytebase-store-ChangedResourceDatabase"></a>
-
-### ChangedResourceDatabase
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  |  |
-| schemas | [ChangedResourceSchema](#bytebase-store-ChangedResourceSchema) | repeated |  |
-
-
-
-
-
-
-<a name="bytebase-store-ChangedResourceFunction"></a>
-
-### ChangedResourceFunction
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  |  |
-| ranges | [Range](#bytebase-store-Range) | repeated | The ranges of substrings correspond to the statements on the sheet. |
-
-
-
-
-
-
-<a name="bytebase-store-ChangedResourceProcedure"></a>
-
-### ChangedResourceProcedure
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  |  |
-| ranges | [Range](#bytebase-store-Range) | repeated | The ranges of substrings correspond to the statements on the sheet. |
-
-
-
-
-
-
-<a name="bytebase-store-ChangedResourceSchema"></a>
-
-### ChangedResourceSchema
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  |  |
-| tables | [ChangedResourceTable](#bytebase-store-ChangedResourceTable) | repeated |  |
-| views | [ChangedResourceView](#bytebase-store-ChangedResourceView) | repeated |  |
-| functions | [ChangedResourceFunction](#bytebase-store-ChangedResourceFunction) | repeated |  |
-| procedures | [ChangedResourceProcedure](#bytebase-store-ChangedResourceProcedure) | repeated |  |
-
-
-
-
-
-
-<a name="bytebase-store-ChangedResourceTable"></a>
-
-### ChangedResourceTable
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  |  |
-| table_rows | [int64](#int64) |  | The estimated row count of the table. |
-| ranges | [Range](#bytebase-store-Range) | repeated | The ranges of substrings correspond to the statements on the sheet. |
-
-
-
-
-
-
-<a name="bytebase-store-ChangedResourceView"></a>
-
-### ChangedResourceView
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| name | [string](#string) |  |  |
-| ranges | [Range](#bytebase-store-Range) | repeated | The ranges of substrings correspond to the statements on the sheet. |
-
-
-
-
-
-
-<a name="bytebase-store-ChangedResources"></a>
-
-### ChangedResources
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| databases | [ChangedResourceDatabase](#bytebase-store-ChangedResourceDatabase) | repeated |  |
-
-
-
 
 
 
@@ -939,15 +758,10 @@ Change represents a single database modification within the changelist.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| task_run | [string](#string) |  | Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskruns/{taskrun} |
-| issue | [string](#string) |  | Format: projects/{project}/issues/{issue} |
-| revision | [int64](#int64) |  | The revision uid. optional |
-| changed_resources | [ChangedResources](#bytebase-store-ChangedResources) |  |  |
-| sheet | [string](#string) |  | The sheet that holds the content. Format: projects/{project}/sheets/{sheet} |
-| version | [string](#string) |  |  |
+| task_run | [string](#string) |  | Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun} |
 | type | [ChangelogPayload.Type](#bytebase-store-ChangelogPayload-Type) |  |  |
 | git_commit | [string](#string) |  |  |
-| migration_type | [MigrationType](#bytebase-store-MigrationType) |  |  |
+| dump_version | [int32](#int32) |  | Dump format version for drift detection reliability. Engine-specific version stored when baseline/migration is created. 0 = legacy changelog (pre-versioning). |
 
 
 
@@ -1031,9 +845,6 @@ BoundingBox defines the bounding box for spatial indexes.
 | labels | [ColumnCatalog.LabelsEntry](#bytebase-store-ColumnCatalog-LabelsEntry) | repeated | The user labels for a column. |
 | classification | [string](#string) |  |  |
 | object_schema | [ObjectSchema](#bytebase-store-ObjectSchema) | optional |  |
-| masking_level | [MaskingLevel](#bytebase-store-MaskingLevel) |  | Deprecated. |
-| full_masking_algorithm_id | [string](#string) |  | Deprecated. |
-| partial_masking_algorithm_id | [string](#string) |  | Deprecated. |
 
 
 
@@ -1067,16 +878,13 @@ ColumnMetadata is the metadata for columns.
 | name | [string](#string) |  | The name of the column. |
 | position | [int32](#int32) |  | The position is the position in columns. |
 | default | [string](#string) |  | The default value of the column. |
-| default_null | [bool](#bool) |  | Deprecated. |
-| default_expression | [string](#string) |  | Deprecated. |
 | default_on_null | [bool](#bool) |  | Oracle specific metadata. The default_on_null is the default on null of a column. |
 | on_update | [string](#string) |  | The on_update is the on update action of a column. For MySQL like databases, it&#39;s only supported for TIMESTAMP columns with CURRENT_TIMESTAMP as on update value. |
 | nullable | [bool](#bool) |  | The nullable is the nullable of a column. |
 | type | [string](#string) |  | The type is the type of a column. |
 | character_set | [string](#string) |  | The character_set is the character_set of a column. |
 | collation | [string](#string) |  | The collation is the collation of a column. |
-| comment | [string](#string) |  | The comment is the comment of a column. classification and user_comment is parsed from the comment. |
-| user_comment | [string](#string) |  | The user_comment is the user comment of a table parsed from the comment. |
+| comment | [string](#string) |  | The comment is the comment of a column. |
 | generation | [GenerationMetadata](#bytebase-store-GenerationMetadata) |  | The generation is for generated columns. |
 | is_identity | [bool](#bool) |  |  |
 | identity_generation | [ColumnMetadata.IdentityGeneration](#bytebase-store-ColumnMetadata-IdentityGeneration) |  | The identity_generation is for identity columns, PG only. |
@@ -1167,6 +975,7 @@ DatabaseSchemaMetadata is the schema metadata for databases.
 | linked_databases | [LinkedDatabaseMetadata](#bytebase-store-LinkedDatabaseMetadata) | repeated |  |
 | owner | [string](#string) |  |  |
 | search_path | [string](#string) |  | The search_path is the search path of a PostgreSQL database. |
+| event_triggers | [EventTriggerMetadata](#bytebase-store-EventTriggerMetadata) | repeated | The list of event triggers in a database (PostgreSQL specific). Event triggers are database-level objects, not schema-scoped. |
 
 
 
@@ -1258,6 +1067,46 @@ DimensionalConfig defines dimensional and constraint parameters for spatial inde
 | character_set_client | [string](#string) |  |  |
 | collation_connection | [string](#string) |  |  |
 | comment | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-EventTriggerMetadata"></a>
+
+### EventTriggerMetadata
+EventTriggerMetadata is the metadata for PostgreSQL event triggers.
+Event triggers are database-level objects that fire on DDL events.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | The name of the event trigger. |
+| event | [string](#string) |  | The event type: DDL_COMMAND_START, DDL_COMMAND_END, SQL_DROP, TABLE_REWRITE. |
+| tags | [string](#string) | repeated | The tags filter (e.g., [&#39;CREATE TABLE&#39;, &#39;DROP TABLE&#39;]). |
+| function_schema | [string](#string) |  | The schema of the function to execute. |
+| function_name | [string](#string) |  | The name of the function to execute. |
+| enabled | [bool](#bool) |  | Whether the trigger is enabled. |
+| definition | [string](#string) |  | The full CREATE EVENT TRIGGER definition from pg_get_event_trigger_def(). SDL output should prefer using this field. |
+| comment | [string](#string) |  | The comment on the event trigger. |
+| skip_dump | [bool](#bool) |  | Skip dump flag (for extension-owned triggers). |
+
+
+
+
+
+
+<a name="bytebase-store-ExcludeConstraintMetadata"></a>
+
+### ExcludeConstraintMetadata
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | The name of the EXCLUDE constraint. |
+| expression | [string](#string) |  | The expression is the full EXCLUDE constraint definition including &#34;EXCLUDE&#34; keyword. Example: &#34;EXCLUDE USING gist (room_id WITH =, during WITH &amp;&amp;)&#34; |
 
 
 
@@ -1785,8 +1634,7 @@ TableMetadata is the metadata for tables.
 | index_size | [int64](#int64) |  | The index_size is the estimated index size of a table. |
 | data_free | [int64](#int64) |  | The data_free is the estimated free data size of a table. |
 | create_options | [string](#string) |  | The create_options is the create option of a table. |
-| comment | [string](#string) |  | The comment is the comment of a table. classification and user_comment is parsed from the comment. |
-| user_comment | [string](#string) |  | The user_comment is the user comment of a table parsed from the comment. |
+| comment | [string](#string) |  | The comment is the comment of a table. |
 | foreign_keys | [ForeignKeyMetadata](#bytebase-store-ForeignKeyMetadata) | repeated | The foreign_keys is the list of foreign keys in a table. |
 | partitions | [TablePartitionMetadata](#bytebase-store-TablePartitionMetadata) | repeated | The partitions is the list of partitions in a table. |
 | check_constraints | [CheckConstraintMetadata](#bytebase-store-CheckConstraintMetadata) | repeated | The check_constraints is the list of check constraints in a table. |
@@ -1797,6 +1645,7 @@ TableMetadata is the metadata for tables.
 | rules | [RuleMetadata](#bytebase-store-RuleMetadata) | repeated | The rules is the list of rules in a table (PostgreSQL specific). |
 | sharding_info | [string](#string) |  | https://docs.pingcap.com/tidb/stable/information-schema-tables/ |
 | primary_key_type | [string](#string) |  | https://docs.pingcap.com/tidb/stable/clustered-indexes/#clustered-indexes CLUSTERED or NONCLUSTERED. |
+| exclude_constraints | [ExcludeConstraintMetadata](#bytebase-store-ExcludeConstraintMetadata) | repeated | The exclude_constraints is the list of EXCLUDE constraints in a table (PostgreSQL specific). |
 
 
 
@@ -1819,6 +1668,7 @@ TablePartitionMetadata is the metadata for table partitions.
 | subpartitions | [TablePartitionMetadata](#bytebase-store-TablePartitionMetadata) | repeated | The subpartitions is the list of subpartitions in a table partition. |
 | indexes | [IndexMetadata](#bytebase-store-IndexMetadata) | repeated |  |
 | check_constraints | [CheckConstraintMetadata](#bytebase-store-CheckConstraintMetadata) | repeated |  |
+| exclude_constraints | [ExcludeConstraintMetadata](#bytebase-store-ExcludeConstraintMetadata) | repeated |  |
 
 
 
@@ -2075,7 +1925,7 @@ LIST, HASH (https://www.postgresql.org/docs/current/ddl-partitioning.html)
 | ----- | ---- | ----- | ----------- |
 | member | [string](#string) |  | Member is the principal who belongs to this group.
 
-Format: users/{userUID}. |
+Format: users/{email}. |
 | role | [GroupMember.Role](#bytebase-store-GroupMember-Role) |  |  |
 
 
@@ -2241,10 +2091,10 @@ OIDCIdentityProviderConfig is the structure for OIDC identity provider config.
 | issuer | [string](#string) |  |  |
 | client_id | [string](#string) |  |  |
 | client_secret | [string](#string) |  |  |
+| scopes | [string](#string) | repeated |  |
 | field_mapping | [FieldMapping](#bytebase-store-FieldMapping) |  |  |
 | skip_tls_verify | [bool](#bool) |  |  |
 | auth_style | [OAuth2AuthStyle](#bytebase-store-OAuth2AuthStyle) |  |  |
-| scopes | [string](#string) | repeated |  |
 
 
 
@@ -2345,6 +2195,8 @@ OIDCIdentityProviderConfig is the structure for OIDC identity provider config.
 | obfuscated_ssh_private_key | [string](#string) |  |  |
 | authentication_private_key | [string](#string) |  | PKCS#8 private key in PEM format. If it&#39;s empty string, no private key is required. Used for authentication when connecting to the data source. |
 | obfuscated_authentication_private_key | [string](#string) |  |  |
+| authentication_private_key_passphrase | [string](#string) |  | Passphrase for the encrypted PKCS#8 private key. Only used when the private key is encrypted. |
+| obfuscated_authentication_private_key_passphrase | [string](#string) |  |  |
 | external_secret | [DataSourceExternalSecret](#bytebase-store-DataSourceExternalSecret) |  |  |
 | authentication_type | [DataSource.AuthenticationType](#bytebase-store-DataSource-AuthenticationType) |  |  |
 | azure_credential | [DataSource.AzureCredential](#bytebase-store-DataSource-AzureCredential) |  |  |
@@ -2472,6 +2324,13 @@ OIDCIdentityProviderConfig is the structure for OIDC identity provider config.
 | engine_name | [string](#string) |  | engine name is the name for secret engine. |
 | secret_name | [string](#string) |  | the secret name in the engine to store the password. |
 | password_key_name | [string](#string) |  | the key name for the password. |
+| skip_vault_tls_verification | [bool](#bool) |  | TLS configuration for connecting to Vault server. These fields are separate from the database TLS configuration in DataSource. skip_vault_tls_verification disables TLS certificate verification for Vault connections. Default is false (verification enabled) for security. Only set to true for development or when certificates cannot be properly validated. |
+| vault_ssl_ca | [string](#string) |  | CA certificate for Vault server verification. |
+| obfuscated_vault_ssl_ca | [string](#string) |  |  |
+| vault_ssl_cert | [string](#string) |  | Client certificate for mutual TLS authentication with Vault. |
+| obfuscated_vault_ssl_cert | [string](#string) |  |  |
+| vault_ssl_key | [string](#string) |  | Client private key for mutual TLS authentication with Vault. |
+| obfuscated_vault_ssl_key | [string](#string) |  |  |
 
 
 
@@ -2511,7 +2370,6 @@ Instance is the proto for instances.
 | external_link | [string](#string) |  |  |
 | data_sources | [DataSource](#bytebase-store-DataSource) | repeated |  |
 | sync_interval | [google.protobuf.Duration](#google-protobuf-Duration) |  | The interval between automatic instance synchronizations. |
-| maximum_connections | [int32](#int32) |  | The maximum number of connections. The default is 10 if the value is unset or zero. |
 | sync_databases | [string](#string) | repeated | Enable sync for the following databases. Default empty, means sync all schemas &amp; databases. |
 | mysql_lower_case_table_names | [int32](#int32) |  | The lower_case_table_names config for MySQL instances. It is used to determine whether the table names and database names are case sensitive. |
 | last_sync_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
@@ -2661,6 +2519,7 @@ InstanceRole is the API message for instance role.
 | VAULT_KV_V2 | 1 | ref: https://developer.hashicorp.com/vault/api-docs/secret/kv/kv-v2 |
 | AWS_SECRETS_MANAGER | 2 | ref: https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html |
 | GCP_SECRET_MANAGER | 3 | ref: https://cloud.google.com/secret-manager/docs |
+| AZURE_KEY_VAULT | 4 | ref: https://learn.microsoft.com/en-us/azure/key-vault/secrets/about-secrets |
 
 
 
@@ -2675,37 +2534,6 @@ InstanceRole is the API message for instance role.
 | ADMIN | 1 |  |
 | READ_ONLY | 2 |  |
 
-
- 
-
- 
-
- 
-
-
-
-<a name="store_instance_change_history-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## store/instance_change_history.proto
-
-
-
-<a name="bytebase-store-InstanceChangeHistoryPayload"></a>
-
-### InstanceChangeHistoryPayload
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| changed_resources | [ChangedResources](#bytebase-store-ChangedResources) |  |  |
-
-
-
-
-
- 
 
  
 
@@ -2731,7 +2559,7 @@ GrantRequest contains details for requesting database access permissions.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | role | [string](#string) |  | The role being requested for the user. Format: roles/EXPORTER. |
-| user | [string](#string) |  | The user who will receive the role. Format: users/{userUID}. |
+| user | [string](#string) |  | The user who will receive the role. Format: users/{email}. |
 | condition | [google.type.Expr](#google-type-Expr) |  | Optional conditional expression that limits when the grant applies. |
 | expiration | [google.protobuf.Duration](#google-protobuf-Duration) |  | Duration after which the grant automatically expires. |
 
@@ -2751,6 +2579,7 @@ Issue is the metadata for issues that track database operations and access reque
 | approval | [IssuePayloadApproval](#bytebase-store-IssuePayloadApproval) |  | Approval information for the issue workflow. |
 | grant_request | [GrantRequest](#bytebase-store-GrantRequest) |  | Access grant request details if this is a grant request issue. |
 | labels | [string](#string) | repeated | Labels attached to categorize and filter the issue. |
+| risk_level | [RiskLevel](#bytebase-store-RiskLevel) |  | Risk level for the issue, calculated from statement types. |
 
 
 
@@ -2794,154 +2623,6 @@ Type represents the category of issue.
 
 
 
-<a name="store_task_run-proto"></a>
-<p align="right"><a href="#top">Top</a></p>
-
-## store/task_run.proto
-
-
-
-<a name="bytebase-store-PriorBackupDetail"></a>
-
-### PriorBackupDetail
-PriorBackupDetail contains information about automatic backups created before migration.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| items | [PriorBackupDetail.Item](#bytebase-store-PriorBackupDetail-Item) | repeated | List of backup operations performed. |
-
-
-
-
-
-
-<a name="bytebase-store-PriorBackupDetail-Item"></a>
-
-### PriorBackupDetail.Item
-Item represents a single backup operation for a table.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| source_table | [PriorBackupDetail.Item.Table](#bytebase-store-PriorBackupDetail-Item-Table) |  | The original table that was backed up. |
-| target_table | [PriorBackupDetail.Item.Table](#bytebase-store-PriorBackupDetail-Item-Table) |  | The backup table where data was copied. |
-| start_position | [Position](#bytebase-store-Position) |  | Starting position in SQL for this backup operation. |
-| end_position | [Position](#bytebase-store-Position) |  | Ending position in SQL for this backup operation. |
-
-
-
-
-
-
-<a name="bytebase-store-PriorBackupDetail-Item-Table"></a>
-
-### PriorBackupDetail.Item.Table
-Table identifies a database table.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| database | [string](#string) |  | The database containing the table. Format: instances/{instance}/databases/{database} |
-| schema | [string](#string) |  | Schema name (for databases that support schemas). |
-| table | [string](#string) |  | Table name. |
-
-
-
-
-
-
-<a name="bytebase-store-SchedulerInfo"></a>
-
-### SchedulerInfo
-SchedulerInfo contains information about task scheduling and execution delays.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| report_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | Timestamp when the scheduler reported this information. |
-| waiting_cause | [SchedulerInfo.WaitingCause](#bytebase-store-SchedulerInfo-WaitingCause) |  | Reason why the task run is currently waiting. |
-
-
-
-
-
-
-<a name="bytebase-store-SchedulerInfo-WaitingCause"></a>
-
-### SchedulerInfo.WaitingCause
-WaitingCause indicates why a task run is waiting to execute.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| connection_limit | [bool](#bool) |  | Task is waiting due to database connection limit. |
-| task_uid | [int32](#int32) |  | Task is waiting for another task to complete. |
-| parallel_tasks_limit | [bool](#bool) |  | Task is waiting due to parallel execution limit. |
-
-
-
-
-
-
-<a name="bytebase-store-TaskRun"></a>
-
-### TaskRun
-TaskRun represents an execution attempt of a task.
-
-
-
-
-
-
-<a name="bytebase-store-TaskRunResult"></a>
-
-### TaskRunResult
-TaskRunResult contains the outcome and metadata from a task run execution.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| detail | [string](#string) |  | Detailed execution information or error message. |
-| changelog | [string](#string) |  | Resource name of the changelog entry created by this run. Format: instances/{instance}/databases/{database}/changelogs/{changelog} |
-| version | [string](#string) |  | Schema version after the migration was applied. |
-| start_position | [Position](#bytebase-store-Position) |  | Starting position in the SQL statement where an error occurred. |
-| end_position | [Position](#bytebase-store-Position) |  | Ending position in the SQL statement where an error occurred. |
-| export_archive_uid | [int32](#int32) |  | UID of the export archive generated for export tasks. |
-| prior_backup_detail | [PriorBackupDetail](#bytebase-store-PriorBackupDetail) |  | Backup details that can be used to rollback changes. |
-
-
-
-
-
- 
-
-
-<a name="bytebase-store-TaskRun-Status"></a>
-
-### TaskRun.Status
-Status represents the current execution state of a task run.
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| STATUS_UNSPECIFIED | 0 |  |
-| PENDING | 1 | Task run is queued and waiting to execute. |
-| RUNNING | 2 | Task run is currently executing. |
-| DONE | 3 | Task run completed successfully. |
-| FAILED | 4 | Task run encountered an error and failed. |
-| CANCELED | 5 | Task run was canceled by user or system. |
-| NOT_STARTED | 6 | Task run has not started yet. |
-| SKIPPED | 7 | Task run was skipped and will not execute. |
-
-
- 
-
- 
-
- 
-
-
-
 <a name="store_issue_comment-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -2960,9 +2641,7 @@ Status represents the current execution state of a task run.
 | comment | [string](#string) |  |  |
 | approval | [IssueCommentPayload.Approval](#bytebase-store-IssueCommentPayload-Approval) |  |  |
 | issue_update | [IssueCommentPayload.IssueUpdate](#bytebase-store-IssueCommentPayload-IssueUpdate) |  |  |
-| stage_end | [IssueCommentPayload.StageEnd](#bytebase-store-IssueCommentPayload-StageEnd) |  |  |
-| task_update | [IssueCommentPayload.TaskUpdate](#bytebase-store-IssueCommentPayload-TaskUpdate) |  |  |
-| task_prior_backup | [IssueCommentPayload.TaskPriorBackup](#bytebase-store-IssueCommentPayload-TaskPriorBackup) |  |  |
+| plan_spec_update | [IssueCommentPayload.PlanSpecUpdate](#bytebase-store-IssueCommentPayload-PlanSpecUpdate) |  |  |
 
 
 
@@ -3006,68 +2685,68 @@ Status represents the current execution state of a task run.
 
 
 
-<a name="bytebase-store-IssueCommentPayload-StageEnd"></a>
+<a name="bytebase-store-IssueCommentPayload-PlanSpecUpdate"></a>
 
-### IssueCommentPayload.StageEnd
+### IssueCommentPayload.PlanSpecUpdate
+Plan spec update event (tracks sheet changes to plan specs)
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| spec | [string](#string) |  | The spec that was updated Format: projects/{project}/plans/{plan}/specs/{spec} |
+| from_sheet_sha256 | [string](#string) | optional | The SHA256 hash of the previous sheet content (hex-encoded). |
+| to_sheet_sha256 | [string](#string) | optional | The SHA256 hash of the new sheet content (hex-encoded). |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="store_oauth2-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## store/oauth2.proto
+
+
+
+<a name="bytebase-store-OAuth2AuthorizationCodeConfig"></a>
+
+### OAuth2AuthorizationCodeConfig
 
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| stage | [string](#string) |  |  |
+| redirect_uri | [string](#string) |  |  |
+| code_challenge | [string](#string) |  |  |
+| code_challenge_method | [string](#string) |  |  |
 
 
 
 
 
 
-<a name="bytebase-store-IssueCommentPayload-TaskPriorBackup"></a>
+<a name="bytebase-store-OAuth2ClientConfig"></a>
 
-### IssueCommentPayload.TaskPriorBackup
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| task | [string](#string) |  |  |
-| tables | [IssueCommentPayload.TaskPriorBackup.Table](#bytebase-store-IssueCommentPayload-TaskPriorBackup-Table) | repeated |  |
-| original_line | [int32](#int32) | optional |  |
-| database | [string](#string) |  |  |
-| error | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="bytebase-store-IssueCommentPayload-TaskPriorBackup-Table"></a>
-
-### IssueCommentPayload.TaskPriorBackup.Table
+### OAuth2ClientConfig
 
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| schema | [string](#string) |  |  |
-| table | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="bytebase-store-IssueCommentPayload-TaskUpdate"></a>
-
-### IssueCommentPayload.TaskUpdate
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| tasks | [string](#string) | repeated |  |
-| from_sheet | [string](#string) | optional | Format: projects/{project}/sheets/{sheet} |
-| to_sheet | [string](#string) | optional | Format: projects/{project}/sheets/{sheet} |
-| to_status | [TaskRun.Status](#bytebase-store-TaskRun-Status) | optional |  |
+| client_name | [string](#string) |  |  |
+| redirect_uris | [string](#string) | repeated |  |
+| grant_types | [string](#string) | repeated |  |
+| token_endpoint_auth_method | [string](#string) |  |  |
 
 
 
@@ -3099,7 +2778,7 @@ Status represents the current execution state of a task run.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | specs | [PlanConfig.Spec](#bytebase-store-PlanConfig-Spec) | repeated |  |
-| deployment | [PlanConfig.Deployment](#bytebase-store-PlanConfig-Deployment) |  |  |
+| has_rollout | [bool](#bool) |  | Whether the plan has started the rollout. |
 
 
 
@@ -3115,12 +2794,11 @@ Status represents the current execution state of a task run.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | targets | [string](#string) | repeated | The list of targets. Multi-database format: [instances/{instance-id}/databases/{database-name}]. Single database group format: [projects/{project}/databaseGroups/{databaseGroup}]. |
-| sheet | [string](#string) |  | The resource name of the sheet. Format: projects/{project}/sheets/{sheet} |
+| sheet_sha256 | [string](#string) |  | The SHA256 hash of the sheet content (hex-encoded). |
 | release | [string](#string) |  | The resource name of the release. Format: projects/{project}/releases/{release} |
-| type | [PlanConfig.ChangeDatabaseConfig.Type](#bytebase-store-PlanConfig-ChangeDatabaseConfig-Type) |  |  |
-| migrate_type | [MigrationType](#bytebase-store-MigrationType) |  | The migration type for imperative schema migration. It is only set when type is MIGRATE. |
 | ghost_flags | [PlanConfig.ChangeDatabaseConfig.GhostFlagsEntry](#bytebase-store-PlanConfig-ChangeDatabaseConfig-GhostFlagsEntry) | repeated |  |
 | enable_prior_backup | [bool](#bool) |  | If set, a backup of the modified data will be created automatically before any changes are applied. |
+| enable_ghost | [bool](#bool) |  | Whether to use gh-ost for online schema migration. |
 
 
 
@@ -3165,38 +2843,6 @@ Status represents the current execution state of a task run.
 
 
 
-<a name="bytebase-store-PlanConfig-Deployment"></a>
-
-### PlanConfig.Deployment
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| environments | [string](#string) | repeated | The environments deploy order. |
-| database_group_mappings | [PlanConfig.Deployment.DatabaseGroupMapping](#bytebase-store-PlanConfig-Deployment-DatabaseGroupMapping) | repeated | The database group mapping. |
-
-
-
-
-
-
-<a name="bytebase-store-PlanConfig-Deployment-DatabaseGroupMapping"></a>
-
-### PlanConfig.Deployment.DatabaseGroupMapping
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| database_group | [string](#string) |  | Format: projects/{project}/databaseGroups/{databaseGroup}. |
-| databases | [string](#string) | repeated | Format: instances/{instance-id}/databases/{database-name}. |
-
-
-
-
-
-
 <a name="bytebase-store-PlanConfig-ExportDataConfig"></a>
 
 ### PlanConfig.ExportDataConfig
@@ -3206,7 +2852,7 @@ Status represents the current execution state of a task run.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | targets | [string](#string) | repeated | The list of targets. Multi-database format: [instances/{instance-id}/databases/{database-name}]. Single database group format: [projects/{project}/databaseGroups/{databaseGroup}]. |
-| sheet | [string](#string) |  | The resource name of the sheet. Format: projects/{project}/sheets/{sheet} |
+| sheet_sha256 | [string](#string) |  | The SHA256 hash of the sheet content (hex-encoded). |
 | format | [ExportFormat](#bytebase-store-ExportFormat) |  | The format of the exported file. |
 | password | [string](#string) | optional | The zip password provided by users. Leave it empty if there is no need to encrypt the zip file. |
 
@@ -3234,19 +2880,6 @@ Status represents the current execution state of a task run.
 
  
 
-
-<a name="bytebase-store-PlanConfig-ChangeDatabaseConfig-Type"></a>
-
-### PlanConfig.ChangeDatabaseConfig.Type
-Type is the database change type.
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| TYPE_UNSPECIFIED | 0 |  |
-| MIGRATE | 2 | Used for imperative schema migration including CREATE DATABASE. |
-| SDL | 3 | Used for state-based declarative schema migration including CREATE DATABASE. |
-
-
  
 
  
@@ -3262,37 +2895,63 @@ Type is the database change type.
 
 
 
-<a name="bytebase-store-PlanCheckRunConfig"></a>
+<a name="bytebase-store-ChangedResourceDatabase"></a>
 
-### PlanCheckRunConfig
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| sheet_uid | [int32](#int32) |  |  |
-| change_database_type | [PlanCheckRunConfig.ChangeDatabaseType](#bytebase-store-PlanCheckRunConfig-ChangeDatabaseType) |  |  |
-| instance_id | [string](#string) |  |  |
-| database_name | [string](#string) |  |  |
-| database_group_uid | [int64](#int64) | optional | **Deprecated.**  |
-| ghost_flags | [PlanCheckRunConfig.GhostFlagsEntry](#bytebase-store-PlanCheckRunConfig-GhostFlagsEntry) | repeated |  |
-| enable_prior_backup | [bool](#bool) |  | If set, a backup of the modified data will be created automatically before any changes are applied. |
-
-
-
-
-
-
-<a name="bytebase-store-PlanCheckRunConfig-GhostFlagsEntry"></a>
-
-### PlanCheckRunConfig.GhostFlagsEntry
+### ChangedResourceDatabase
 
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| key | [string](#string) |  |  |
-| value | [string](#string) |  |  |
+| name | [string](#string) |  |  |
+| schemas | [ChangedResourceSchema](#bytebase-store-ChangedResourceSchema) | repeated |  |
+
+
+
+
+
+
+<a name="bytebase-store-ChangedResourceSchema"></a>
+
+### ChangedResourceSchema
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  |  |
+| tables | [ChangedResourceTable](#bytebase-store-ChangedResourceTable) | repeated |  |
+
+
+
+
+
+
+<a name="bytebase-store-ChangedResourceTable"></a>
+
+### ChangedResourceTable
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  |  |
+| table_rows | [int64](#int64) |  | The estimated row count of the table. |
+
+
+
+
+
+
+<a name="bytebase-store-ChangedResources"></a>
+
+### ChangedResources
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| databases | [ChangedResourceDatabase](#bytebase-store-ChangedResourceDatabase) | repeated |  |
 
 
 
@@ -3327,6 +2986,8 @@ Type is the database change type.
 | title | [string](#string) |  |  |
 | content | [string](#string) |  |  |
 | code | [int32](#int32) |  |  |
+| target | [string](#string) |  | Target identification for consolidated results Format: instances/{instance}/databases/{database} |
+| type | [PlanCheckType](#bytebase-store-PlanCheckType) |  |  |
 | sql_summary_report | [PlanCheckRunResult.Result.SqlSummaryReport](#bytebase-store-PlanCheckRunResult-Result-SqlSummaryReport) |  |  |
 | sql_review_report | [PlanCheckRunResult.Result.SqlReviewReport](#bytebase-store-PlanCheckRunResult-Result-SqlReviewReport) |  |  |
 
@@ -3370,19 +3031,17 @@ Type is the database change type.
  
 
 
-<a name="bytebase-store-PlanCheckRunConfig-ChangeDatabaseType"></a>
+<a name="bytebase-store-PlanCheckType"></a>
 
-### PlanCheckRunConfig.ChangeDatabaseType
-ChangeDatabaseType extends MigrationType with additional execution contexts.
-Note: DDL, DML, and DDL_GHOST values align with MigrationType enum values.
+### PlanCheckType
+
 
 | Name | Number | Description |
 | ---- | ------ | ----------- |
-| CHANGE_DATABASE_TYPE_UNSPECIFIED | 0 |  |
-| DDL | 1 |  |
-| DML | 2 |  |
-| SDL | 3 |  |
-| DDL_GHOST | 4 |  |
+| PLAN_CHECK_TYPE_UNSPECIFIED | 0 |  |
+| PLAN_CHECK_TYPE_STATEMENT_ADVISE | 1 |  |
+| PLAN_CHECK_TYPE_STATEMENT_SUMMARY_REPORT | 2 |  |
+| PLAN_CHECK_TYPE_GHOST_SYNC | 3 |  |
 
 
  
@@ -3409,7 +3068,7 @@ Note: DDL, DML, and DDL_GHOST values align with MigrationType enum values.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | role | [string](#string) |  | The role that is assigned to the members. Format: roles/{role} |
-| members | [string](#string) | repeated | Specifies the principals requesting access for a Bytebase resource. For users, the member should be: users/{userUID} For groups, the member should be: groups/{email} |
+| members | [string](#string) | repeated | Specifies the principals requesting access for a Bytebase resource. For users, the member should be: users/{email} For groups, the member should be: groups/{email} |
 | condition | [google.type.Expr](#google-type-Expr) |  | The condition that is associated with this binding. If the condition evaluates to true, then this binding applies to the current request. If the condition evaluates to false, then this binding does not apply to the current request. However, a different role binding might grant the same role to one or more of the principals in this binding. |
 
 
@@ -3465,34 +3124,37 @@ EnvironmentTierPolicy is the tier of an environment.
 
 
 
-<a name="bytebase-store-MaskingExceptionPolicy"></a>
+<a name="bytebase-store-MaskingExemptionPolicy"></a>
 
-### MaskingExceptionPolicy
-MaskingExceptionPolicy is the allowlist of users who can access sensitive data.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| masking_exceptions | [MaskingExceptionPolicy.MaskingException](#bytebase-store-MaskingExceptionPolicy-MaskingException) | repeated |  |
-
-
-
-
-
-
-<a name="bytebase-store-MaskingExceptionPolicy-MaskingException"></a>
-
-### MaskingExceptionPolicy.MaskingException
-
+### MaskingExemptionPolicy
+MaskingExemptionPolicy is the allowlist of users who can access sensitive data.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| action | [MaskingExceptionPolicy.MaskingException.Action](#bytebase-store-MaskingExceptionPolicy-MaskingException-Action) |  | action is the action by which the user can access sensitive data. |
-| member | [string](#string) |  | Member is the principal who binds to this exception policy instance.
+| exemptions | [MaskingExemptionPolicy.Exemption](#bytebase-store-MaskingExemptionPolicy-Exemption) | repeated |  |
 
-Format: users/{userUID} or groups/{group email} |
-| condition | [google.type.Expr](#google-type-Expr) |  | The condition that is associated with this exception policy instance. |
+
+
+
+
+
+<a name="bytebase-store-MaskingExemptionPolicy-Exemption"></a>
+
+### MaskingExemptionPolicy.Exemption
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| members | [string](#string) | repeated | Members who bind to this exemption.
+
+Format: users/{email} or groups/{group email} |
+| condition | [google.type.Expr](#google-type-Expr) |  | The condition that is associated with this exception policy instance. The syntax and semantics of CEL are documented at https://github.com/google/cel-spec If the condition is empty, means the user can access all databases without expiration.
+
+Support variables: resource.instance_id: the instance resource id. Only support &#34;==&#34; operation. resource.database_name: the database name. Only support &#34;==&#34; operation. resource.schema_name: the schema name. Only support &#34;==&#34; operation. resource.table_name: the table name. Only support &#34;==&#34; operation. resource.column_name: the column name. Only support &#34;==&#34; operation. request.time: the expiration. Only support &#34;&lt;&#34; operation in `request.time &lt; timestamp(&#34;{ISO datetime string format}&#34;)` All variables should join with &#34;&amp;&amp;&#34; condition.
+
+For example: resource.instance_id == &#34;local&#34; &amp;&amp; resource.database_name == &#34;employee&#34; &amp;&amp; request.time &lt; timestamp(&#34;2025-04-30T11:10:39.000Z&#34;) resource.instance_id == &#34;local&#34; &amp;&amp; resource.database_name == &#34;employee&#34; |
 
 
 
@@ -3570,57 +3232,6 @@ QueryDataPolicy is the policy configuration for querying data.
 | ----- | ---- | ----- | ----------- |
 | automatic | [bool](#bool) |  |  |
 | roles | [string](#string) | repeated |  |
-| checkers | [RolloutPolicy.Checkers](#bytebase-store-RolloutPolicy-Checkers) |  | Checkers that must pass before rollout execution. These checks are performed in UI workflows only. |
-
-
-
-
-
-
-<a name="bytebase-store-RolloutPolicy-Checkers"></a>
-
-### RolloutPolicy.Checkers
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| required_issue_approval | [bool](#bool) |  | Whether issue approval is required before proceeding with rollout. |
-| required_status_checks | [RolloutPolicy.Checkers.RequiredStatusChecks](#bytebase-store-RolloutPolicy-Checkers-RequiredStatusChecks) |  | Status checks that must pass before rollout can be executed. |
-
-
-
-
-
-
-<a name="bytebase-store-RolloutPolicy-Checkers-RequiredStatusChecks"></a>
-
-### RolloutPolicy.Checkers.RequiredStatusChecks
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| plan_check_enforcement | [RolloutPolicy.Checkers.PlanCheckEnforcement](#bytebase-store-RolloutPolicy-Checkers-PlanCheckEnforcement) |  | Enforcement level for plan check results during rollout validation. |
-
-
-
-
-
-
-<a name="bytebase-store-SQLReviewRule"></a>
-
-### SQLReviewRule
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| type | [string](#string) |  |  |
-| level | [SQLReviewRuleLevel](#bytebase-store-SQLReviewRuleLevel) |  |  |
-| payload | [string](#string) |  |  |
-| engine | [Engine](#bytebase-store-Engine) |  |  |
-| comment | [string](#string) |  |  |
 
 
 
@@ -3686,19 +3297,6 @@ QueryDataPolicy is the policy configuration for querying data.
 
 
 
-<a name="bytebase-store-MaskingExceptionPolicy-MaskingException-Action"></a>
-
-### MaskingExceptionPolicy.MaskingException.Action
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| ACTION_UNSPECIFIED | 0 |  |
-| QUERY | 1 |  |
-| EXPORT | 2 |  |
-
-
-
 <a name="bytebase-store-Policy-Resource"></a>
 
 ### Policy.Resource
@@ -3722,38 +3320,12 @@ QueryDataPolicy is the policy configuration for querying data.
 | ---- | ------ | ----------- |
 | TYPE_UNSPECIFIED | 0 |  |
 | ROLLOUT | 1 |  |
-| MASKING_EXCEPTION | 2 |  |
-| QUERY_DATA | 5 |  |
-| MASKING_RULE | 6 |  |
-| IAM | 8 |  |
-| TAG | 9 |  |
-| DATA_SOURCE_QUERY | 10 |  |
-
-
-
-<a name="bytebase-store-RolloutPolicy-Checkers-PlanCheckEnforcement"></a>
-
-### RolloutPolicy.Checkers.PlanCheckEnforcement
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| PLAN_CHECK_ENFORCEMENT_UNSPECIFIED | 0 | Allow rollout regardless of plan check results (no enforcement). |
-| ERROR_ONLY | 1 | Block rollout only when plan check finds errors. |
-| STRICT | 2 | Block rollout when plan check finds errors or warnings. |
-
-
-
-<a name="bytebase-store-SQLReviewRuleLevel"></a>
-
-### SQLReviewRuleLevel
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| LEVEL_UNSPECIFIED | 0 |  |
-| ERROR | 1 |  |
-| WARNING | 2 |  |
+| MASKING_EXEMPTION | 2 |  |
+| QUERY_DATA | 3 |  |
+| MASKING_RULE | 4 |  |
+| IAM | 5 |  |
+| TAG | 6 |  |
+| DATA_SOURCE_QUERY | 7 |  |
 
 
  
@@ -3798,8 +3370,6 @@ Project contains settings and configuration for a Bytebase project.
 | ----- | ---- | ----- | ----------- |
 | issue_labels | [Label](#bytebase-store-Label) | repeated | Available labels that can be applied to issues in this project. |
 | force_issue_labels | [bool](#bool) |  | Force issue labels to be used when creating an issue. |
-| allow_modify_statement | [bool](#bool) |  | Allow modifying statement after issue is created. |
-| auto_resolve_issue | [bool](#bool) |  | Enable auto resolve issue. |
 | enforce_issue_title | [bool](#bool) |  | Enforce issue title created by user instead of generated by Bytebase. |
 | auto_enable_backup | [bool](#bool) |  | Whether to automatically enable backup. |
 | skip_backup_errors | [bool](#bool) |  | Whether to skip backup errors and continue the data migration. |
@@ -3810,6 +3380,8 @@ Project contains settings and configuration for a Bytebase project.
 | parallel_tasks_per_rollout | [int32](#int32) |  | The maximum number of parallel tasks to run during the rollout. |
 | labels | [Project.LabelsEntry](#bytebase-store-Project-LabelsEntry) | repeated | Labels are key-value pairs that can be attached to the project. For example, { &#34;environment&#34;: &#34;production&#34;, &#34;team&#34;: &#34;backend&#34; } |
 | enforce_sql_review | [bool](#bool) |  | Whether to enforce SQL review checks to pass before issue creation. If enabled, issues cannot be created when SQL review finds errors. |
+| require_issue_approval | [bool](#bool) |  | Whether issue approval is required before proceeding with rollout. |
+| require_plan_check_no_error | [bool](#bool) |  | Whether to block rollout when plan check finds errors. |
 
 
 
@@ -3881,7 +3453,7 @@ Activity types for webhook notifications.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| type | [ProjectWebhook.Type](#bytebase-store-ProjectWebhook-Type) |  | Webhook type. |
+| type | [WebhookType](#bytebase-store-WebhookType) |  | Webhook type. |
 | title | [string](#string) |  | Webhook title. |
 | url | [string](#string) |  | Webhook URL. |
 | activities | [Activity.Type](#bytebase-store-Activity-Type) | repeated | List of activities that trigger this webhook. |
@@ -3902,37 +3474,11 @@ Activity type enumeration.
 | Name | Number | Description |
 | ---- | ------ | ----------- |
 | TYPE_UNSPECIFIED | 0 | Unspecified type. |
-| NOTIFY_ISSUE_APPROVED | 23 | Notifications via webhooks.
-
-NOTIFY_ISSUE_APPROVED represents the issue approved notification. |
-| NOTIFY_PIPELINE_ROLLOUT | 24 | NOTIFY_PIPELINE_ROLLOUT represents the pipeline rollout notification. |
-| ISSUE_CREATE | 1 | Issue related activity types.
-
-ISSUE_CREATE represents creating an issue. |
-| ISSUE_COMMENT_CREATE | 2 | ISSUE_COMMENT_CREATE represents commenting on an issue. |
-| ISSUE_FIELD_UPDATE | 3 | ISSUE_FIELD_UPDATE represents updating the issue field, likes title, description, etc. |
-| ISSUE_STATUS_UPDATE | 4 | ISSUE_STATUS_UPDATE represents the issue status change, including OPEN, CLOSE, CANCEL for now. |
-| ISSUE_APPROVAL_NOTIFY | 21 | ISSUE_APPROVAL_NOTIFY is the type for notifying issue approval. |
-| ISSUE_PIPELINE_STAGE_STATUS_UPDATE | 5 | ISSUE_PIPELINE_STAGE_STATUS_UPDATE represents the pipeline stage status change, including BEGIN, END for now. |
-| ISSUE_PIPELINE_TASK_RUN_STATUS_UPDATE | 22 | ISSUE_PIPELINE_TASK_RUN_STATUS_UPDATE represents the pipeline task run status change, including PENDING, RUNNING, DONE, FAILED, CANCELED. |
-
-
-
-<a name="bytebase-store-ProjectWebhook-Type"></a>
-
-### ProjectWebhook.Type
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| TYPE_UNSPECIFIED | 0 | Unspecified type. |
-| SLACK | 1 | Slack integration. |
-| DISCORD | 2 | Discord integration. |
-| TEAMS | 3 | Microsoft Teams integration. |
-| DINGTALK | 4 | DingTalk integration. |
-| FEISHU | 5 | Feishu integration. |
-| WECOM | 6 | WeCom (WeChat Work) integration. |
-| LARK | 8 | Lark integration. |
+| ISSUE_CREATED | 10 | ISSUE_CREATED represents a new issue creation event. |
+| ISSUE_APPROVAL_REQUESTED | 11 | ISSUE_APPROVAL_REQUESTED represents an approval request event. |
+| ISSUE_SENT_BACK | 12 | ISSUE_SENT_BACK represents an issue being sent back by an approver. |
+| PIPELINE_FAILED | 13 | PIPELINE_FAILED represents a pipeline failure event. |
+| PIPELINE_COMPLETED | 14 | PIPELINE_COMPLETED represents a pipeline completion event. |
 
 
  
@@ -3993,6 +3539,7 @@ ISSUE_CREATE represents creating an issue. |
 | title | [string](#string) |  |  |
 | files | [ReleasePayload.File](#bytebase-store-ReleasePayload-File) | repeated |  |
 | vcs_source | [ReleasePayload.VCSSource](#bytebase-store-ReleasePayload-VCSSource) |  |  |
+| type | [SchemaChangeType](#bytebase-store-SchemaChangeType) |  |  |
 
 
 
@@ -4007,13 +3554,10 @@ ISSUE_CREATE represents creating an issue. |
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| id | [string](#string) |  | The unique identifier for the file. |
 | path | [string](#string) |  | The path of the file, e.g., `2.2/V0001_create_table.sql`. |
-| sheet | [string](#string) |  | The sheet that holds the content. Format: projects/{project}/sheets/{sheet} |
-| sheet_sha256 | [string](#string) |  | The SHA256 hash value of the sheet. |
-| type | [SchemaChangeType](#bytebase-store-SchemaChangeType) |  |  |
+| sheet_sha256 | [string](#string) |  | The SHA256 hash of the sheet content (hex-encoded). |
 | version | [string](#string) |  |  |
-| migration_type | [MigrationType](#bytebase-store-MigrationType) |  |  |
+| enable_ghost | [bool](#bool) |  | Whether to use gh-ost for online schema migration. |
 
 
 
@@ -4066,7 +3610,255 @@ ISSUE_CREATE represents creating an issue. |
 
 
 
+
+<a name="bytebase-store-SQLReviewRule"></a>
+
+### SQLReviewRule
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| type | [SQLReviewRule.Type](#bytebase-store-SQLReviewRule-Type) |  |  |
+| level | [SQLReviewRule.Level](#bytebase-store-SQLReviewRule-Level) |  |  |
+| naming_payload | [SQLReviewRule.NamingRulePayload](#bytebase-store-SQLReviewRule-NamingRulePayload) |  |  |
+| number_payload | [SQLReviewRule.NumberRulePayload](#bytebase-store-SQLReviewRule-NumberRulePayload) |  |  |
+| string_array_payload | [SQLReviewRule.StringArrayRulePayload](#bytebase-store-SQLReviewRule-StringArrayRulePayload) |  |  |
+| comment_convention_payload | [SQLReviewRule.CommentConventionRulePayload](#bytebase-store-SQLReviewRule-CommentConventionRulePayload) |  |  |
+| string_payload | [SQLReviewRule.StringRulePayload](#bytebase-store-SQLReviewRule-StringRulePayload) |  |  |
+| naming_case_payload | [SQLReviewRule.NamingCaseRulePayload](#bytebase-store-SQLReviewRule-NamingCaseRulePayload) |  |  |
+| engine | [Engine](#bytebase-store-Engine) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-SQLReviewRule-CommentConventionRulePayload"></a>
+
+### SQLReviewRule.CommentConventionRulePayload
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| required | [bool](#bool) |  |  |
+| max_length | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-SQLReviewRule-NamingCaseRulePayload"></a>
+
+### SQLReviewRule.NamingCaseRulePayload
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| upper | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-SQLReviewRule-NamingRulePayload"></a>
+
+### SQLReviewRule.NamingRulePayload
+Payload message types for SQL review rules
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| max_length | [int32](#int32) |  |  |
+| format | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-SQLReviewRule-NumberRulePayload"></a>
+
+### SQLReviewRule.NumberRulePayload
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| number | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-SQLReviewRule-StringArrayRulePayload"></a>
+
+### SQLReviewRule.StringArrayRulePayload
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| list | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="bytebase-store-SQLReviewRule-StringRulePayload"></a>
+
+### SQLReviewRule.StringRulePayload
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| value | [string](#string) |  |  |
+
+
+
+
+
  
+
+
+<a name="bytebase-store-SQLReviewRule-Level"></a>
+
+### SQLReviewRule.Level
+The severity level for SQL review rules.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| LEVEL_UNSPECIFIED | 0 | Unspecified level. |
+| ERROR | 1 | Rule violation is an error. |
+| WARNING | 2 | Rule violation is a warning. |
+
+
+
+<a name="bytebase-store-SQLReviewRule-Type"></a>
+
+### SQLReviewRule.Type
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| TYPE_UNSPECIFIED | 0 |  |
+| ENGINE_MYSQL_USE_INNODB | 1 |  |
+| NAMING_FULLY_QUALIFIED | 2 |  |
+| NAMING_TABLE | 3 |  |
+| NAMING_COLUMN | 4 |  |
+| NAMING_INDEX_PK | 5 |  |
+| NAMING_INDEX_UK | 6 |  |
+| NAMING_INDEX_FK | 7 |  |
+| NAMING_INDEX_IDX | 8 |  |
+| NAMING_COLUMN_AUTO_INCREMENT | 9 |  |
+| NAMING_TABLE_NO_KEYWORD | 10 |  |
+| NAMING_IDENTIFIER_NO_KEYWORD | 11 |  |
+| NAMING_IDENTIFIER_CASE | 12 |  |
+| STATEMENT_SELECT_NO_SELECT_ALL | 13 |  |
+| STATEMENT_WHERE_REQUIRE_SELECT | 14 |  |
+| STATEMENT_WHERE_REQUIRE_UPDATE_DELETE | 15 |  |
+| STATEMENT_WHERE_NO_LEADING_WILDCARD_LIKE | 16 |  |
+| STATEMENT_DISALLOW_ON_DEL_CASCADE | 17 |  |
+| STATEMENT_DISALLOW_RM_TBL_CASCADE | 18 |  |
+| STATEMENT_DISALLOW_COMMIT | 19 |  |
+| STATEMENT_DISALLOW_LIMIT | 20 |  |
+| STATEMENT_DISALLOW_ORDER_BY | 21 |  |
+| STATEMENT_MERGE_ALTER_TABLE | 22 |  |
+| STATEMENT_INSERT_ROW_LIMIT | 23 |  |
+| STATEMENT_INSERT_MUST_SPECIFY_COLUMN | 24 |  |
+| STATEMENT_INSERT_DISALLOW_ORDER_BY_RAND | 25 |  |
+| STATEMENT_AFFECTED_ROW_LIMIT | 26 |  |
+| STATEMENT_DML_DRY_RUN | 27 |  |
+| STATEMENT_DISALLOW_ADD_COLUMN_WITH_DEFAULT | 28 |  |
+| STATEMENT_ADD_CHECK_NOT_VALID | 29 |  |
+| STATEMENT_ADD_FOREIGN_KEY_NOT_VALID | 30 |  |
+| STATEMENT_DISALLOW_ADD_NOT_NULL | 31 |  |
+| STATEMENT_SELECT_FULL_TABLE_SCAN | 32 |  |
+| STATEMENT_CREATE_SPECIFY_SCHEMA | 33 |  |
+| STATEMENT_CHECK_SET_ROLE_VARIABLE | 34 |  |
+| STATEMENT_DISALLOW_USING_FILESORT | 35 |  |
+| STATEMENT_DISALLOW_USING_TEMPORARY | 36 |  |
+| STATEMENT_WHERE_NO_EQUAL_NULL | 37 |  |
+| STATEMENT_WHERE_DISALLOW_FUNCTIONS_AND_CALCULATIONS | 38 |  |
+| STATEMENT_QUERY_MINIMUM_PLAN_LEVEL | 39 |  |
+| STATEMENT_WHERE_MAXIMUM_LOGICAL_OPERATOR_COUNT | 40 |  |
+| STATEMENT_MAXIMUM_LIMIT_VALUE | 41 |  |
+| STATEMENT_MAXIMUM_JOIN_TABLE_COUNT | 42 |  |
+| STATEMENT_MAXIMUM_STATEMENTS_IN_TRANSACTION | 43 |  |
+| STATEMENT_JOIN_STRICT_COLUMN_ATTRS | 44 |  |
+| STATEMENT_NON_TRANSACTIONAL | 45 |  |
+| STATEMENT_ADD_COLUMN_WITHOUT_POSITION | 46 |  |
+| STATEMENT_DISALLOW_OFFLINE_DDL | 47 |  |
+| STATEMENT_DISALLOW_CROSS_DB_QUERIES | 48 |  |
+| STATEMENT_MAX_EXECUTION_TIME | 49 |  |
+| STATEMENT_REQUIRE_ALGORITHM_OPTION | 50 |  |
+| STATEMENT_REQUIRE_LOCK_OPTION | 51 |  |
+| STATEMENT_OBJECT_OWNER_CHECK | 52 |  |
+| TABLE_REQUIRE_PK | 53 |  |
+| TABLE_NO_FOREIGN_KEY | 54 |  |
+| TABLE_DROP_NAMING_CONVENTION | 55 |  |
+| TABLE_COMMENT | 56 |  |
+| TABLE_DISALLOW_PARTITION | 57 |  |
+| TABLE_DISALLOW_TRIGGER | 58 |  |
+| TABLE_NO_DUPLICATE_INDEX | 59 |  |
+| TABLE_TEXT_FIELDS_TOTAL_LENGTH | 60 |  |
+| TABLE_DISALLOW_SET_CHARSET | 61 |  |
+| TABLE_DISALLOW_DDL | 62 |  |
+| TABLE_DISALLOW_DML | 63 |  |
+| TABLE_LIMIT_SIZE | 64 |  |
+| TABLE_REQUIRE_CHARSET | 65 |  |
+| TABLE_REQUIRE_COLLATION | 66 |  |
+| COLUMN_REQUIRED | 67 |  |
+| COLUMN_NO_NULL | 68 |  |
+| COLUMN_DISALLOW_CHANGE_TYPE | 69 |  |
+| COLUMN_SET_DEFAULT_FOR_NOT_NULL | 70 |  |
+| COLUMN_DISALLOW_CHANGE | 71 |  |
+| COLUMN_DISALLOW_CHANGING_ORDER | 72 |  |
+| COLUMN_DISALLOW_DROP | 73 |  |
+| COLUMN_DISALLOW_DROP_IN_INDEX | 74 |  |
+| COLUMN_COMMENT | 75 |  |
+| COLUMN_AUTO_INCREMENT_MUST_INTEGER | 76 |  |
+| COLUMN_TYPE_DISALLOW_LIST | 77 |  |
+| COLUMN_DISALLOW_SET_CHARSET | 78 |  |
+| COLUMN_MAXIMUM_CHARACTER_LENGTH | 79 |  |
+| COLUMN_MAXIMUM_VARCHAR_LENGTH | 80 |  |
+| COLUMN_AUTO_INCREMENT_INITIAL_VALUE | 81 |  |
+| COLUMN_AUTO_INCREMENT_MUST_UNSIGNED | 82 |  |
+| COLUMN_CURRENT_TIME_COUNT_LIMIT | 83 |  |
+| COLUMN_REQUIRE_DEFAULT | 84 |  |
+| COLUMN_DEFAULT_DISALLOW_VOLATILE | 85 |  |
+| COLUMN_ADD_NOT_NULL_REQUIRE_DEFAULT | 86 |  |
+| COLUMN_REQUIRE_CHARSET | 87 |  |
+| COLUMN_REQUIRE_COLLATION | 88 |  |
+| SCHEMA_BACKWARD_COMPATIBILITY | 89 |  |
+| DATABASE_DROP_EMPTY_DATABASE | 90 |  |
+| INDEX_NO_DUPLICATE_COLUMN | 91 |  |
+| INDEX_KEY_NUMBER_LIMIT | 92 |  |
+| INDEX_PK_TYPE_LIMIT | 93 |  |
+| INDEX_TYPE_NO_BLOB | 94 |  |
+| INDEX_TOTAL_NUMBER_LIMIT | 95 |  |
+| INDEX_PRIMARY_KEY_TYPE_ALLOWLIST | 96 |  |
+| INDEX_CREATE_CONCURRENTLY | 97 |  |
+| INDEX_TYPE_ALLOW_LIST | 98 |  |
+| INDEX_NOT_REDUNDANT | 99 |  |
+| SYSTEM_CHARSET_ALLOWLIST | 100 |  |
+| SYSTEM_COLLATION_ALLOWLIST | 101 |  |
+| SYSTEM_COMMENT_LENGTH | 102 |  |
+| SYSTEM_PROCEDURE_DISALLOW_CREATE | 103 |  |
+| SYSTEM_EVENT_DISALLOW_CREATE | 104 |  |
+| SYSTEM_VIEW_DISALLOW_CREATE | 105 |  |
+| SYSTEM_FUNCTION_DISALLOW_CREATE | 106 |  |
+| SYSTEM_FUNCTION_DISALLOWED_LIST | 107 |  |
+| ADVICE_ONLINE_MIGRATION | 108 |  |
+| BUILTIN_PRIOR_BACKUP_CHECK | 109 |  |
+
 
  
 
@@ -4093,9 +3885,8 @@ ISSUE_CREATE represents creating an issue. |
 | ----- | ---- | ----- | ----------- |
 | release | [string](#string) |  | Format: projects/{project}/releases/{release} Can be empty. |
 | file | [string](#string) |  | Format: projects/{project}/releases/{release}/files/{id} Can be empty. |
-| sheet | [string](#string) |  | The sheet that holds the content. Format: projects/{project}/sheets/{sheet} |
-| sheet_sha256 | [string](#string) |  | The SHA256 hash value of the sheet. |
-| task_run | [string](#string) |  | The task run associated with the revision. Can be empty. Format: projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun} |
+| sheet_sha256 | [string](#string) |  | The SHA256 hash of the sheet content (hex-encoded). |
+| task_run | [string](#string) |  | The task run associated with the revision. Can be empty. Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun} |
 | type | [SchemaChangeType](#bytebase-store-SchemaChangeType) |  | The type of the revision. |
 
 
@@ -4213,8 +4004,8 @@ ISSUE_CREATE represents creating an issue. |
 | ----- | ---- | ----- | ----------- |
 | prefix_len | [int32](#int32) |  |  |
 | suffix_len | [int32](#int32) |  |  |
-| substitution | [string](#string) |  |  |
 | type | [Algorithm.InnerOuterMask.MaskType](#bytebase-store-Algorithm-InnerOuterMask-MaskType) |  |  |
+| substitution | [string](#string) |  |  |
 
 
 
@@ -4259,26 +4050,9 @@ ISSUE_CREATE represents creating an issue. |
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| start | [int32](#int32) |  | start is the start index of the original value, start from 0 and should be less than stop. |
-| end | [int32](#int32) |  | stop is the stop index of the original value, should be less than the length of the original value. |
-| substitution | [string](#string) |  | OriginalValue[start:end) would be replaced with replace_with. |
-
-
-
-
-
-
-<a name="bytebase-store-Announcement"></a>
-
-### Announcement
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| level | [Announcement.AlertLevel](#bytebase-store-Announcement-AlertLevel) |  | The alert level of the announcement. |
-| text | [string](#string) |  | The text of the announcement. |
-| link | [string](#string) |  | The optional link, user can follow the link to check extra details |
+| start | [int32](#int32) |  | start is the start character index (0-based) of the original value, should be less than end. Uses character indices (not byte offsets) for display-oriented masking. Example: For &#34;你好world&#34;, character index 2 refers to &#39;w&#39; (the 3rd character). |
+| end | [int32](#int32) |  | end is the end character index (exclusive) of the original value. Uses character indices (not byte offsets) for display-oriented masking. |
+| substitution | [string](#string) |  | OriginalValue[start:end) would be replaced with substitution. |
 
 
 
@@ -4293,11 +4067,7 @@ ISSUE_CREATE represents creating an issue. |
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| slack | [AppIMSetting.Slack](#bytebase-store-AppIMSetting-Slack) |  |  |
-| feishu | [AppIMSetting.Feishu](#bytebase-store-AppIMSetting-Feishu) |  |  |
-| wecom | [AppIMSetting.Wecom](#bytebase-store-AppIMSetting-Wecom) |  |  |
-| lark | [AppIMSetting.Lark](#bytebase-store-AppIMSetting-Lark) |  |  |
-| dingtalk | [AppIMSetting.DingTalk](#bytebase-store-AppIMSetting-DingTalk) |  |  |
+| settings | [AppIMSetting.IMSetting](#bytebase-store-AppIMSetting-IMSetting) | repeated |  |
 
 
 
@@ -4312,7 +4082,6 @@ ISSUE_CREATE represents creating an issue. |
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| enabled | [bool](#bool) |  |  |
 | client_id | [string](#string) |  |  |
 | client_secret | [string](#string) |  |  |
 | robot_code | [string](#string) |  |  |
@@ -4330,9 +4099,29 @@ ISSUE_CREATE represents creating an issue. |
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| enabled | [bool](#bool) |  |  |
 | app_id | [string](#string) |  |  |
 | app_secret | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-AppIMSetting-IMSetting"></a>
+
+### AppIMSetting.IMSetting
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| type | [WebhookType](#bytebase-store-WebhookType) |  |  |
+| slack | [AppIMSetting.Slack](#bytebase-store-AppIMSetting-Slack) |  |  |
+| feishu | [AppIMSetting.Feishu](#bytebase-store-AppIMSetting-Feishu) |  |  |
+| wecom | [AppIMSetting.Wecom](#bytebase-store-AppIMSetting-Wecom) |  |  |
+| lark | [AppIMSetting.Lark](#bytebase-store-AppIMSetting-Lark) |  |  |
+| dingtalk | [AppIMSetting.DingTalk](#bytebase-store-AppIMSetting-DingTalk) |  |  |
+| teams | [AppIMSetting.Teams](#bytebase-store-AppIMSetting-Teams) |  |  |
 
 
 
@@ -4347,7 +4136,6 @@ ISSUE_CREATE represents creating an issue. |
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| enabled | [bool](#bool) |  |  |
 | app_id | [string](#string) |  |  |
 | app_secret | [string](#string) |  |  |
 
@@ -4364,8 +4152,24 @@ ISSUE_CREATE represents creating an issue. |
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| enabled | [bool](#bool) |  |  |
 | token | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="bytebase-store-AppIMSetting-Teams"></a>
+
+### AppIMSetting.Teams
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  | Azure AD tenant ID (Directory ID). |
+| client_id | [string](#string) |  | Azure AD application (client) ID. |
+| client_secret | [string](#string) |  | Azure AD client secret. |
 
 
 
@@ -4380,7 +4184,6 @@ ISSUE_CREATE represents creating an issue. |
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| enabled | [bool](#bool) |  |  |
 | corp_id | [string](#string) |  |  |
 | agent_id | [string](#string) |  |  |
 | secret | [string](#string) |  |  |
@@ -4417,7 +4220,6 @@ ISSUE_CREATE represents creating an issue. |
 | title | [string](#string) |  |  |
 | levels | [DataClassificationSetting.DataClassificationConfig.Level](#bytebase-store-DataClassificationSetting-DataClassificationConfig-Level) | repeated | levels is user defined level list for classification. The order for the level decides its priority. |
 | classification | [DataClassificationSetting.DataClassificationConfig.ClassificationEntry](#bytebase-store-DataClassificationSetting-DataClassificationConfig-ClassificationEntry) | repeated | classification is the id - DataClassification map. The id should in [0-9]&#43;-[0-9]&#43;-[0-9]&#43; format. |
-| classification_from_config | [bool](#bool) |  | If true, we will only store the classification in the config. Otherwise we will get the classification from table/column comment, and write back to the schema metadata. |
 
 
 
@@ -4498,6 +4300,7 @@ ISSUE_CREATE represents creating an issue. |
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  |  |
 | id | [string](#string) |  | The resource id of the environment. This value should be 4-63 characters, and valid characters are /[a-z][0-9]-/. |
 | title | [string](#string) |  | The display name of the environment. |
 | tags | [EnvironmentSetting.Environment.TagsEntry](#bytebase-store-EnvironmentSetting-Environment-TagsEntry) | repeated |  |
@@ -4518,114 +4321,6 @@ ISSUE_CREATE represents creating an issue. |
 | ----- | ---- | ----- | ----------- |
 | key | [string](#string) |  |  |
 | value | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="bytebase-store-PasswordRestrictionSetting"></a>
-
-### PasswordRestrictionSetting
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| min_length | [int32](#int32) |  | min_length is the minimum length for password, should be no less than 8. |
-| require_number | [bool](#bool) |  | require_number requires the password must contain at least one number. |
-| require_letter | [bool](#bool) |  | require_letter requires the password must contain at least one letter, regardless of upper case or lower case |
-| require_uppercase_letter | [bool](#bool) |  | require_uppercase_letter requires the password must contain at least one upper case letter. |
-| require_special_character | [bool](#bool) |  | require_special_character requires the password must contain at least one special character. |
-| require_reset_password_for_first_login | [bool](#bool) |  | require_reset_password_for_first_login requires users to reset their password after the 1st login. |
-| password_rotation | [google.protobuf.Duration](#google-protobuf-Duration) |  | password_rotation requires users to reset their password after the duration. |
-
-
-
-
-
-
-<a name="bytebase-store-SCIMSetting"></a>
-
-### SCIMSetting
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| token | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="bytebase-store-SchemaTemplateSetting"></a>
-
-### SchemaTemplateSetting
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| field_templates | [SchemaTemplateSetting.FieldTemplate](#bytebase-store-SchemaTemplateSetting-FieldTemplate) | repeated |  |
-| column_types | [SchemaTemplateSetting.ColumnType](#bytebase-store-SchemaTemplateSetting-ColumnType) | repeated |  |
-| table_templates | [SchemaTemplateSetting.TableTemplate](#bytebase-store-SchemaTemplateSetting-TableTemplate) | repeated |  |
-
-
-
-
-
-
-<a name="bytebase-store-SchemaTemplateSetting-ColumnType"></a>
-
-### SchemaTemplateSetting.ColumnType
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| engine | [Engine](#bytebase-store-Engine) |  |  |
-| enabled | [bool](#bool) |  |  |
-| types | [string](#string) | repeated |  |
-
-
-
-
-
-
-<a name="bytebase-store-SchemaTemplateSetting-FieldTemplate"></a>
-
-### SchemaTemplateSetting.FieldTemplate
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| id | [string](#string) |  |  |
-| engine | [Engine](#bytebase-store-Engine) |  |  |
-| category | [string](#string) |  |  |
-| column | [ColumnMetadata](#bytebase-store-ColumnMetadata) |  |  |
-| catalog | [ColumnCatalog](#bytebase-store-ColumnCatalog) |  |  |
-
-
-
-
-
-
-<a name="bytebase-store-SchemaTemplateSetting-TableTemplate"></a>
-
-### SchemaTemplateSetting.TableTemplate
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| id | [string](#string) |  |  |
-| engine | [Engine](#bytebase-store-Engine) |  |  |
-| category | [string](#string) |  |  |
-| table | [TableMetadata](#bytebase-store-TableMetadata) |  |  |
-| catalog | [TableCatalog](#bytebase-store-TableCatalog) |  |  |
 
 
 
@@ -4666,6 +4361,23 @@ ISSUE_CREATE represents creating an issue. |
 
 
 
+<a name="bytebase-store-SystemSetting"></a>
+
+### SystemSetting
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| auth_secret | [string](#string) |  | Authentication secret for token signing (32-character random string). |
+| workspace_id | [string](#string) |  | Unique workspace identifier (UUID). |
+| license | [string](#string) |  | Enterprise license JWT token. |
+
+
+
+
+
+
 <a name="bytebase-store-WorkspaceApprovalSetting"></a>
 
 ### WorkspaceApprovalSetting
@@ -4691,6 +4403,7 @@ ISSUE_CREATE represents creating an issue. |
 | ----- | ---- | ----- | ----------- |
 | template | [ApprovalTemplate](#bytebase-store-ApprovalTemplate) |  |  |
 | condition | [google.type.Expr](#google-type-Expr) |  |  |
+| source | [WorkspaceApprovalSetting.Rule.Source](#bytebase-store-WorkspaceApprovalSetting-Rule-Source) |  |  |
 
 
 
@@ -4708,15 +4421,59 @@ ISSUE_CREATE represents creating an issue. |
 | external_url | [string](#string) |  | The external URL is used for sso authentication callback. |
 | disallow_signup | [bool](#bool) |  | Disallow self-service signup, users can only be invited by the owner. |
 | require_2fa | [bool](#bool) |  | Require 2FA for all users. |
-| token_duration | [google.protobuf.Duration](#google-protobuf-Duration) |  | The duration for token. |
-| announcement | [Announcement](#bytebase-store-Announcement) |  | The setting of custom announcement |
+| refresh_token_duration | [google.protobuf.Duration](#google-protobuf-Duration) |  | The duration for refresh token. Default is 7 days. |
+| access_token_duration | [google.protobuf.Duration](#google-protobuf-Duration) |  | The duration for access token. Default is 1 hour. |
+| announcement | [WorkspaceProfileSetting.Announcement](#bytebase-store-WorkspaceProfileSetting-Announcement) |  | The setting of custom announcement |
 | maximum_role_expiration | [google.protobuf.Duration](#google-protobuf-Duration) |  | The max duration for role expired. |
 | domains | [string](#string) | repeated | The workspace domain, e.g., bytebase.com. |
 | enforce_identity_domain | [bool](#bool) |  | Only user and group from the domains can be created and login. |
-| database_change_mode | [DatabaseChangeMode](#bytebase-store-DatabaseChangeMode) |  | The workspace database change mode. |
+| database_change_mode | [WorkspaceProfileSetting.DatabaseChangeMode](#bytebase-store-WorkspaceProfileSetting-DatabaseChangeMode) |  | The workspace database change mode. |
 | disallow_password_signin | [bool](#bool) |  | Whether to disallow password signin. (Except workspace admins) |
 | enable_metric_collection | [bool](#bool) |  | Whether to enable metric collection for the workspace. |
 | inactive_session_timeout | [google.protobuf.Duration](#google-protobuf-Duration) |  | The session expiration time if not activity detected for the user. Value &lt;= 0 means no limit. |
+| enable_audit_log_stdout | [bool](#bool) |  | Whether to enable audit logging to stdout in structured JSON format. Requires TEAM or ENTERPRISE license. |
+| watermark | [bool](#bool) |  | Whether to display watermark on pages. Requires ENTERPRISE license. |
+| directory_sync_token | [string](#string) |  | The token for directory sync authentication. |
+| branding_logo | [string](#string) |  | The branding logo as a data URI (e.g. data:image/png;base64,...). |
+| password_restriction | [WorkspaceProfileSetting.PasswordRestriction](#bytebase-store-WorkspaceProfileSetting-PasswordRestriction) |  | Password restriction settings. |
+
+
+
+
+
+
+<a name="bytebase-store-WorkspaceProfileSetting-Announcement"></a>
+
+### WorkspaceProfileSetting.Announcement
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| level | [WorkspaceProfileSetting.Announcement.AlertLevel](#bytebase-store-WorkspaceProfileSetting-Announcement-AlertLevel) |  | The alert level of the announcement. |
+| text | [string](#string) |  | The text of the announcement. |
+| link | [string](#string) |  | The optional link, user can follow the link to check extra details |
+
+
+
+
+
+
+<a name="bytebase-store-WorkspaceProfileSetting-PasswordRestriction"></a>
+
+### WorkspaceProfileSetting.PasswordRestriction
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| min_length | [int32](#int32) |  | min_length is the minimum length for password, should be no less than 8. |
+| require_number | [bool](#bool) |  | require_number requires the password must contain at least one number. |
+| require_letter | [bool](#bool) |  | require_letter requires the password must contain at least one letter, regardless of upper case or lower case |
+| require_uppercase_letter | [bool](#bool) |  | require_uppercase_letter requires the password must contain at least one upper case letter. |
+| require_special_character | [bool](#bool) |  | require_special_character requires the password must contain at least one special character. |
+| require_reset_password_for_first_login | [bool](#bool) |  | require_reset_password_for_first_login requires users to reset their password after the 1st login. |
+| password_rotation | [google.protobuf.Duration](#google-protobuf-Duration) |  | password_rotation requires users to reset their password after the duration. |
 
 
 
@@ -4753,23 +4510,57 @@ ISSUE_CREATE represents creating an issue. |
 
 
 
-<a name="bytebase-store-Announcement-AlertLevel"></a>
+<a name="bytebase-store-SettingName"></a>
 
-### Announcement.AlertLevel
+### SettingName
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| SETTING_NAME_UNSPECIFIED | 0 |  |
+| SYSTEM | 1 |  |
+| WORKSPACE_PROFILE | 2 |  |
+| WORKSPACE_APPROVAL | 3 |  |
+| APP_IM | 4 |  |
+| AI | 5 |  |
+| DATA_CLASSIFICATION | 6 |  |
+| SEMANTIC_TYPES | 7 |  |
+| ENVIRONMENT | 8 |  |
+
+
+
+<a name="bytebase-store-WorkspaceApprovalSetting-Rule-Source"></a>
+
+### WorkspaceApprovalSetting.Rule.Source
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| SOURCE_UNSPECIFIED | 0 |  |
+| CHANGE_DATABASE | 1 |  |
+| CREATE_DATABASE | 2 |  |
+| EXPORT_DATA | 3 |  |
+| REQUEST_ROLE | 4 |  |
+
+
+
+<a name="bytebase-store-WorkspaceProfileSetting-Announcement-AlertLevel"></a>
+
+### WorkspaceProfileSetting.Announcement.AlertLevel
 We support three levels of AlertLevel: INFO, WARNING, and ERROR.
 
 | Name | Number | Description |
 | ---- | ------ | ----------- |
 | ALERT_LEVEL_UNSPECIFIED | 0 |  |
-| ALERT_LEVEL_INFO | 1 |  |
-| ALERT_LEVEL_WARNING | 2 |  |
-| ALERT_LEVEL_CRITICAL | 3 |  |
+| INFO | 1 |  |
+| WARNING | 2 |  |
+| CRITICAL | 3 |  |
 
 
 
-<a name="bytebase-store-DatabaseChangeMode"></a>
+<a name="bytebase-store-WorkspaceProfileSetting-DatabaseChangeMode"></a>
 
-### DatabaseChangeMode
+### WorkspaceProfileSetting.DatabaseChangeMode
 
 
 | Name | Number | Description |
@@ -4779,33 +4570,6 @@ We support three levels of AlertLevel: INFO, WARNING, and ERROR.
 | EDITOR | 2 | A simple database change process in SQL editor. Users can execute SQL directly. |
 
 
-
-<a name="bytebase-store-SettingName"></a>
-
-### SettingName
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| SETTING_NAME_UNSPECIFIED | 0 |  |
-| AUTH_SECRET | 1 |  |
-| BRANDING_LOGO | 2 |  |
-| WORKSPACE_ID | 3 |  |
-| WORKSPACE_PROFILE | 4 |  |
-| WORKSPACE_APPROVAL | 5 |  |
-| WORKSPACE_EXTERNAL_APPROVAL | 6 |  |
-| ENTERPRISE_LICENSE | 7 |  |
-| APP_IM | 8 |  |
-| WATERMARK | 9 |  |
-| AI | 10 |  |
-| SCHEMA_TEMPLATE | 13 |  |
-| DATA_CLASSIFICATION | 14 |  |
-| SEMANTIC_TYPES | 15 |  |
-| SCIM | 17 |  |
-| PASSWORD_RESTRICTION | 18 |  |
-| ENVIRONMENT | 19 |  |
-
-
  
 
  
@@ -4814,29 +4578,42 @@ We support three levels of AlertLevel: INFO, WARNING, and ERROR.
 
 
 
-<a name="store_sheet-proto"></a>
+<a name="store_signal-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
-## store/sheet.proto
+## store/signal.proto
 
 
 
-<a name="bytebase-store-SheetPayload"></a>
+<a name="bytebase-store-Signal"></a>
 
-### SheetPayload
-
+### Signal
+Signal represents a notification payload sent via PostgreSQL NOTIFY for HA coordination.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| engine | [Engine](#bytebase-store-Engine) |  | The SQL dialect. |
-| commands | [Range](#bytebase-store-Range) | repeated | The start and end position of each command in the sheet statement. |
+| type | [Signal.Type](#bytebase-store-Signal-Type) |  |  |
+| uid | [int32](#int32) |  |  |
 
 
 
 
 
  
+
+
+<a name="bytebase-store-Signal-Type"></a>
+
+### Signal.Type
+Type represents the type of signal.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| TYPE_UNSPECIFIED | 0 |  |
+| CANCEL_PLAN_CHECK_RUN | 1 |  |
+| CANCEL_TASK_RUN | 2 |  |
+
 
  
 
@@ -4864,19 +4641,11 @@ Task is the metadata for database operation tasks.
 | skipped | [bool](#bool) |  | Whether the task was skipped during execution. |
 | skipped_reason | [string](#string) |  | Reason why the task was skipped. |
 | spec_id | [string](#string) |  | UUID that identifies the spec this task implements. |
-| sheet_id | [int32](#int32) |  | The sheet ID containing SQL statements for this task. |
-| environment_id | [string](#string) |  | The environment where the database will be created. |
-| database_name | [string](#string) |  | Name of the database to create. |
-| table_name | [string](#string) |  | Optional table name to create (required for some databases like MongoDB). |
-| character_set | [string](#string) |  | Character set for the new database. |
-| collation | [string](#string) |  | Collation for the new database. |
-| schema_version | [string](#string) |  | Schema version after migration is applied. |
+| sheet_sha256 | [string](#string) |  | The SHA256 hash of a single sheet content (hex-encoded). Used for non-release tasks. |
+| release | [string](#string) |  | The release resource name: projects/{project}/releases/{release}. Used for GitOps release-based tasks that execute multiple files. |
 | enable_prior_backup | [bool](#bool) |  | Whether to create an automatic backup before applying changes. |
 | flags | [Task.FlagsEntry](#bytebase-store-Task-FlagsEntry) | repeated | Configuration flags for gh-ost migration tool. |
-| task_release_source | [TaskReleaseSource](#bytebase-store-TaskReleaseSource) |  | Source information if task is created from a release. |
-| migrate_type | [MigrationType](#bytebase-store-MigrationType) |  | The type of migration (DDL, DML, or GHOST). |
-| password | [string](#string) |  | Password to encrypt the exported data archive. |
-| format | [ExportFormat](#bytebase-store-ExportFormat) |  | Format of the exported data (SQL, CSV, JSON, etc). |
+| enable_ghost | [bool](#bool) |  | Whether to use gh-ost for online schema migration. |
 
 
 
@@ -4898,21 +4667,6 @@ Task is the metadata for database operation tasks.
 
 
 
-
-<a name="bytebase-store-TaskReleaseSource"></a>
-
-### TaskReleaseSource
-TaskReleaseSource contains information about the release file this task originated from.
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| file | [string](#string) |  | Resource name of the release file. Format: projects/{project}/releases/{release}/files/{id} |
-
-
-
-
-
  
 
 
@@ -4925,9 +4679,101 @@ Type represents the type of database operation to perform.
 | ---- | ------ | ----------- |
 | TASK_TYPE_UNSPECIFIED | 0 |  |
 | DATABASE_CREATE | 1 | Create a new database. |
-| DATABASE_MIGRATE | 2 | Apply schema/data migrations to an existing database. |
-| DATABASE_EXPORT | 5 | Export data from a database. |
-| DATABASE_SDL | 6 | Apply declarative schema changes (state-based migration). |
+| DATABASE_MIGRATE | 2 | Apply schema/data migrations to an existing database. Execution strategy is determined by release type (VERSIONED/DECLARATIVE) or sheet content for non-release tasks. |
+| DATABASE_EXPORT | 3 | Export data from a database. |
+
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="store_task_run-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## store/task_run.proto
+
+
+
+<a name="bytebase-store-SchedulerInfo"></a>
+
+### SchedulerInfo
+SchedulerInfo contains information about task scheduling and execution delays.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| report_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | Timestamp when the scheduler reported this information. |
+| waiting_cause | [SchedulerInfo.WaitingCause](#bytebase-store-SchedulerInfo-WaitingCause) |  | Reason why the task run is currently waiting. |
+
+
+
+
+
+
+<a name="bytebase-store-SchedulerInfo-WaitingCause"></a>
+
+### SchedulerInfo.WaitingCause
+WaitingCause indicates why a task run is waiting to execute.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| parallel_tasks_limit | [bool](#bool) |  | Task is waiting due to parallel execution limit. |
+
+
+
+
+
+
+<a name="bytebase-store-TaskRun"></a>
+
+### TaskRun
+TaskRun represents an execution attempt of a task.
+
+
+
+
+
+
+<a name="bytebase-store-TaskRunResult"></a>
+
+### TaskRunResult
+TaskRunResult contains the outcome and metadata from a task run execution.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| detail | [string](#string) |  | Error message for failed task runs. Empty for successful or canceled runs. |
+| export_archive_uid | [int32](#int32) |  | UID of the export archive generated for export tasks. |
+| has_prior_backup | [bool](#bool) |  | Indicates whether a prior backup was created for this task run. When true, the task run can be rolled back using the backup tables. Backup details are available in the task run logs (PRIOR_BACKUP log entries). |
+
+
+
+
+
+ 
+
+
+<a name="bytebase-store-TaskRun-Status"></a>
+
+### TaskRun.Status
+Status represents the current execution state of a task run.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| STATUS_UNSPECIFIED | 0 |  |
+| PENDING | 1 | Task run is queued and waiting to execute. |
+| RUNNING | 2 | Task run is currently executing. |
+| DONE | 3 | Task run completed successfully. |
+| FAILED | 4 | Task run encountered an error and failed. |
+| CANCELED | 5 | Task run was canceled by user or system. |
+| NOT_STARTED | 6 | Task run has not started yet. |
+| SKIPPED | 7 | Task run was skipped and will not execute. |
+| AVAILABLE | 8 | Task run is ready for immediate execution. |
 
 
  
@@ -4942,6 +4788,56 @@ Type represents the type of database operation to perform.
 <p align="right"><a href="#top">Top</a></p>
 
 ## store/task_run_log.proto
+
+
+
+<a name="bytebase-store-PriorBackupDetail"></a>
+
+### PriorBackupDetail
+PriorBackupDetail contains information about automatic backups created before migration.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| items | [PriorBackupDetail.Item](#bytebase-store-PriorBackupDetail-Item) | repeated | List of backup operations performed. |
+
+
+
+
+
+
+<a name="bytebase-store-PriorBackupDetail-Item"></a>
+
+### PriorBackupDetail.Item
+Item represents a single backup operation for a table.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| source_table | [PriorBackupDetail.Item.Table](#bytebase-store-PriorBackupDetail-Item-Table) |  | The original table that was backed up. |
+| target_table | [PriorBackupDetail.Item.Table](#bytebase-store-PriorBackupDetail-Item-Table) |  | The backup table where data was copied. |
+| start_position | [Position](#bytebase-store-Position) |  | Starting position in SQL for this backup operation. |
+| end_position | [Position](#bytebase-store-Position) |  | Ending position in SQL for this backup operation. |
+
+
+
+
+
+
+<a name="bytebase-store-PriorBackupDetail-Item-Table"></a>
+
+### PriorBackupDetail.Item.Table
+Table identifies a database table.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| database | [string](#string) |  | The database containing the table. Format: instances/{instance}/databases/{database} |
+| schema | [string](#string) |  | Schema name (for databases that support schemas). |
+| table | [string](#string) |  | Table name. |
+
+
+
 
 
 
@@ -4961,13 +4857,13 @@ Type represents the type of database operation to perform.
 | command_response | [TaskRunLog.CommandResponse](#bytebase-store-TaskRunLog-CommandResponse) |  |  |
 | database_sync_start | [TaskRunLog.DatabaseSyncStart](#bytebase-store-TaskRunLog-DatabaseSyncStart) |  |  |
 | database_sync_end | [TaskRunLog.DatabaseSyncEnd](#bytebase-store-TaskRunLog-DatabaseSyncEnd) |  |  |
-| task_run_status_update | [TaskRunLog.TaskRunStatusUpdate](#bytebase-store-TaskRunLog-TaskRunStatusUpdate) |  |  |
 | transaction_control | [TaskRunLog.TransactionControl](#bytebase-store-TaskRunLog-TransactionControl) |  |  |
 | prior_backup_start | [TaskRunLog.PriorBackupStart](#bytebase-store-TaskRunLog-PriorBackupStart) |  |  |
 | prior_backup_end | [TaskRunLog.PriorBackupEnd](#bytebase-store-TaskRunLog-PriorBackupEnd) |  |  |
 | retry_info | [TaskRunLog.RetryInfo](#bytebase-store-TaskRunLog-RetryInfo) |  |  |
 | compute_diff_start | [TaskRunLog.ComputeDiffStart](#bytebase-store-TaskRunLog-ComputeDiffStart) |  |  |
 | compute_diff_end | [TaskRunLog.ComputeDiffEnd](#bytebase-store-TaskRunLog-ComputeDiffEnd) |  |  |
+| release_file_execute | [TaskRunLog.ReleaseFileExecute](#bytebase-store-TaskRunLog-ReleaseFileExecute) |  |  |
 
 
 
@@ -4982,7 +4878,7 @@ Type represents the type of database operation to perform.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| command_indexes | [int32](#int32) | repeated | Either `command_indexes` or `statement` is set. The indexes of the executed commands. |
+| range | [Range](#bytebase-store-Range) |  | The byte offset range of the executed command in the sheet. Uses byte offsets (not character indices) for efficient slicing of sheet content bytes. Example: For &#34;SELECT 你好;&#34; in a UTF-8 sheet, range [0, 13) represents all 13 bytes. |
 | statement | [string](#string) |  | The statement to be executed. |
 
 
@@ -4998,7 +4894,6 @@ Type represents the type of database operation to perform.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| command_indexes | [int32](#int32) | repeated | **Deprecated.** The indexes of the executed commands. |
 | error | [string](#string) |  |  |
 | affected_rows | [int64](#int64) |  |  |
 | all_affected_rows | [int64](#int64) | repeated | `all_affected_rows` is the affected rows of each command. `all_affected_rows` may be unavailable if the database driver doesn&#39;t support it. Caller should fallback to `affected_rows` in that case. |
@@ -5084,6 +4979,22 @@ Type represents the type of database operation to perform.
 
 
 
+<a name="bytebase-store-TaskRunLog-ReleaseFileExecute"></a>
+
+### TaskRunLog.ReleaseFileExecute
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| version | [string](#string) |  | The version of the file being executed (e.g., &#34;0001&#34;). |
+| file_path | [string](#string) |  | The file path within the release (e.g., &#34;2.2/V0001_create_table.sql&#34;). |
+
+
+
+
+
+
 <a name="bytebase-store-TaskRunLog-RetryInfo"></a>
 
 ### TaskRunLog.RetryInfo
@@ -5126,21 +5037,6 @@ Type represents the type of database operation to perform.
 
 
 
-<a name="bytebase-store-TaskRunLog-TaskRunStatusUpdate"></a>
-
-### TaskRunLog.TaskRunStatusUpdate
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| status | [TaskRunLog.TaskRunStatusUpdate.Status](#bytebase-store-TaskRunLog-TaskRunStatusUpdate-Status) |  |  |
-
-
-
-
-
-
 <a name="bytebase-store-TaskRunLog-TransactionControl"></a>
 
 ### TaskRunLog.TransactionControl
@@ -5157,19 +5053,6 @@ Type represents the type of database operation to perform.
 
 
  
-
-
-<a name="bytebase-store-TaskRunLog-TaskRunStatusUpdate-Status"></a>
-
-### TaskRunLog.TaskRunStatusUpdate.Status
-
-
-| Name | Number | Description |
-| ---- | ------ | ----------- |
-| STATUS_UNSPECIFIED | 0 |  |
-| RUNNING_WAITING | 1 | The task run is ready to be executed by the scheduler. |
-| RUNNING_RUNNING | 2 | The task run is being executed by the scheduler. |
-
 
 
 <a name="bytebase-store-TaskRunLog-TransactionControl-Type"></a>
@@ -5200,13 +5083,13 @@ Type represents the type of database operation to perform.
 | COMMAND_RESPONSE | 4 |  |
 | DATABASE_SYNC_START | 5 |  |
 | DATABASE_SYNC_END | 6 |  |
-| TASK_RUN_STATUS_UPDATE | 7 |  |
 | TRANSACTION_CONTROL | 8 |  |
 | PRIOR_BACKUP_START | 9 |  |
 | PRIOR_BACKUP_END | 10 |  |
 | RETRY_INFO | 11 |  |
 | COMPUTE_DIFF_START | 12 |  |
 | COMPUTE_DIFF_END | 13 |  |
+| RELEASE_FILE_EXECUTE | 14 |  |
 
 
  
@@ -5236,6 +5119,7 @@ MFAConfig is the MFA configuration for a user.
 | temp_otp_secret | [string](#string) |  | The temp_otp_secret is the temporary secret key used to validate the OTP code and will replace the otp_secret in two-phase commits. |
 | recovery_codes | [string](#string) | repeated | The recovery_codes are the codes that can be used to recover the account. |
 | temp_recovery_codes | [string](#string) | repeated | The temp_recovery_codes are the temporary codes that will replace the recovery_codes in two-phase commits. |
+| temp_otp_secret_created_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | The temp_otp_secret_created_time is the timestamp when temp_otp_secret was created. Used to enforce expiration. |
 
 
 
@@ -5253,6 +5137,25 @@ MFAConfig is the MFA configuration for a user.
 | last_login_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 | last_change_password_time | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
 | source | [string](#string) |  | The source indicates where the user comes from. For now we support Entra ID SCIM sync, so the source could be Entra ID. |
+| workload_identity_config | [WorkloadIdentityConfig](#bytebase-store-WorkloadIdentityConfig) |  | Workload identity configuration (only for WORKLOAD_IDENTITY type) |
+
+
+
+
+
+
+<a name="bytebase-store-WorkloadIdentityConfig"></a>
+
+### WorkloadIdentityConfig
+WorkloadIdentityConfig stores OIDC configuration for workload identity.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| provider_type | [WorkloadIdentityConfig.ProviderType](#bytebase-store-WorkloadIdentityConfig-ProviderType) |  | Provider type (currently only GITHUB is supported) |
+| issuer_url | [string](#string) |  | OIDC issuer URL |
+| allowed_audiences | [string](#string) | repeated | Allowed audiences for token validation |
+| subject_pattern | [string](#string) |  | Subject pattern to match against token subject claim |
 
 
 
@@ -5272,7 +5175,53 @@ PrincipalType is the type of a principal.
 | END_USER | 1 | END_USER represents the human being using Bytebase. |
 | SERVICE_ACCOUNT | 2 | SERVICE_ACCOUNT represents the external service calling Bytebase OpenAPI. |
 | SYSTEM_BOT | 3 | SYSTEM_BOT represents the internal system bot performing operations. |
+| WORKLOAD_IDENTITY | 4 | WORKLOAD_IDENTITY represents external CI/CD workload identity. |
 
+
+
+<a name="bytebase-store-WorkloadIdentityConfig-ProviderType"></a>
+
+### WorkloadIdentityConfig.ProviderType
+ProviderType identifies the CI/CD platform.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| PROVIDER_TYPE_UNSPECIFIED | 0 |  |
+| GITHUB | 1 |  |
+| GITLAB | 2 |  |
+
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="store_worksheet-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## store/worksheet.proto
+
+
+
+<a name="bytebase-store-WorkSheetOrganizerPayload"></a>
+
+### WorkSheetOrganizerPayload
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| starred | [bool](#bool) |  |  |
+| folders | [string](#string) | repeated | The folder path for a worksheet. For example, if the folders is [A, B, C], means the worksheet is in the A/B/C subfolder. |
+
+
+
+
+
+ 
 
  
 

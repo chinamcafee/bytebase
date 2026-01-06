@@ -2,7 +2,7 @@
   <Drawer :show="show" @close="close">
     <DrawerContent
       :title="title"
-      class="w-[100vw] md:max-w-[calc(100vw-8rem)] md:w-[40vw]"
+      class="w-screen md:max-w-[calc(100vw-8rem)] md:w-[40vw]"
     >
       <template #default>
         <div class="flex flex-col gap-y-4">
@@ -44,11 +44,11 @@ import { useI18n } from "vue-i18n";
 import LearnMoreLink from "@/components/LearnMoreLink.vue";
 import ErrorList from "@/components/misc/ErrorList.vue";
 import { Drawer, DrawerContent } from "@/components/v2";
-import { planServiceClientConnect } from "@/grpcweb";
+import { planServiceClientConnect } from "@/connect";
 import { pushNotification } from "@/store";
 import { UpdatePlanRequestSchema } from "@/types/proto-es/v1/plan_service_pb";
-import FlagsForm from "./FlagsForm";
 import { useGhostSettingContext } from "./context";
+import FlagsForm from "./FlagsForm";
 
 defineProps<{
   show: boolean;

@@ -5,11 +5,11 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 )
 
 var (
@@ -18,7 +18,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleStatementNoSelectAll, &NoSelectAllAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_STATEMENT_SELECT_NO_SELECT_ALL, &NoSelectAllAdvisor{})
 }
 
 // NoSelectAllAdvisor is the advisor checking for no "select *".
@@ -27,9 +27,10 @@ type NoSelectAllAdvisor struct {
 
 // Check checks for no "select *".
 func (*NoSelectAllAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	root, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -38,7 +39,7 @@ func (*NoSelectAllAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([
 	}
 	checker := &noSelectAllChecker{
 		level: level,
-		title: string(checkCtx.Rule.Type),
+		title: checkCtx.Rule.Type.String(),
 	}
 	for _, stmtNode := range root {
 		checker.text = stmtNode.Text()
@@ -64,7 +65,7 @@ func (v *noSelectAllChecker) Enter(in ast.Node) (ast.Node, bool) {
 			if field.WildCard != nil {
 				v.adviceList = append(v.adviceList, &storepb.Advice{
 					Status:        v.level,
-					Code:          advisor.StatementSelectAll.Int32(),
+					Code:          code.StatementSelectAll.Int32(),
 					Title:         v.title,
 					Content:       fmt.Sprintf("\"%s\" uses SELECT all", v.text),
 					StartPosition: common.ConvertANTLRLineToPosition(v.line),

@@ -13,21 +13,29 @@
 <script lang="tsx" setup>
 import { create } from "@bufbuild/protobuf";
 import { TrashIcon } from "lucide-vue-next";
-import { NDataTable, NPopconfirm, type DataTableColumn } from "naive-ui";
-import { computed, h, ref, watch, withModifiers } from "vue";
+import { type DataTableColumn, NDataTable, NPopconfirm } from "naive-ui";
+import { computed, h, withModifiers } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter, RouterLink } from "vue-router";
+import { RouterLink, useRouter } from "vue-router";
 import ClassificationCell from "@/components/ColumnDataTable/ClassificationCell.vue";
 import SemanticTypeCell from "@/components/ColumnDataTable/SemanticTypeCell.vue";
-import type { MaskData } from "@/components/SensitiveData/types";
+import type {
+  MaskData,
+  MaskDataTarget,
+} from "@/components/SensitiveData/types";
 import { MiniActionButton } from "@/components/v2";
 import {
   pushNotification,
+  useDatabaseCatalog,
   useDatabaseCatalogV1Store,
   useSettingV1Store,
-  useDatabaseCatalog,
 } from "@/store";
 import type { ComposedDatabase } from "@/types";
+import type {
+  ColumnCatalog,
+  ObjectSchema,
+  TableCatalog,
+} from "@/types/proto-es/v1/database_catalog_service_pb";
 import { DataClassificationSetting_DataClassificationConfigSchema } from "@/types/proto-es/v1/setting_service_pb";
 import { autoDatabaseRoute } from "@/utils";
 
@@ -37,32 +45,18 @@ const props = defineProps<{
   rowClickable: boolean;
   rowSelectable: boolean;
   columnList: MaskData[];
-  checkedColumnIndexList: number[];
+  checkedColumnList: MaskData[];
 }>();
 
 const emit = defineEmits<{
   (event: "delete", item: MaskData): void;
-  (event: "checked:update", list: number[]): void;
+  (event: "update:checkedColumnList", list: MaskData[]): void;
 }>();
 
 const { t } = useI18n();
 const router = useRouter();
-const checkedColumnIndex = ref<Set<number>>(
-  new Set(props.checkedColumnIndexList)
-);
 const settingStore = useSettingV1Store();
 const dbCatalogStore = useDatabaseCatalogV1Store();
-
-watch(
-  () => props.columnList,
-  () => (checkedColumnIndex.value = new Set()),
-  { deep: true }
-);
-watch(
-  () => props.checkedColumnIndexList,
-  (val) => (checkedColumnIndex.value = new Set(val)),
-  { deep: true }
-);
 
 const itemKey = (item: MaskData) => {
   const parts = [];
@@ -85,14 +79,7 @@ const classificationConfig = computed(() => {
 });
 
 const checkedItemKeys = computed(() => {
-  const keys: string[] = [];
-  props.checkedColumnIndexList.forEach((index) => {
-    const item = props.columnList[index];
-    if (item) {
-      keys.push(itemKey(item));
-    }
-  });
-  return keys;
+  return props.checkedColumnList.map(itemKey);
 });
 
 const dataTableColumns = computed(() => {
@@ -221,9 +208,23 @@ const dataTableColumns = computed(() => {
   return columns;
 });
 
+const hasSemanticType = (
+  target: MaskDataTarget
+): target is ColumnCatalog | ObjectSchema => {
+  return "semanticType" in target;
+};
+
+const hasClassificationType = (
+  target: MaskDataTarget
+): target is ColumnCatalog | TableCatalog => {
+  return "classification" in target;
+};
+
 const onSemanticTypeApply = async (item: MaskData, semanticType: string) => {
-  // TODO(ed): dirty but works.
-  (item.target as any).semanticType = semanticType;
+  if (!hasSemanticType(item.target)) {
+    return;
+  }
+  item.target.semanticType = semanticType;
   await dbCatalogStore.updateDatabaseCatalog(databaseCatalog.value);
 
   pushNotification({
@@ -237,7 +238,10 @@ const onClassificationIdApply = async (
   item: MaskData,
   classification: string
 ) => {
-  (item.target as any).classification = classification;
+  if (!hasClassificationType(item.target)) {
+    return;
+  }
+  item.target.classification = classification;
   await dbCatalogStore.updateDatabaseCatalog(databaseCatalog.value);
   pushNotification({
     module: "bytebase",
@@ -247,8 +251,12 @@ const onClassificationIdApply = async (
 };
 
 const onMaskingClear = async (item: MaskData) => {
-  (item.target as any).classification = "";
-  (item.target as any).semanticType = "";
+  if (hasSemanticType(item.target)) {
+    item.target.semanticType = "";
+  }
+  if (hasClassificationType(item.target)) {
+    item.target.classification = "";
+  }
   await dbCatalogStore.updateDatabaseCatalog(databaseCatalog.value);
   pushNotification({
     module: "bytebase",
@@ -260,13 +268,13 @@ const onMaskingClear = async (item: MaskData) => {
 
 const handleUpdateCheckedRowKeys = (keys: string[]) => {
   const keysSet = new Set(keys);
-  const checkedIndexList: number[] = [];
-  props.columnList.forEach((item, index) => {
-    const key = itemKey(item);
+  const checkedList: MaskData[] = [];
+  for (const column of props.columnList) {
+    const key = itemKey(column);
     if (keysSet.has(key)) {
-      checkedIndexList.push(index);
+      checkedList.push(column);
     }
-  });
-  emit("checked:update", checkedIndexList);
+  }
+  emit("update:checkedColumnList", checkedList);
 };
 </script>

@@ -4,8 +4,12 @@ package spanner
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,8 +22,11 @@ import (
 	"google.golang.org/api/option"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/bytebase/bytebase/backend/common"
+	"github.com/bytebase/bytebase/backend/common/log"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/plugin/db"
@@ -137,8 +144,9 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 	}
 
 	// Parse transaction mode from the script
-	transactionMode, cleanedStatement := base.ParseTransactionMode(statement)
+	config, cleanedStatement := base.ParseTransactionConfig(statement)
 	statement = cleanedStatement
+	transactionMode := config.Mode
 
 	// Apply default when transaction mode is not specified
 	if transactionMode == common.TransactionModeUnspecified {
@@ -277,6 +285,13 @@ func getColumnTypeName(columnType *sppb.Type) (string, error) {
 	return columnType.Code.String(), nil
 }
 
+// getStatementWithResultLimit wraps a SQL statement in a CTE to enforce a result limit.
+// This is a simple approach that works for SELECT queries but has a critical limitation:
+// Spanner does NOT support DML statements (INSERT/UPDATE/DELETE) inside CTEs.
+//
+// This function should ONLY be called for SELECT statements (verify with util.IsSelect first).
+// For a more robust parser-based approach that can handle complex queries, see the
+// PostgreSQL/MySQL implementations which parse and inject LIMIT clauses directly.
 func getStatementWithResultLimit(stmt string, limit int) string {
 	stmt = strings.TrimRightFunc(stmt, utils.IsSpaceOrSemicolon)
 	limitPart := fmt.Sprintf(" LIMIT %d", limit)
@@ -305,7 +320,7 @@ func getDatabaseFromDSN(dsn string) (string, error) {
 // QueryConn queries a SQL statement in a given connection.
 func (d *Driver) QueryConn(ctx context.Context, _ *sql.Conn, statement string, queryContext db.QueryContext) ([]*v1pb.QueryResult, error) {
 	if queryContext.Explain {
-		return nil, errors.New("Spanner does not support EXPLAIN")
+		return d.explainStatement(ctx, statement)
 	}
 
 	stmts, err := util.SanitizeSQL(statement)
@@ -315,14 +330,15 @@ func (d *Driver) QueryConn(ctx context.Context, _ *sql.Conn, statement string, q
 
 	var results []*v1pb.QueryResult
 	for _, statement := range stmts {
-		if queryContext.Limit > 0 {
-			statement = getStatementWithResultLimit(statement, queryContext.Limit)
-		}
-
 		startTime := time.Now()
 		queryResult, err := func() (*v1pb.QueryResult, error) {
 			if util.IsSelect(statement) {
-				return d.querySingleSQL(ctx, statement, queryContext)
+				// Only apply limit wrapper for SELECT statements
+				limitedStatement := statement
+				if queryContext.Limit > 0 {
+					limitedStatement = getStatementWithResultLimit(statement, queryContext.Limit)
+				}
+				return d.queryStatement(ctx, limitedStatement, queryContext)
 			}
 			if util.IsDDL(statement) {
 				op, err := d.dbClient.UpdateDatabaseDdl(ctx, &databasepb.UpdateDatabaseDdlRequest{
@@ -369,13 +385,21 @@ func (d *Driver) QueryConn(ctx context.Context, _ *sql.Conn, statement string, q
 	return results, nil
 }
 
-func (d *Driver) querySingleSQL(ctx context.Context, statement string, queryContext db.QueryContext) (*v1pb.QueryResult, error) {
+func (d *Driver) queryStatement(ctx context.Context, statement string, queryContext db.QueryContext) (*v1pb.QueryResult, error) {
 	iter := d.client.Single().Query(ctx, spanner.NewStatement(statement))
 	defer iter.Stop()
 
 	row, err := iter.Next()
 	if err == iterator.Done {
-		return nil, nil
+		// Empty result set - return empty QueryResult with column info
+		columnTypeNames, typeErr := getColumnTypeNames(iter)
+		if typeErr != nil {
+			return nil, typeErr
+		}
+		return &v1pb.QueryResult{
+			ColumnNames:     getColumnNames(iter),
+			ColumnTypeNames: columnTypeNames,
+		}, nil
 	}
 	if err != nil {
 		return nil, err
@@ -413,6 +437,114 @@ func (d *Driver) querySingleSQL(ctx context.Context, statement string, queryCont
 	return result, nil
 }
 
+// convertSpannerValue converts google.protobuf.Value to RowValue.
+// Uses type metadata to preserve INT64 precision and properly handle all Spanner types.
+func convertSpannerValue(colType *sppb.Type, v *structpb.Value) *v1pb.RowValue {
+	if v == nil || v.Kind == nil {
+		return util.NullRowValue
+	}
+
+	switch v.Kind.(type) {
+	case *structpb.Value_NullValue:
+		return util.NullRowValue
+	case *structpb.Value_StringValue:
+		stringValue := v.GetStringValue()
+		if colType == nil {
+			return &v1pb.RowValue{Kind: &v1pb.RowValue_StringValue{
+				StringValue: stringValue,
+			}}
+		}
+
+		switch colType.Code {
+		case sppb.TypeCode_INT64:
+			// Spanner encodes INT64 as strings to preserve precision
+			val, err := strconv.ParseInt(stringValue, 10, 64)
+			if err != nil {
+				slog.Error("failed to parse INT64 string value", log.BBError(err))
+				return &v1pb.RowValue{Kind: &v1pb.RowValue_StringValue{
+					StringValue: stringValue,
+				}}
+			}
+			return &v1pb.RowValue{Kind: &v1pb.RowValue_Int64Value{
+				Int64Value: val,
+			}}
+		case sppb.TypeCode_TIMESTAMP:
+			// Spanner encodes TIMESTAMP as RFC3339 string with nanosecond precision
+			t, err := time.Parse(time.RFC3339Nano, stringValue)
+			if err != nil {
+				slog.Error("failed to parse TIMESTAMP string value", log.BBError(err))
+				return &v1pb.RowValue{Kind: &v1pb.RowValue_StringValue{
+					StringValue: stringValue,
+				}}
+			}
+			// Determine accuracy from the string
+			accuracy := int32(6) // Default to microsecond precision
+			if dotIndex := strings.Index(stringValue, "."); dotIndex >= 0 {
+				// Find the end of fractional seconds (before 'Z' or timezone)
+				endIndex := strings.IndexAny(stringValue[dotIndex:], "Z+-")
+				if endIndex > 0 {
+					accuracy = int32(endIndex - 1)
+					if accuracy > 9 {
+						accuracy = 9 // Cap at nanosecond precision
+					}
+				}
+			}
+			return &v1pb.RowValue{Kind: &v1pb.RowValue_TimestampValue{
+				TimestampValue: &v1pb.RowValue_Timestamp{
+					GoogleTimestamp: timestamppb.New(t),
+					Accuracy:        accuracy,
+				},
+			}}
+		case sppb.TypeCode_BYTES:
+			// Spanner encodes BYTES as base64 string
+			bytes, err := base64.StdEncoding.DecodeString(stringValue)
+			if err != nil {
+				slog.Error("failed to decode BYTES base64 string value", log.BBError(err))
+				return &v1pb.RowValue{Kind: &v1pb.RowValue_StringValue{
+					StringValue: stringValue,
+				}}
+			}
+			return &v1pb.RowValue{Kind: &v1pb.RowValue_BytesValue{
+				BytesValue: bytes,
+			}}
+		default:
+			// DATE, JSON, STRING all stay as StringValue
+			return &v1pb.RowValue{Kind: &v1pb.RowValue_StringValue{
+				StringValue: stringValue,
+			}}
+		}
+	case *structpb.Value_NumberValue:
+		// Check if this is INT64 to preserve precision
+		if colType != nil && colType.Code == sppb.TypeCode_INT64 {
+			return &v1pb.RowValue{Kind: &v1pb.RowValue_Int64Value{
+				Int64Value: int64(v.GetNumberValue()),
+			}}
+		}
+		return &v1pb.RowValue{Kind: &v1pb.RowValue_DoubleValue{
+			DoubleValue: v.GetNumberValue(),
+		}}
+	case *structpb.Value_BoolValue:
+		return &v1pb.RowValue{Kind: &v1pb.RowValue_BoolValue{
+			BoolValue: v.GetBoolValue(),
+		}}
+	case *structpb.Value_ListValue, *structpb.Value_StructValue:
+		// Flatten complex types to JSON strings (no array_value/struct_value in RowValue proto).
+		goValue := v.AsInterface()
+		jsonBytes, err := json.Marshal(goValue)
+		if err != nil {
+			slog.Error("failed to marshal Spanner complex value", log.BBError(err))
+			return &v1pb.RowValue{Kind: &v1pb.RowValue_StringValue{
+				StringValue: fmt.Sprintf("%v", goValue),
+			}}
+		}
+		return &v1pb.RowValue{Kind: &v1pb.RowValue_StringValue{
+			StringValue: string(jsonBytes),
+		}}
+	default:
+		return util.NullRowValue
+	}
+}
+
 func readRow(row *spanner.Row) (*v1pb.QueryRow, error) {
 	result := &v1pb.QueryRow{}
 	for i := 0; i < row.Size(); i++ {
@@ -420,8 +552,147 @@ func readRow(row *spanner.Row) (*v1pb.QueryRow, error) {
 		if err := row.Column(i, &col); err != nil {
 			return nil, err
 		}
-		result.Values = append(result.Values, &v1pb.RowValue{Kind: &v1pb.RowValue_ValueValue{ValueValue: col.Value}})
+		result.Values = append(result.Values, convertSpannerValue(col.Type, col.Value))
 	}
 
 	return result, nil
+}
+
+// explainStatement returns the query plan for the given statement as JSON.
+func (d *Driver) explainStatement(ctx context.Context, statement string) ([]*v1pb.QueryResult, error) {
+	if d.client == nil {
+		return nil, errors.New("spanner client is not initialized, database name may be missing")
+	}
+
+	stmts, err := util.SanitizeSQL(statement)
+	if err != nil {
+		return nil, err
+	}
+
+	var results []*v1pb.QueryResult
+	for _, stmt := range stmts {
+		startTime := time.Now()
+		queryResult, err := func() (*v1pb.QueryResult, error) {
+			plan, err := d.client.Single().AnalyzeQuery(ctx, spanner.NewStatement(stmt))
+			if err != nil {
+				return nil, err
+			}
+
+			// Convert the query plan to JSON
+			planJSON, err := convertQueryPlanToJSON(plan)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to convert query plan to JSON")
+			}
+
+			return &v1pb.QueryResult{
+				ColumnNames:     []string{"QUERY PLAN"},
+				ColumnTypeNames: []string{"JSON"},
+				Rows: []*v1pb.QueryRow{
+					{
+						Values: []*v1pb.RowValue{
+							{Kind: &v1pb.RowValue_StringValue{StringValue: planJSON}},
+						},
+					},
+				},
+			}, nil
+		}()
+		if err != nil {
+			queryResult = &v1pb.QueryResult{
+				Error: err.Error(),
+			}
+		}
+		queryResult.Statement = stmt
+		queryResult.Latency = durationpb.New(time.Since(startTime))
+		queryResult.RowsCount = int64(len(queryResult.Rows))
+		results = append(results, queryResult)
+	}
+
+	return results, nil
+}
+
+// PlanNode represents a node in the Spanner query plan for JSON serialization.
+type PlanNode struct {
+	Index               int32                `json:"index"`
+	Kind                string               `json:"kind"`
+	DisplayName         string               `json:"displayName"`
+	ChildLinks          []ChildLink          `json:"childLinks,omitempty"`
+	ShortRepresentation *ShortRepresentation `json:"shortRepresentation,omitempty"`
+	Metadata            map[string]any       `json:"metadata,omitempty"`
+	ExecutionStats      map[string]any       `json:"executionStats,omitempty"`
+}
+
+// ChildLink represents a child link in the query plan.
+type ChildLink struct {
+	ChildIndex int32  `json:"childIndex"`
+	Type       string `json:"type,omitempty"`
+	Variable   string `json:"variable,omitempty"`
+}
+
+// ShortRepresentation represents the short representation of a scalar node.
+type ShortRepresentation struct {
+	Description string           `json:"description"`
+	Subqueries  map[string]int32 `json:"subqueries,omitempty"`
+}
+
+// QueryPlan represents the full query plan for JSON serialization.
+type QueryPlan struct {
+	PlanNodes []PlanNode `json:"planNodes"`
+}
+
+// convertQueryPlanToJSON converts a Spanner QueryPlan to JSON string.
+func convertQueryPlanToJSON(plan *sppb.QueryPlan) (string, error) {
+	if plan == nil {
+		return "{}", nil
+	}
+
+	queryPlan := QueryPlan{
+		PlanNodes: make([]PlanNode, 0, len(plan.PlanNodes)),
+	}
+
+	for _, node := range plan.PlanNodes {
+		planNode := PlanNode{
+			Index:       node.Index,
+			Kind:        node.Kind.String(),
+			DisplayName: node.DisplayName,
+		}
+
+		// Convert child links
+		if len(node.ChildLinks) > 0 {
+			planNode.ChildLinks = make([]ChildLink, 0, len(node.ChildLinks))
+			for _, link := range node.ChildLinks {
+				planNode.ChildLinks = append(planNode.ChildLinks, ChildLink{
+					ChildIndex: link.ChildIndex,
+					Type:       link.Type,
+					Variable:   link.Variable,
+				})
+			}
+		}
+
+		// Convert short representation
+		if node.ShortRepresentation != nil {
+			planNode.ShortRepresentation = &ShortRepresentation{
+				Description: node.ShortRepresentation.Description,
+				Subqueries:  node.ShortRepresentation.Subqueries,
+			}
+		}
+
+		// Convert metadata
+		if node.Metadata != nil {
+			planNode.Metadata = node.Metadata.AsMap()
+		}
+
+		// Convert execution stats
+		if node.ExecutionStats != nil {
+			planNode.ExecutionStats = node.ExecutionStats.AsMap()
+		}
+
+		queryPlan.PlanNodes = append(queryPlan.PlanNodes, planNode)
+	}
+
+	jsonBytes, err := json.Marshal(queryPlan)
+	if err != nil {
+		return "", err
+	}
+
+	return string(jsonBytes), nil
 }

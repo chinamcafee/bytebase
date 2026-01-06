@@ -5,20 +5,22 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pkg/errors"
+	"github.com/antlr4-go/antlr/v4"
+
+	parser "github.com/bytebase/parser/postgresql"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/parser/pg/legacy/ast"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
 	_ advisor.Advisor = (*EncodingAllowlistAdvisor)(nil)
-	_ ast.Visitor     = (*encodingAllowlistChecker)(nil)
 )
 
 func init() {
-	advisor.Register(storepb.Engine_POSTGRES, advisor.SchemaRuleCharsetAllowlist, &EncodingAllowlistAdvisor{})
+	advisor.Register(storepb.Engine_POSTGRES, storepb.SQLReviewRule_SYSTEM_CHARSET_ALLOWLIST, &EncodingAllowlistAdvisor{})
 }
 
 // EncodingAllowlistAdvisor is the advisor checking for encoding allowlist.
@@ -27,79 +29,125 @@ type EncodingAllowlistAdvisor struct {
 
 // Check checks for encoding allowlist.
 func (*EncodingAllowlistAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.Node)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Node")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	payload, err := advisor.UnmarshalStringArrayTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	stringArrayPayload := checkCtx.Rule.GetStringArrayPayload()
+
+	// Convert allowlist to lowercase for case-insensitive comparison
+	allowlist := make(map[string]bool)
+	for _, encoding := range stringArrayPayload.List {
+		allowlist[strings.ToLower(encoding)] = true
 	}
 
-	checker := &encodingAllowlistChecker{
-		level:     level,
-		title:     string(checkCtx.Rule.Type),
-		allowlist: make(map[string]bool),
+	rule := &encodingAllowlistRule{
+		BaseRule: BaseRule{
+			level: level,
+			title: checkCtx.Rule.Type.String(),
+		},
+		allowlist: allowlist,
 	}
 
-	for _, encoding := range payload.List {
-		checker.allowlist[strings.ToLower(encoding)] = true
-	}
+	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		ast.Walk(checker, stmt)
-	}
-
-	return checker.adviceList, nil
-}
-
-type encodingAllowlistChecker struct {
-	adviceList []*storepb.Advice
-	level      storepb.Advice_Status
-	title      string
-	text       string
-	line       int
-	allowlist  map[string]bool
-}
-
-// Visit implements the ast.Visitor interface.
-func (checker *encodingAllowlistChecker) Visit(in ast.Node) ast.Visitor {
-	code := advisor.Ok
-	var disabledEncoding string
-	line := checker.line
-	switch node := in.(type) {
-	case *ast.CreateDatabaseStmt:
-		encoding := getDatabaseEncoding(node.OptionList)
-		if _, exist := checker.allowlist[encoding]; encoding != "" && !exist {
-			code = advisor.DisabledCharset
-			disabledEncoding = encoding
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
 		}
-	default:
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
-	if code != advisor.Ok {
-		checker.adviceList = append(checker.adviceList, &storepb.Advice{
-			Status:        checker.level,
-			Code:          code.Int32(),
-			Title:         checker.title,
-			Content:       fmt.Sprintf("\"%s\" used disabled encoding '%s'", checker.text, disabledEncoding),
-			StartPosition: newPositionAtLineStart(line),
-		})
-	}
-
-	return checker
+	return checker.GetAdviceList(), nil
 }
 
-func getDatabaseEncoding(optionList []*ast.DatabaseOptionDef) string {
-	for _, option := range optionList {
-		if option.Type == ast.DatabaseOptionEncoding {
-			return strings.ToLower(option.Value)
+type encodingAllowlistRule struct {
+	BaseRule
+
+	allowlist map[string]bool
+}
+
+func (*encodingAllowlistRule) Name() string {
+	return "encoding-allowlist"
+}
+
+func (r *encodingAllowlistRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
+	switch nodeType {
+	case "Createdbstmt":
+		r.handleCreatedbstmt(ctx.(*parser.CreatedbstmtContext))
+	default:
+		// Do nothing for other node types
+	}
+	return nil
+}
+
+func (*encodingAllowlistRule) OnExit(_ antlr.ParserRuleContext, _ string) error {
+	return nil
+}
+
+func (r *encodingAllowlistRule) handleCreatedbstmt(ctx *parser.CreatedbstmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	// Extract encoding from createdb_opt_list
+	// Check both with and without WITH keyword
+	var encoding string
+	if ctx.Createdb_opt_list() != nil {
+		encoding = r.extractEncoding(ctx.Createdb_opt_list())
+	}
+
+	if encoding != "" {
+		// Check if encoding is in allowlist
+		if !r.allowlist[strings.ToLower(encoding)] {
+			r.AddAdvice(&storepb.Advice{
+				Status:  r.level,
+				Code:    code.DisabledCharset.Int32(),
+				Title:   r.title,
+				Content: fmt.Sprintf("\"\" used disabled encoding '%s'", strings.ToLower(encoding)),
+				StartPosition: &storepb.Position{
+					Line:   0,
+					Column: 0,
+				},
+			})
+		}
+	}
+}
+
+func (*encodingAllowlistRule) extractEncoding(optList parser.ICreatedb_opt_listContext) string {
+	if optList == nil {
+		return ""
+	}
+
+	// Iterate through all createdb_opt_items
+	if optList.Createdb_opt_items() == nil {
+		return ""
+	}
+
+	for _, item := range optList.Createdb_opt_items().AllCreatedb_opt_item() {
+		if item == nil {
+			continue
+		}
+
+		// Check if this is an ENCODING option
+		if item.Createdb_opt_name() != nil && item.Createdb_opt_name().ENCODING() != nil {
+			// Get the encoding value from Opt_boolean_or_string
+			if item.Opt_boolean_or_string() != nil {
+				// Could be a string constant or identifier
+				text := item.Opt_boolean_or_string().GetText()
+				// Remove quotes if present
+				if len(text) >= 2 && text[0] == '\'' && text[len(text)-1] == '\'' {
+					return text[1 : len(text)-1]
+				}
+				return text
+			}
 		}
 	}
 

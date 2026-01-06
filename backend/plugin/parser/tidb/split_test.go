@@ -1,0 +1,13 @@
+package tidb
+
+import (
+	"testing"
+
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
+)
+
+func TestTiDBSplitSQL(t *testing.T) {
+	base.RunSplitTests(t, "test-data/test_split.yaml", base.SplitTestOptions{
+		SplitFunc: SplitSQL,
+	})
+}

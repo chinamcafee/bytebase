@@ -8,7 +8,7 @@ import (
 	"github.com/antlr4-go/antlr/v4"
 	"github.com/pkg/errors"
 
-	snowsql "github.com/bytebase/snowsql-parser"
+	snowsql "github.com/bytebase/parser/snowflake"
 
 	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/plugin/db/util"
@@ -25,10 +25,16 @@ func getStatementWithResultLimit(statement string, limit int) string {
 }
 
 func getStatementWithResultLimitInline(singleStatement string, limitCount int) (string, error) {
-	result, err := snowparser.ParseSnowSQL(singleStatement)
+	results, err := snowparser.ParseSnowSQL(singleStatement)
 	if err != nil {
 		return "", err
 	}
+
+	if len(results) != 1 {
+		return "", errors.Errorf("expected exactly 1 statement, got %d", len(results))
+	}
+
+	result := results[0]
 
 	listener := &snowsqlRewriter{
 		limitCount:     limitCount,

@@ -3,8 +3,8 @@
     <div class="mx-auto w-full max-w-sm">
       <BytebaseLogo class="mx-auto" />
 
-      <div class="mt-8">
-        <NCard v-if="showSignInForm">
+      <div v-if="showSignInForm" class="mt-8">
+        <NCard>
           <NTabs
             class="card-tabs"
             :default-value="defaultTabValue"
@@ -17,7 +17,10 @@
               name="standard"
               tab="Standard"
             >
-              <PasswordSigninForm />
+              <PasswordSigninForm
+                :loading="state.isLoading"
+                @signin="trySignin"
+              />
 
               <div class="mt-3">
                 <div
@@ -58,8 +61,8 @@
                 :tab="identityProvider.title"
               >
                 <form
-                  class="space-y-6"
-                  @submit.prevent="trySignin(identityProvider.name)"
+                  class="flex flex-col gap-y-6"
+                  @submit.prevent="trySigninWithIdp(identityProvider.name)"
                 >
                   <div>
                     <label
@@ -69,7 +72,7 @@
                       {{ $t("common.username") }}
                       <RequiredStar />
                     </label>
-                    <div class="mt-1 rounded-md shadow-sm">
+                    <div class="mt-1 rounded-md shadow-xs">
                       <BBTextField
                         v-model:value="state.email"
                         required
@@ -90,7 +93,7 @@
                       </div>
                     </label>
                     <div
-                      class="relative flex flex-row items-center mt-1 rounded-md shadow-sm"
+                      class="relative flex flex-row items-center mt-1 rounded-md shadow-xs"
                     >
                       <BBTextField
                         v-model:value="state.password"
@@ -193,7 +196,10 @@ import {
   useIdentityProviderStore,
 } from "@/store";
 import { idpNamePrefix } from "@/store/modules/v1/common";
-import { LoginRequestSchema } from "@/types/proto-es/v1/auth_service_pb";
+import {
+  type LoginRequest,
+  LoginRequestSchema,
+} from "@/types/proto-es/v1/auth_service_pb";
 import type { IdentityProvider } from "@/types/proto-es/v1/idp_service_pb";
 import { IdentityProviderType } from "@/types/proto-es/v1/idp_service_pb";
 import { openWindowForSSO } from "@/utils";
@@ -201,9 +207,12 @@ import AuthFooter from "./AuthFooter.vue";
 
 const props = withDefaults(
   defineProps<{
+    redirect?: boolean;
+    redirectUrl?: string;
     allowSignup?: boolean;
   }>(),
   {
+    redirect: true,
     allowSignup: true,
   }
 );
@@ -303,18 +312,25 @@ const allowIdPSignin = computed(() => {
 });
 
 // Mainly for LDAP signin.
-const trySignin = async (idpName: string) => {
+const trySigninWithIdp = (idpName: string) => {
+  trySignin(
+    create(LoginRequestSchema, {
+      email: state.email,
+      password: state.password,
+      idpName: idpName,
+    })
+  );
+};
+
+const trySignin = async (request: LoginRequest) => {
   if (state.isLoading) return;
   state.isLoading = true;
   try {
-    await authStore.login(
-      create(LoginRequestSchema, {
-        email: state.email,
-        password: state.password,
-        web: true,
-        idpName: idpName,
-      })
-    );
+    await authStore.login({
+      request,
+      redirect: props.redirect,
+      redirectUrl: props.redirectUrl,
+    });
   } finally {
     state.isLoading = false;
   }

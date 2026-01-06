@@ -125,13 +125,17 @@ func (d *Driver) SyncDBSchema(ctx context.Context) (*storepb.DatabaseSchemaMetad
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get checks from database %q", d.databaseName)
 	}
-	tableMap, externalTableMap, tableOidMap, err := getTables(txn, isAtLeastPG10, columnMap, indexMap, triggerMap, checksMap, extensionDepend)
+	excludesMap, err := getExcludeConstraints(txn)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get exclude constraints from database %q", d.databaseName)
+	}
+	tableMap, externalTableMap, tableOidMap, err := getTables(txn, isAtLeastPG10, columnMap, indexMap, triggerMap, checksMap, excludesMap, extensionDepend)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get tables from database %q", d.databaseName)
 	}
 	var tablePartitionMap map[db.TableKey][]*storepb.TablePartitionMetadata
 	if isAtLeastPG10 {
-		tablePartitionMap, err = getTablePartitions(txn, indexMap, checksMap)
+		tablePartitionMap, err = getTablePartitions(txn, indexMap, checksMap, excludesMap)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to get table partitions from database %q", d.databaseName)
 		}
@@ -171,6 +175,11 @@ func (d *Driver) SyncDBSchema(ctx context.Context) (*storepb.DatabaseSchemaMetad
 		return nil, errors.Wrapf(err, "failed to get enum types from database %q", d.databaseName)
 	}
 
+	eventTriggers, err := getEventTriggers(txn, extensionDepend)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get event triggers from database %q", d.databaseName)
+	}
+
 	if err := txn.Commit(); err != nil {
 		return nil, err
 	}
@@ -206,6 +215,7 @@ func (d *Driver) SyncDBSchema(ctx context.Context) (*storepb.DatabaseSchemaMetad
 		})
 	}
 	databaseMetadata.Extensions = extensions
+	databaseMetadata.EventTriggers = eventTriggers
 
 	return databaseMetadata, err
 }
@@ -257,7 +267,10 @@ SELECT nsp.nspname, rel.relname, con.conname, pg_get_constraintdef(con.oid, true
     FROM pg_catalog.pg_constraint con
         INNER JOIN pg_catalog.pg_class rel ON rel.oid = con.conrelid
         INNER JOIN pg_catalog.pg_namespace nsp ON nsp.oid = connamespace
-        WHERE contype = 'c' and ` + fmt.Sprintf(`nsp.nspname NOT IN (%s)`, pgparser.SystemSchemaWhereClause)
+        WHERE contype = 'c' and ` + fmt.Sprintf(`nsp.nspname NOT IN (%s)
+        AND nsp.nspname NOT LIKE 'pg_temp%%'
+        AND nsp.nspname NOT LIKE 'pg_toast%%'
+        ORDER BY nsp.nspname, rel.relname, con.conname`, pgparser.SystemSchemaWhereClause)
 
 func getChecks(txn *sql.Tx) (map[db.TableKey][]*storepb.CheckConstraintMetadata, error) {
 	checksMap := make(map[db.TableKey][]*storepb.CheckConstraintMetadata)
@@ -284,6 +297,40 @@ func getChecks(txn *sql.Tx) (map[db.TableKey][]*storepb.CheckConstraintMetadata,
 	return checksMap, nil
 }
 
+var listExcludeConstraintsQuery = `
+SELECT nsp.nspname, rel.relname, con.conname, pg_get_constraintdef(con.oid, true)
+    FROM pg_catalog.pg_constraint con
+        INNER JOIN pg_catalog.pg_class rel ON rel.oid = con.conrelid
+        INNER JOIN pg_catalog.pg_namespace nsp ON nsp.oid = connamespace
+        WHERE contype = 'x' and ` + fmt.Sprintf(`nsp.nspname NOT IN (%s)
+        AND nsp.nspname NOT LIKE 'pg_temp%%'
+        AND nsp.nspname NOT LIKE 'pg_toast%%'`, pgparser.SystemSchemaWhereClause)
+
+func getExcludeConstraints(txn *sql.Tx) (map[db.TableKey][]*storepb.ExcludeConstraintMetadata, error) {
+	excludesMap := make(map[db.TableKey][]*storepb.ExcludeConstraintMetadata)
+	rows, err := txn.Query(listExcludeConstraintsQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var excludeMetadata storepb.ExcludeConstraintMetadata
+		var schemaName, tableName string
+		if err := rows.Scan(&schemaName, &tableName, &excludeMetadata.Name, &excludeMetadata.Expression); err != nil {
+			return nil, err
+		}
+		// Expression keeps full definition including "EXCLUDE" keyword
+
+		key := db.TableKey{Schema: schemaName, Table: tableName}
+		excludesMap[key] = append(excludesMap[key], &excludeMetadata)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return excludesMap, nil
+}
+
 var listForeignKeyQuery = `
 SELECT
 	n.nspname AS fk_schema,
@@ -300,6 +347,8 @@ FROM
 	JOIN pg_namespace n ON n.oid = c.connamespace` + fmt.Sprintf(`
 WHERE
 	n.nspname NOT IN(%s)
+	AND n.nspname NOT LIKE 'pg_temp%%'
+	AND n.nspname NOT LIKE 'pg_toast%%'
 	AND c.contype = 'f'
 	AND c.conparentid = 0
 ORDER BY fk_schema, fk_table, fk_name;`, pgparser.SystemSchemaWhereClause)
@@ -423,10 +472,12 @@ func formatTableNameFromRegclass(name string) string {
 }
 
 var listSchemaQuery = fmt.Sprintf(`
-SELECT oid, nspname, pg_catalog.pg_get_userbyid(nspowner) as schema_owner, 
+SELECT oid, nspname, pg_catalog.pg_get_userbyid(nspowner) as schema_owner,
        obj_description(oid, 'pg_namespace') as schema_comment
 FROM pg_catalog.pg_namespace
 WHERE nspname NOT IN (%s)
+  AND nspname NOT LIKE 'pg_temp%%'
+  AND nspname NOT LIKE 'pg_toast%%'
 ORDER BY nspname;
 `, pgparser.SystemSchemaWhereClause)
 
@@ -486,7 +537,9 @@ func getListTableQuery(isAtLeastPG10 bool) string {
 		tbl.tableowner
 	FROM pg_catalog.pg_tables tbl
 	LEFT JOIN pg_class as pc ON pc.oid = format('%s.%s', quote_ident(tbl.schemaname), quote_ident(tbl.tablename))::regclass` + fmt.Sprintf(`
-	WHERE tbl.schemaname NOT IN (%s)%s
+	WHERE tbl.schemaname NOT IN (%s)
+	  AND tbl.schemaname NOT LIKE 'pg_temp%%'
+	  AND tbl.schemaname NOT LIKE 'pg_toast%%'%s
 	ORDER BY tbl.schemaname, tbl.tablename;`, pgparser.SystemSchemaWhereClause, relisPartition)
 }
 
@@ -498,6 +551,7 @@ func getTables(
 	indexMap map[db.TableKey][]*storepb.IndexMetadata,
 	triggerMap map[db.TableKey][]*storepb.TriggerMetadata,
 	checksMap map[db.TableKey][]*storepb.CheckConstraintMetadata,
+	excludesMap map[db.TableKey][]*storepb.ExcludeConstraintMetadata,
 	extensionDepend map[int]bool,
 ) (map[string][]*storepb.TableMetadata, map[string][]*storepb.ExternalTableMetadata, map[int]*db.TableKeyWithColumns, error) {
 	foreignKeysMap, err := getForeignKeys(txn)
@@ -541,6 +595,7 @@ func getTables(
 		table.ForeignKeys = foreignKeysMap[key]
 		table.Triggers = triggerMap[key]
 		table.CheckConstraints = checksMap[key]
+		table.ExcludeConstraints = excludesMap[key]
 
 		tableMap[schemaName] = append(tableMap[schemaName], table)
 		tableOidMap[oid] = &db.TableKeyWithColumns{Schema: schemaName, Table: table.Name, Columns: table.Columns}
@@ -611,9 +666,11 @@ WHERE
 	((c.relkind = 'r'::"char") OR (c.relkind = 'f'::"char") OR (c.relkind = 'p'::"char"))
 	AND c.relispartition IS TRUE ` + fmt.Sprintf(`
 	AND n.nspname NOT IN (%s)
+	AND n.nspname NOT LIKE 'pg_temp%%'
+	AND n.nspname NOT LIKE 'pg_toast%%'
 ORDER BY c.oid;`, pgparser.SystemSchemaWhereClause)
 
-func getTablePartitions(txn *sql.Tx, indexMap map[db.TableKey][]*storepb.IndexMetadata, checksMap map[db.TableKey][]*storepb.CheckConstraintMetadata) (map[db.TableKey][]*storepb.TablePartitionMetadata, error) {
+func getTablePartitions(txn *sql.Tx, indexMap map[db.TableKey][]*storepb.IndexMetadata, checksMap map[db.TableKey][]*storepb.CheckConstraintMetadata, excludesMap map[db.TableKey][]*storepb.ExcludeConstraintMetadata) (map[db.TableKey][]*storepb.TablePartitionMetadata, error) {
 	result := make(map[db.TableKey][]*storepb.TablePartitionMetadata)
 	rows, err := txn.Query(listTablePartitionQuery)
 	if err != nil {
@@ -632,11 +689,12 @@ func getTablePartitions(txn *sql.Tx, indexMap map[db.TableKey][]*storepb.IndexMe
 		key := db.TableKey{Schema: schemaName, Table: tableName}
 		inhKey := db.TableKey{Schema: inhSchemaName, Table: inhTableName}
 		metadata := &storepb.TablePartitionMetadata{
-			Name:             tableName,
-			Expression:       partKeyDef,
-			Value:            relPartBound,
-			Indexes:          indexMap[key],
-			CheckConstraints: checksMap[key],
+			Name:               tableName,
+			Expression:         partKeyDef,
+			Value:              relPartBound,
+			Indexes:            indexMap[key],
+			CheckConstraints:   checksMap[key],
+			ExcludeConstraints: excludesMap[key],
 		}
 		switch strings.ToLower(partitionType) {
 		case "l":
@@ -725,6 +783,8 @@ SELECT
 	pg_catalog.col_description(format('%s.%s', quote_ident(table_schema), quote_ident(table_name))::regclass, cols.ordinal_position::int) as column_comment
 FROM INFORMATION_SCHEMA.COLUMNS AS cols` + fmt.Sprintf(`
 WHERE cols.table_schema NOT IN (%s)
+  AND cols.table_schema NOT LIKE 'pg_temp%%'
+  AND cols.table_schema NOT LIKE 'pg_toast%%'
 ORDER BY cols.table_schema, cols.table_name, cols.ordinal_position;`, pgparser.SystemSchemaWhereClause)
 
 // getTableColumns gets the columns of a table.
@@ -825,6 +885,8 @@ SELECT pc.oid, schemaname, matviewname, definition, obj_description(format('%s.%
 FROM pg_catalog.pg_matviews
 	LEFT JOIN pg_class as pc ON pc.oid = format('%s.%s', quote_ident(schemaname), quote_ident(matviewname))::regclass` + fmt.Sprintf(`
 WHERE schemaname NOT IN (%s)
+  AND schemaname NOT LIKE 'pg_temp%%'
+  AND schemaname NOT LIKE 'pg_toast%%'
 ORDER BY schemaname, matviewname;`, pgparser.SystemSchemaWhereClause)
 
 func getMaterializedViews(txn *sql.Tx, indexMap map[db.TableKey][]*storepb.IndexMetadata, triggerMap map[db.TableKey][]*storepb.TriggerMetadata, extensionDepend map[int]bool) (map[string][]*storepb.MaterializedViewMetadata, map[int]*db.TableKey, error) {
@@ -889,6 +951,8 @@ SELECT pc.oid, schemaname, viewname, definition, obj_description(format('%s.%s',
 FROM pg_catalog.pg_views
 	LEFT JOIN pg_class as pc ON pc.oid = format('%s.%s', quote_ident(schemaname), quote_ident(viewname))::regclass` + fmt.Sprintf(`
 WHERE schemaname NOT IN (%s)
+  AND schemaname NOT LIKE 'pg_temp%%'
+  AND schemaname NOT LIKE 'pg_toast%%'
 ORDER BY schemaname, viewname;`, pgparser.SystemSchemaWhereClause)
 
 // getViews gets all views of a database.
@@ -998,27 +1062,51 @@ func getViewDependencies(txn *sql.Tx, schemaName, viewName string) ([]*storepb.D
 func getRules(txn *sql.Tx) (map[db.TableKey][]*storepb.RuleMetadata, error) {
 	ruleMap := make(map[db.TableKey][]*storepb.RuleMetadata)
 
+	// Use CTE to avoid calling pg_get_ruledef multiple times per row.
+	// Extract condition from definition using string functions instead of pg_get_expr,
+	// because pg_get_expr fails with "expression contains variables of more than one relation"
+	// when the rule condition references both the table and NEW/OLD pseudo-relations.
 	query := `
-		SELECT 
-			n.nspname AS schema_name,
-			c.relname AS table_name,
-			r.rulename AS rule_name,
-			CASE r.ev_type
+		WITH rule_data AS (
+			SELECT
+				n.nspname AS schema_name,
+				c.relname AS table_name,
+				r.rulename AS rule_name,
+				r.ev_type,
+				r.is_instead,
+				r.ev_enabled,
+				pg_get_ruledef(r.oid, true) AS definition
+			FROM pg_rewrite r
+			JOIN pg_class c ON c.oid = r.ev_class
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE r.rulename NOT IN ('_RETURN', '_NOTHING')
+				AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+		)
+		SELECT
+			schema_name,
+			table_name,
+			rule_name,
+			CASE ev_type
 				WHEN '1' THEN 'SELECT'
 				WHEN '2' THEN 'UPDATE'
 				WHEN '3' THEN 'INSERT'
 				WHEN '4' THEN 'DELETE'
 			END AS event,
-			r.is_instead,
-			r.ev_enabled != 'D' AS is_enabled,
-			pg_get_expr(r.ev_qual, r.ev_class, true) AS condition,
-			pg_get_ruledef(r.oid, true) AS definition
-		FROM pg_rewrite r
-		JOIN pg_class c ON c.oid = r.ev_class
-		JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE r.rulename NOT IN ('_RETURN', '_NOTHING')
-			AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
-		ORDER BY n.nspname, c.relname, r.rulename;`
+			is_instead,
+			ev_enabled != 'D' AS is_enabled,
+			CASE
+				WHEN position(' WHERE ' IN definition) > 0
+					AND position(' WHERE ' IN definition) < position(' DO ' IN definition) THEN
+					trim(substring(
+						definition
+						FROM position(' WHERE ' IN definition) + 7
+						FOR position(' DO ' IN definition) - position(' WHERE ' IN definition) - 7
+					))
+				ELSE NULL
+			END AS condition,
+			definition
+		FROM rule_data
+		ORDER BY schema_name, table_name, rule_name;`
 
 	rows, err := txn.Query(query)
 	if err != nil {
@@ -1110,6 +1198,8 @@ func getEnumTypes(txn *sql.Tx, extensionDepend map[int]bool) (map[string][]*stor
 		LEFT JOIN pg_type as pt ON pe.enumtypid = pt.oid
 		LEFT JOIN pg_namespace as pn ON pt.typnamespace = pn.oid
 	WHERE pn.nspname NOT IN (%s)
+	  AND pn.nspname NOT LIKE 'pg_temp%%'
+	  AND pn.nspname NOT LIKE 'pg_toast%%'
 	ORDER BY pn.nspname, pt.typname, pe.enumsortorder;`
 	rows, err := txn.Query(fmt.Sprintf(query, pgparser.SystemSchemaWhereClause))
 	if err != nil {
@@ -1175,7 +1265,7 @@ func getSequences(txn *sql.Tx, tableOidMap map[int]*db.TableKeyWithColumns, exte
 		return nil, errors.Wrapf(err, "failed to get sequence owners")
 	}
 
-	query := `
+	query := fmt.Sprintf(`
 	SELECT
 		pc.oid,
 		schemaname,
@@ -1190,8 +1280,11 @@ func getSequences(txn *sql.Tx, tableOidMap map[int]*db.TableKeyWithColumns, exte
 		last_value,
 		pg_catalog.obj_description(pc.oid) as sequence_comment
 	FROM pg_sequences
-		LEFT JOIN pg_class as pc ON pc.oid = format('%s.%s', quote_ident(schemaname), quote_ident(sequencename))::regclass
-	ORDER BY schemaname, sequencename;`
+		LEFT JOIN pg_class as pc ON pc.oid = format('%%s.%%s', quote_ident(schemaname), quote_ident(sequencename))::regclass
+	WHERE schemaname NOT IN (%s)
+	  AND schemaname NOT LIKE 'pg_temp%%%%'
+	  AND schemaname NOT LIKE 'pg_toast%%%%'
+	ORDER BY schemaname, sequencename;`, pgparser.SystemSchemaWhereClause)
 	rows, err := txn.Query(query)
 	if err != nil {
 		return nil, err
@@ -1334,6 +1427,102 @@ func getTriggers(txn *sql.Tx, extensionDepend map[int]bool) (map[db.TableKey][]*
 	return triggersMap, nil
 }
 
+func getEventTriggers(txn *sql.Tx, extensionDepend map[int]bool) ([]*storepb.EventTriggerMetadata, error) {
+	query := `
+	SELECT
+		et.oid,
+		et.evtname AS trigger_name,
+		et.evtevent AS event_type,
+		et.evttags AS tags,
+		n.nspname AS function_schema,
+		p.proname AS function_name,
+		et.evtenabled AS enabled,
+		obj_description(et.oid, 'pg_event_trigger') AS comment
+	FROM pg_event_trigger et
+	JOIN pg_proc p ON et.evtfoid = p.oid
+	JOIN pg_namespace n ON p.pronamespace = n.oid
+	ORDER BY et.evtname;`
+
+	rows, err := txn.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var eventTriggers []*storepb.EventTriggerMetadata
+	for rows.Next() {
+		var oid int
+		var name, eventType, functionSchema, functionName, enabled string
+		var tags pq.StringArray
+		var comment sql.NullString
+
+		if err := rows.Scan(&oid, &name, &eventType, &tags, &functionSchema,
+			&functionName, &enabled, &comment); err != nil {
+			return nil, err
+		}
+
+		eventTrigger := &storepb.EventTriggerMetadata{
+			Name:           name,
+			Event:          eventType,
+			Tags:           []string(tags),
+			FunctionSchema: functionSchema,
+			FunctionName:   functionName,
+			Enabled:        enabled != "D", // D = disabled
+		}
+
+		// Build the CREATE EVENT TRIGGER definition manually
+		// PostgreSQL doesn't have pg_get_event_trigger_def() function
+		eventTrigger.Definition = buildEventTriggerDefinition(eventTrigger)
+
+		if comment.Valid {
+			eventTrigger.Comment = comment.String
+		}
+		if extensionDepend[oid] {
+			eventTrigger.SkipDump = true
+		}
+
+		eventTriggers = append(eventTriggers, eventTrigger)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return eventTriggers, nil
+}
+
+// buildEventTriggerDefinition constructs the CREATE EVENT TRIGGER statement from metadata.
+func buildEventTriggerDefinition(et *storepb.EventTriggerMetadata) string {
+	var buf strings.Builder
+	buf.WriteString("CREATE EVENT TRIGGER ")
+	buf.WriteString(fmt.Sprintf("%q", et.Name))
+	buf.WriteString(" ON ")
+	buf.WriteString(et.Event)
+
+	if len(et.Tags) > 0 {
+		buf.WriteString("\n  WHEN TAG IN (")
+		for i, tag := range et.Tags {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			buf.WriteString("'")
+			buf.WriteString(tag)
+			buf.WriteString("'")
+		}
+		buf.WriteString(")")
+	}
+
+	buf.WriteString("\n  EXECUTE FUNCTION ")
+	if et.FunctionSchema != "" {
+		buf.WriteString(fmt.Sprintf("%q", et.FunctionSchema))
+		buf.WriteString(".")
+	}
+	buf.WriteString(fmt.Sprintf("%q", et.FunctionName))
+	buf.WriteString("()")
+
+	return buf.String()
+}
+
 // getUniqueConstraints is no longer needed - we get constraint info directly from pg_constraint in the main query
 
 var listIndexQuery = `
@@ -1360,12 +1549,12 @@ SELECT
      JOIN pg_opclass op ON ix.indclass[k] = op.oid
      WHERE k < ix.indnkeyatts  -- Only key columns, not included columns
     ) as key_opclass_defaults,
-    -- Check if it's a constraint (primary key or unique constraint)
-    CASE 
+    -- Check if it's a constraint (primary key, unique, or exclude constraint)
+    CASE
         WHEN ix.indisprimary THEN true
         WHEN EXISTS (
-            SELECT 1 FROM pg_constraint c 
-            WHERE c.conindid = i.oid AND c.contype IN ('u', 'p')
+            SELECT 1 FROM pg_constraint c
+            WHERE c.conindid = i.oid AND c.contype IN ('u', 'p', 'x')
         ) THEN true
         ELSE false
     END as is_constraint,
@@ -1378,6 +1567,8 @@ JOIN pg_class t ON ix.indrelid = t.oid
 JOIN pg_namespace n ON t.relnamespace = n.oid
 JOIN pg_am am ON i.relam = am.oid` + fmt.Sprintf(`
 WHERE n.nspname NOT IN (%s)
+  AND n.nspname NOT LIKE 'pg_temp%%'
+  AND n.nspname NOT LIKE 'pg_toast%%'
 ORDER BY n.nspname, t.relname, i.relname;`, pgparser.SystemSchemaWhereClause)
 
 // parseIndexOptions parses PostgreSQL indoption int2vector to extract sort order information
@@ -1499,7 +1690,10 @@ from pg_proc p
 	left join pg_depend d on p.oid = d.objid
 	left join pg_type pt on d.refobjid = pt.oid
 	left join pg_namespace n on p.pronamespace = n.oid` + fmt.Sprintf(`
-where n.nspname not in (%s) AND pt.typrelid IS NOT NULL
+where n.nspname not in (%s)
+  AND n.nspname NOT LIKE 'pg_temp%%'
+  AND n.nspname NOT LIKE 'pg_toast%%'
+  AND pt.typrelid IS NOT NULL
 `, pgparser.SystemSchemaWhereClause)
 
 func getFunctionDependencyTables(txn *sql.Tx) (map[int][]int, error) {
@@ -1539,6 +1733,8 @@ left join pg_namespace n on p.pronamespace = n.oid
 left join pg_language l on p.prolang = l.oid
 left join pg_type t on t.oid = p.prorettype ` + fmt.Sprintf(`
 where n.nspname not in (%s)
+  AND n.nspname NOT LIKE 'pg_temp%%'
+  AND n.nspname NOT LIKE 'pg_toast%%'
 order by function_schema, function_name;`, pgparser.SystemSchemaWhereClause)
 
 // getFunctions gets all functions of a database.

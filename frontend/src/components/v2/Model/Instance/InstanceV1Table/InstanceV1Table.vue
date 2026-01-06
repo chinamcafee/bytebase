@@ -12,28 +12,36 @@
     :row-props="rowProps"
     :paginate-single-page="false"
     @update:checked-row-keys="
-        (val) => $emit('update:selected-instance-names', val as string[])
-      "
+      (val) => $emit('update:selected-instance-names', val as string[])
+    "
+    @update:sorter="$emit('update:sorters', $event)"
   />
 </template>
 
 <script setup lang="tsx">
 import {
-  ExternalLinkIcon,
   ChevronDownIcon,
   ChevronUpIcon,
+  ExternalLinkIcon,
 } from "lucide-vue-next";
-import { NButton, NDataTable, type DataTableColumn } from "naive-ui";
+import {
+  type DataTableColumn,
+  type DataTableSortState,
+  NButton,
+  NDataTable,
+} from "naive-ui";
 import { computed, reactive, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
+import EllipsisText from "@/components/EllipsisText.vue";
 import { InstanceV1Name } from "@/components/v2";
 import { LabelsCell } from "@/components/v2/Model/cells";
 import { useEnvironmentV1Store } from "@/store";
 import { NULL_ENVIRONMENT_NAME } from "@/types";
 import type { Instance } from "@/types/proto-es/v1/instance_service_pb";
-import { urlfy, hostPortOfInstanceV1, hostPortOfDataSource } from "@/utils";
+import { hostPortOfDataSource, hostPortOfInstanceV1, urlfy } from "@/utils";
 import EnvironmentV1Name from "../../EnvironmentV1Name.vue";
+import { mapSorterStatus } from "../../utils";
 
 type InstanceDataTableColumn = DataTableColumn<Instance> & {
   hide?: boolean;
@@ -56,6 +64,7 @@ const props = withDefaults(
     showAddress?: boolean;
     showExternalLink?: boolean;
     onClick?: (instance: Instance, e: MouseEvent) => void;
+    sorters?: DataTableSortState[];
   }>(),
   {
     bordered: true,
@@ -71,6 +80,7 @@ const props = withDefaults(
 
 defineEmits<{
   (event: "update:selected-instance-names", val: string[]): void;
+  (event: "update:sorters", sorters: DataTableSortState[]): void;
 }>();
 
 const { t } = useI18n();
@@ -119,6 +129,10 @@ const columnList = computed((): InstanceDataTableColumn[] => {
     title: t("common.environment"),
     className: "whitespace-nowrap",
     resizable: true,
+    ellipsis: {
+      tooltip: true,
+    },
+    minWidth: 300,
     render: (instance) => (
       <EnvironmentV1Name
         environment={environmentStore.getEnvironmentByName(
@@ -138,13 +152,13 @@ const columnList = computed((): InstanceDataTableColumn[] => {
     render: (instance) => {
       return (
         <div class={"flex items-start gap-x-2"}>
-          <div>
+          <EllipsisText>
             {state.dataSourceToggle.has(instance.name)
               ? instance.dataSources.map((ds) => (
                   <div>{hostPortOfDataSource(ds)}</div>
                 ))
               : hostPortOfInstanceV1(instance)}
-          </div>
+          </EllipsisText>
           {instance.dataSources.length > 1 ? (
             <NButton
               quaternary
@@ -196,7 +210,7 @@ const columnList = computed((): InstanceDataTableColumn[] => {
     render: (instance) => (instance.activation ? "Y" : ""),
   };
 
-  return [
+  const columns: InstanceDataTableColumn[] = [
     SELECTION,
     NAME,
     ENVIRONMENT,
@@ -205,6 +219,7 @@ const columnList = computed((): InstanceDataTableColumn[] => {
     EXTERNAL_LINK,
     LICENSE,
   ].filter((column) => !column.hide);
+  return mapSorterStatus(columns, props.sorters);
 });
 
 const handleDataSourceToggle = (e: MouseEvent, instance: Instance) => {

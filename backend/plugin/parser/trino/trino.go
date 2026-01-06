@@ -6,19 +6,39 @@ import (
 	"unicode"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/trino-parser"
+	parser "github.com/bytebase/parser/trino"
+	"github.com/pkg/errors"
 
+	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
-// ParseResult is the result of parsing a Trino statement.
-type ParseResult struct {
-	Tree   antlr.Tree
-	Tokens *antlr.CommonTokenStream
+// ParseTrino parses the given SQL statement and returns a list of ANTLRAST.
+// Each ANTLRAST represents one statement with its AST, tokens, and start position.
+func ParseTrino(sql string) ([]*base.ANTLRAST, error) {
+	stmts, err := SplitSQL(sql)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to split SQL")
+	}
+
+	var results []*base.ANTLRAST
+	for _, stmt := range stmts {
+		if stmt.Empty {
+			continue
+		}
+
+		parseResult, err := parseSingleTrino(stmt.Text, stmt.BaseLine())
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, parseResult)
+	}
+
+	return results, nil
 }
 
-// ParseTrino parses the given SQL and returns the ParseResult.
-func ParseTrino(sql string) (*ParseResult, error) {
+// parseSingleTrino parses a single Trino statement and returns the ANTLRAST.
+func parseSingleTrino(sql string, baseLine int) (*base.ANTLRAST, error) {
 	// Add a semicolon if it's missing to allow users to omit the semicolon
 	trimmedSQL := strings.TrimRightFunc(sql, unicode.IsSpace)
 	if len(trimmedSQL) > 0 && !strings.HasSuffix(trimmedSQL, ";") {
@@ -31,14 +51,17 @@ func ParseTrino(sql string) (*ParseResult, error) {
 	p := parser.NewTrinoParser(stream)
 
 	// Set up error listeners
+	startPosition := &storepb.Position{Line: int32(baseLine) + 1}
 	lexerErrorListener := &base.ParseErrorListener{
-		Statement: sql,
+		Statement:     sql,
+		StartPosition: startPosition,
 	}
 	lexer.RemoveErrorListeners()
 	lexer.AddErrorListener(lexerErrorListener)
 
 	parserErrorListener := &base.ParseErrorListener{
-		Statement: sql,
+		Statement:     sql,
+		StartPosition: startPosition,
 	}
 	p.RemoveErrorListeners()
 	p.AddErrorListener(parserErrorListener)
@@ -57,10 +80,11 @@ func ParseTrino(sql string) (*ParseResult, error) {
 		return nil, parserErrorListener.Err
 	}
 
-	// Return the parse result
-	return &ParseResult{
-		Tree:   tree,
-		Tokens: stream,
+	// Return the ANTLR AST
+	return &base.ANTLRAST{
+		StartPosition: startPosition,
+		Tree:          tree,
+		Tokens:        stream,
 	}, nil
 }
 

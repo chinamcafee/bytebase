@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -20,6 +22,13 @@ func validateIAMBinding(binding *storepb.Binding) bool {
 		return false
 	}
 	return ok
+}
+
+func FormatGroupName(group *store.GroupMessage) string {
+	if group.Email != "" {
+		return common.FormatGroupEmail(group.Email)
+	}
+	return common.FormatGroupEmail(group.ID)
 }
 
 // GetUsersByRoleInIAMPolicy gets users in the iam policy.
@@ -66,8 +75,32 @@ func GetUsersByRoleInIAMPolicy(ctx context.Context, stores *store.Store, role st
 	return users
 }
 
+// GetGroupByName finds a group by identifier which can be either:
+//   - Azure objectId (UUID format, no @) - used as group ID in new deployments
+//   - Group email (contains @) - used as group ID in legacy deployments
+//
+// This supports both attribute mapping configurations in Azure Entra ID.
+func GetGroupByName(ctx context.Context, stores *store.Store, name string) (*store.GroupMessage, error) {
+	identifier, err := common.GetGroupEmail(name)
+	if err != nil {
+		return nil, err
+	}
+	find := &store.FindGroupMessage{}
+	if strings.Contains(identifier, "@") {
+		find.Email = &identifier
+	} else {
+		find.ID = &identifier
+	}
+
+	group, err := stores.GetGroup(ctx, find)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get group %q", name)
+	}
+	return group, nil
+}
+
 // GetUsersByMember gets user messages by member.
-// The member should in users/{uid} or groups/{email} format.
+// The member should be in users/{email} or groups/{email} format.
 func GetUsersByMember(ctx context.Context, stores *store.Store, member string) []*store.UserMessage {
 	var users []*store.UserMessage
 	if strings.HasPrefix(member, common.UserNamePrefix) {
@@ -76,12 +109,7 @@ func GetUsersByMember(ctx context.Context, stores *store.Store, member string) [
 			users = append(users, user)
 		}
 	} else if strings.HasPrefix(member, common.GroupPrefix) {
-		groupEmail, err := common.GetGroupEmail(member)
-		if err != nil {
-			slog.Error("failed to parse group email", slog.String("group", member), log.BBError(err))
-			return users
-		}
-		group, err := stores.GetGroup(ctx, groupEmail)
+		group, err := GetGroupByName(ctx, stores, member)
 		if err != nil {
 			slog.Error("failed to get group", slog.String("group", member), log.BBError(err))
 			return users
@@ -101,16 +129,16 @@ func GetUsersByMember(ctx context.Context, stores *store.Store, member string) [
 }
 
 // getUserByIdentifier gets user message by identifier.
-// The identifier should in users/{uid} format.
+// The identifier should be in users/{email} format.
 func getUserByIdentifier(ctx context.Context, stores *store.Store, identifier string) *store.UserMessage {
-	userUID, err := common.GetUserID(identifier)
+	email, err := common.GetUserEmail(identifier)
 	if err != nil {
-		slog.Error("failed to parse user id", slog.String("user", identifier), log.BBError(err))
+		slog.Error("failed to parse user email", slog.String("user", identifier), log.BBError(err))
 		return nil
 	}
-	user, err := stores.GetUserByID(ctx, userUID)
+	user, err := stores.GetUserByEmail(ctx, email)
 	if err != nil {
-		slog.Error("failed to get user", slog.String("user", identifier), log.BBError(err))
+		slog.Error("failed to get user by email", slog.String("user", identifier), log.BBError(err))
 		return nil
 	}
 	return user
@@ -118,7 +146,7 @@ func getUserByIdentifier(ctx context.Context, stores *store.Store, identifier st
 
 // GetUserIAMPolicyBindings return the valid bindings for the user.
 func GetUserIAMPolicyBindings(ctx context.Context, stores *store.Store, user *store.UserMessage, policies ...*storepb.IamPolicy) []*storepb.Binding {
-	userIDFullName := common.FormatUserUID(user.ID)
+	userEmailFullName := common.FormatUserEmail(user.Email)
 
 	var bindings []*storepb.Binding
 
@@ -134,17 +162,12 @@ func GetUserIAMPolicyBindings(ctx context.Context, stores *store.Store, user *st
 					hasUser = true
 					break
 				}
-				if userIDFullName == member {
+				if userEmailFullName == member {
 					hasUser = true
 					break
 				}
 				if strings.HasPrefix(member, common.GroupPrefix) {
-					groupEmail, err := common.GetGroupEmail(member)
-					if err != nil {
-						slog.Error("failed to parse group email", slog.String("group", member), log.BBError(err))
-						continue
-					}
-					group, err := stores.GetGroup(ctx, groupEmail)
+					group, err := GetGroupByName(ctx, stores, member)
 					if err != nil {
 						slog.Error("failed to get group", slog.String("group", member), log.BBError(err))
 						continue
@@ -154,7 +177,7 @@ func GetUserIAMPolicyBindings(ctx context.Context, stores *store.Store, user *st
 						continue
 					}
 					for _, member := range group.Payload.Members {
-						if userIDFullName == member.Member {
+						if userEmailFullName == member.Member {
 							hasUser = true
 							break
 						}
@@ -173,7 +196,7 @@ func GetUserIAMPolicyBindings(ctx context.Context, stores *store.Store, user *st
 }
 
 // MemberContainsUser checks if a member (user or group) contains the specified user.
-// The member should be in users/{uid} or groups/{email} format.
+// The member should be in users/{email} or groups/{email} format.
 func MemberContainsUser(ctx context.Context, stores *store.Store, member string, user *store.UserMessage) bool {
 	if member == common.AllUsers {
 		return true
@@ -181,22 +204,17 @@ func MemberContainsUser(ctx context.Context, stores *store.Store, member string,
 
 	// Check if member is a user
 	if strings.HasPrefix(member, common.UserNamePrefix) {
-		memberUID, err := common.GetUserID(member)
+		memberEmail, err := common.GetUserEmail(member)
 		if err != nil {
-			slog.Error("failed to parse user id", slog.String("member", member), log.BBError(err))
+			slog.Error("failed to parse user email", slog.String("member", member), log.BBError(err))
 			return false
 		}
-		return memberUID == user.ID
+		return memberEmail == user.Email
 	}
 
 	// Check if member is a group
 	if strings.HasPrefix(member, common.GroupPrefix) {
-		groupEmail, err := common.GetGroupEmail(member)
-		if err != nil {
-			slog.Error("failed to parse group email", slog.String("group", member), log.BBError(err))
-			return false
-		}
-		group, err := stores.GetGroup(ctx, groupEmail)
+		group, err := GetGroupByName(ctx, stores, member)
 		if err != nil {
 			slog.Error("failed to get group", slog.String("group", member), log.BBError(err))
 			return false
@@ -205,9 +223,9 @@ func MemberContainsUser(ctx context.Context, stores *store.Store, member string,
 			slog.Error("cannot find group", slog.String("group", member))
 			return false
 		}
-		userIDFullName := common.FormatUserUID(user.ID)
+		userEmailFullName := common.FormatUserEmail(user.Email)
 		for _, groupMember := range group.Payload.Members {
-			if userIDFullName == groupMember.Member {
+			if userEmailFullName == groupMember.Member {
 				return true
 			}
 		}
@@ -228,7 +246,7 @@ func GetUserRolesInIamPolicy(ctx context.Context, stores *store.Store, user *sto
 			roles = append(roles, binding.Role)
 		}
 	}
-	roles = Uniq(roles)
+	roles = common.Uniq(roles)
 
 	return roles
 }

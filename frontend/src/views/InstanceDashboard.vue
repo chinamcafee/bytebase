@@ -1,28 +1,33 @@
 <template>
-  <div class="flex flex-col space-y-4">
+  <div class="flex flex-col gap-y-4">
     <BBAttention
       v-if="remainingInstanceCount <= 3"
       :type="'warning'"
       :title="$t('subscription.usage.instance-count.title')"
       :description="instanceCountAttention"
     />
-    <div class="px-4 flex items-center space-x-2">
+    <div class="px-4 flex items-center gap-x-2">
       <AdvancedSearch
         v-model:params="state.params"
         :autofocus="false"
         :placeholder="$t('instance.filter-instance-name')"
         :scope-options="scopeOptions"
       />
-      <NButton
-        v-if="hasWorkspacePermissionV2('bb.instances.create')"
-        type="primary"
-        @click="showCreateInstanceDrawer"
+      <PermissionGuardWrapper
+        v-slot="slotProps"
+        :permissions="['bb.instances.create']"
       >
-        <template #icon>
-          <PlusIcon class="h-4 w-4" />
-        </template>
-        {{ $t("quick-action.add-instance") }}
-      </NButton>
+        <NButton
+          type="primary"
+          :disabled="slotProps.disabled"
+          @click="showCreateInstanceDrawer"
+        >
+          <template #icon>
+            <PlusIcon class="h-4 w-4" />
+          </template>
+          {{ $t("quick-action.add-instance") }}
+        </NButton>
+      </PermissionGuardWrapper>
     </div>
     <div>
       <InstanceOperations
@@ -82,6 +87,7 @@ import {
   Form as InstanceFormBody,
   Buttons as InstanceFormButtons,
 } from "@/components/InstanceForm/";
+import PermissionGuardWrapper from "@/components/Permission/PermissionGuardWrapper.vue";
 import {
   Drawer,
   DrawerContent,
@@ -98,7 +104,11 @@ import { environmentNamePrefix } from "@/store/modules/v1/common";
 import { isValidInstanceName } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import type { Instance } from "@/types/proto-es/v1/instance_service_pb";
-import { type SearchParams, hasWorkspacePermissionV2 } from "@/utils";
+import {
+  getValueFromSearchParams,
+  getValuesFromSearchParams,
+  type SearchParams,
+} from "@/utils";
 
 interface LocalState {
   params: SearchParams;
@@ -138,44 +148,29 @@ const onInstanceCreated = (instance: Instance) => {
 };
 
 const selectedEnvironment = computed(() => {
-  const environmentId = state.params.scopes.find(
-    (scope) => scope.id === "environment"
-  )?.value;
-  if (!environmentId) {
-    return;
-  }
-  return `${environmentNamePrefix}${environmentId}`;
+  return getValueFromSearchParams(
+    state.params,
+    "environment",
+    environmentNamePrefix
+  );
 });
 
 const selectedHost = computed(() => {
-  return state.params.scopes.find((scope) => scope.id === "host")?.value ?? "";
+  return getValueFromSearchParams(state.params, "host");
 });
 
 const selectedPort = computed(() => {
-  return state.params.scopes.find((scope) => scope.id === "port")?.value ?? "";
+  return getValueFromSearchParams(state.params, "port");
 });
 
 const selectedEngines = computed(() => {
-  return state.params.scopes
-    .filter((scope) => scope.id === "engine")
-    .map((scope) => {
-      // Convert string scope value to Engine enum
-      const engineKey = scope.value.toUpperCase();
-      const engineValue = Engine[engineKey as keyof typeof Engine];
-      return typeof engineValue === "number"
-        ? engineValue
-        : Engine.ENGINE_UNSPECIFIED;
-    });
+  return getValuesFromSearchParams(state.params, "engine").map(
+    (engine) => Engine[engine as keyof typeof Engine]
+  );
 });
 
 const selectedLabels = computed(() => {
-  return state.params.scopes
-    .filter((scope) => scope.id === "label")
-    .map((scope) => {
-      // Parse label value format "key:value"
-      const [key, ...valueParts] = scope.value.split(":");
-      return { key, value: valueParts.join(":") };
-    });
+  return getValuesFromSearchParams(state.params, "label");
 });
 
 const filter = computed(() => ({

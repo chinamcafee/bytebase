@@ -8,9 +8,9 @@
   want:
     - status: 2
       code: 207
-      title: statement.merge-alter-table
+      title: STATEMENT_MERGE_ALTER_TABLE
       content: There are 2 statements to modify table `t`
       startposition:
-        line: 3
+        line: 2
         column: 0
       endposition: null

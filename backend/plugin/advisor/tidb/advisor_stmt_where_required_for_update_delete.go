@@ -4,11 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pkg/errors"
-
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	advisorcode "github.com/bytebase/bytebase/backend/plugin/advisor/code"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
@@ -19,7 +18,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleStatementRequireWhereForUpdateDelete, &WhereRequirementForUpdateDeleteAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_STATEMENT_WHERE_REQUIRE_UPDATE_DELETE, &WhereRequirementForUpdateDeleteAdvisor{})
 }
 
 // WhereRequirementForUpdateDeleteAdvisor is the advisor checking for the WHERE clause requirement for UPDATE and DELETE statements.
@@ -28,9 +27,10 @@ type WhereRequirementForUpdateDeleteAdvisor struct {
 
 // Check checks for the WHERE clause requirement.
 func (*WhereRequirementForUpdateDeleteAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	root, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -39,7 +39,7 @@ func (*WhereRequirementForUpdateDeleteAdvisor) Check(_ context.Context, checkCtx
 	}
 	checker := &whereRequirementForUpdateDeleteChecker{
 		level: level,
-		title: string(checkCtx.Rule.Type),
+		title: checkCtx.Rule.Type.String(),
 	}
 	for _, stmtNode := range root {
 		checker.text = stmtNode.Text()
@@ -60,21 +60,21 @@ type whereRequirementForUpdateDeleteChecker struct {
 
 // Enter implements the ast.Visitor interface.
 func (v *whereRequirementForUpdateDeleteChecker) Enter(in ast.Node) (ast.Node, bool) {
-	code := advisor.Ok
+	code := advisorcode.Ok
 	switch node := in.(type) {
 	// DELETE
 	case *ast.DeleteStmt:
 		if node.Where == nil {
-			code = advisor.StatementNoWhere
+			code = advisorcode.StatementNoWhere
 		}
 	// UPDATE
 	case *ast.UpdateStmt:
 		if node.Where == nil {
-			code = advisor.StatementNoWhere
+			code = advisorcode.StatementNoWhere
 		}
 	}
 
-	if code != advisor.Ok {
+	if code != advisorcode.Ok {
 		v.adviceList = append(v.adviceList, &storepb.Advice{
 			Status:        v.level,
 			Code:          code.Int32(),

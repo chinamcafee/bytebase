@@ -1,5 +1,5 @@
 <template>
-  <div class="w-full space-y-0 pt-4">
+  <div class="w-full flex flex-col gap-y-0 pt-4">
     <div class="divide-y divide-block-border">
       <!-- General Settings Section -->
       <div class="pb-6 lg:flex">
@@ -48,14 +48,14 @@
         </div>
       </div>
 
-      <div class="py-6 lg:flex">
+      <div class="py-6">
         <ProjectArchiveRestoreButton :project="project" />
       </div>
 
       <!-- Save/Cancel buttons -->
       <div v-if="allowEdit && isDirty" class="sticky bottom-0 z-10">
         <div
-          class="flex justify-between w-full py-4 border-block-border bg-white"
+          class="flex justify-between w-full py-4 border-t border-block-border bg-white"
         >
           <NButton @click.prevent="onRevert">
             {{ $t("common.cancel") }}
@@ -70,18 +70,17 @@
 </template>
 
 <script lang="ts" setup>
-import { useEventListener } from "@vueuse/core";
 import { NButton } from "naive-ui";
-import { ref, computed } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { onBeforeRouteLeave } from "vue-router";
+import { useRouteChangeGuard } from "@/composables/useRouteChangeGuard";
 import { pushNotification } from "@/store";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import ProjectArchiveRestoreButton from "./Project/ProjectArchiveRestoreButton.vue";
 import {
   ProjectGeneralSettingPanel,
-  ProjectSecuritySettingPanel,
   ProjectIssueRelatedSettingPanel,
+  ProjectSecuritySettingPanel,
 } from "./Project/Settings/";
 
 defineProps<{
@@ -110,22 +109,7 @@ const isDirty = computed(() => {
   return settingRefList.value.some((settingRef) => settingRef.value?.isDirty);
 });
 
-useEventListener("beforeunload", (e) => {
-  if (!isDirty.value) {
-    return;
-  }
-  e.returnValue = t("common.leave-without-saving");
-  return e.returnValue;
-});
-
-onBeforeRouteLeave((to, from, next) => {
-  if (isDirty.value) {
-    if (!window.confirm(t("common.leave-without-saving"))) {
-      return;
-    }
-  }
-  next();
-});
+useRouteChangeGuard(isDirty);
 
 const onUpdate = async () => {
   for (const settingRef of settingRefList.value) {

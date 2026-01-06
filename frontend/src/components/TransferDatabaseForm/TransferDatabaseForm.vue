@@ -1,9 +1,7 @@
 <template>
   <DrawerContent :title="$t('quick-action.transfer-in-db-title')">
-    <div
-      class="px-4 w-[calc(100vw-8rem)] lg:w-[60rem] max-w-[calc(100vw-8rem)]"
-    >
-      <div class="space-y-4">
+    <div class="px-4 w-[calc(100vw-8rem)] lg:w-240 max-w-[calc(100vw-8rem)]">
+      <div class="flex flex-col gap-y-4">
         <TransferSourceSelector
           v-model:transfer-source="state.transferSource"
           v-model:search-text="state.searchText"
@@ -14,12 +12,12 @@
         />
         <ProjectSelect
           v-if="state.transferSource == 'OTHER'"
-          class="!w-48"
+          class="w-48!"
           :include-all="false"
-          :project-name="state.fromProjectName"
+          :include-default-project="true"
+          :value="state.fromProjectName"
           :filter="filterSourceProject"
-          :default-select-first="true"
-          @update:project-name="changeProjectFilter"
+          @update:value="changeProjectFilter($event as (string | undefined))"
         />
         <template
           v-if="state.transferSource === 'OTHER' && !state.fromProjectName"
@@ -80,29 +78,27 @@
 import { create } from "@bufbuild/protobuf";
 import { FieldMaskSchema } from "@bufbuild/protobuf/wkt";
 import { NButton, NTooltip } from "naive-ui";
-import { computed, reactive, watchEffect } from "vue";
-import { toRef } from "vue";
+import { computed, reactive, toRef, watchEffect } from "vue";
 import {
   pushNotification,
   useDatabaseV1Store,
   useProjectByName,
 } from "@/store";
 import {
+  type ComposedDatabase,
   DEFAULT_PROJECT_NAME,
-  defaultProject,
   formatEnvironmentName,
   isValidProjectName,
-  type ComposedDatabase,
 } from "@/types";
 import {
+  BatchUpdateDatabasesRequestSchema,
   DatabaseSchema$,
   UpdateDatabaseRequestSchema,
-  BatchUpdateDatabasesRequestSchema,
 } from "@/types/proto-es/v1/database_service_pb";
 import type { InstanceResource } from "@/types/proto-es/v1/instance_service_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import type { Environment } from "@/types/v1/environment";
-import { hasProjectPermissionV2 } from "@/utils";
+import { hasWorkspacePermissionV2 } from "@/utils";
 import { DrawerContent, ProjectSelect } from "../v2";
 import { PagedDatabaseTable } from "../v2/Model/DatabaseV1Table";
 import TransferSourceSelector from "./TransferSourceSelector.vue";
@@ -163,7 +159,6 @@ const filter = computed(() => ({
     ? formatEnvironmentName(state.environmentFilter.id)
     : undefined,
   query: state.searchText,
-  excludeUnassigned: state.transferSource !== "DEFAULT",
 }));
 
 const allowTransfer = computed(() => state.selectedDatabaseNameList.length > 0);
@@ -174,15 +169,11 @@ const selectedDatabaseList = computed(() =>
   )
 );
 
-const hasTransferDatabasePermission = (project: Project): boolean => {
-  return (
-    hasProjectPermissionV2(project, "bb.databases.list") &&
-    hasProjectPermissionV2(project, "bb.projects.update")
-  );
-};
-
 const hasPermissionForDefaultProject = computed(() => {
-  return hasTransferDatabasePermission(defaultProject());
+  return (
+    hasWorkspacePermissionV2("bb.databases.list") &&
+    hasWorkspacePermissionV2("bb.projects.update")
+  );
 });
 
 watchEffect(() => {
@@ -200,9 +191,7 @@ const changeProjectFilter = (name: string | undefined) => {
 };
 
 const filterSourceProject = (project: Project) => {
-  return (
-    hasTransferDatabasePermission(project) && project.name !== props.projectName
-  );
+  return project.name !== props.projectName;
 };
 
 const transferDatabase = async () => {

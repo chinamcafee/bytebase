@@ -3,46 +3,6 @@
 
 package store
 
-func (x *PlanCheckRunConfig) Equal(y *PlanCheckRunConfig) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.SheetUid != y.SheetUid {
-		return false
-	}
-	if x.ChangeDatabaseType != y.ChangeDatabaseType {
-		return false
-	}
-	if x.InstanceId != y.InstanceId {
-		return false
-	}
-	if x.DatabaseName != y.DatabaseName {
-		return false
-	}
-	if p, q := x.DatabaseGroupUid, y.DatabaseGroupUid; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
-		return false
-	}
-	if len(x.GhostFlags) != len(y.GhostFlags) {
-		return false
-	}
-	for k := range x.GhostFlags {
-		_, ok := y.GhostFlags[k]
-		if !ok {
-			return false
-		}
-		if x.GhostFlags[k] != y.GhostFlags[k] {
-			return false
-		}
-	}
-	if x.EnablePriorBackup != y.EnablePriorBackup {
-		return false
-	}
-	return true
-}
-
 func (x *PlanCheckRunResult_Result_SqlSummaryReport) Equal(y *PlanCheckRunResult_Result_SqlSummaryReport) bool {
 	if x == y {
 		return true
@@ -102,6 +62,12 @@ func (x *PlanCheckRunResult_Result) Equal(y *PlanCheckRunResult_Result) bool {
 	if x.Code != y.Code {
 		return false
 	}
+	if x.Target != y.Target {
+		return false
+	}
+	if x.Type != y.Type {
+		return false
+	}
 	if !x.GetSqlSummaryReport().Equal(y.GetSqlSummaryReport()) {
 		return false
 	}
@@ -127,6 +93,82 @@ func (x *PlanCheckRunResult) Equal(y *PlanCheckRunResult) bool {
 		}
 	}
 	if x.Error != y.Error {
+		return false
+	}
+	return true
+}
+
+func (x *ChangedResources) Equal(y *ChangedResources) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if len(x.Databases) != len(y.Databases) {
+		return false
+	}
+	for i := 0; i < len(x.Databases); i++ {
+		if !x.Databases[i].Equal(y.Databases[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (x *ChangedResourceDatabase) Equal(y *ChangedResourceDatabase) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if x.Name != y.Name {
+		return false
+	}
+	if len(x.Schemas) != len(y.Schemas) {
+		return false
+	}
+	for i := 0; i < len(x.Schemas); i++ {
+		if !x.Schemas[i].Equal(y.Schemas[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (x *ChangedResourceSchema) Equal(y *ChangedResourceSchema) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if x.Name != y.Name {
+		return false
+	}
+	if len(x.Tables) != len(y.Tables) {
+		return false
+	}
+	for i := 0; i < len(x.Tables); i++ {
+		if !x.Tables[i].Equal(y.Tables[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (x *ChangedResourceTable) Equal(y *ChangedResourceTable) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if x.Name != y.Name {
+		return false
+	}
+	if x.TableRows != y.TableRows {
 		return false
 	}
 	return true

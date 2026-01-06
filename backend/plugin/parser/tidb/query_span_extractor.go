@@ -8,8 +8,6 @@ import (
 	tidbast "github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pkg/errors"
 
-	parsererror "github.com/bytebase/bytebase/backend/plugin/parser/errors"
-
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	"github.com/bytebase/bytebase/backend/store/model"
 )
@@ -184,7 +182,7 @@ func (q *querySpanExtractor) existsTableMetadata(databaseName string, tableName 
 	if databaseMetadata == nil {
 		return false
 	}
-	schemaMetadata := databaseMetadata.GetSchema("")
+	schemaMetadata := databaseMetadata.GetSchemaMetadata("")
 	if schemaMetadata == nil {
 		return false
 	}
@@ -438,7 +436,7 @@ func (q *querySpanExtractor) extractSelect(node *tidbast.SelectStmt) (base.Table
 							}
 						}
 						if !find {
-							return nil, &parsererror.ResourceNotFoundError{
+							return nil, &base.ResourceNotFoundError{
 								Err:      errors.New("failed to find table to calculate asterisk"),
 								Database: &field.WildCard.Schema.O,
 								Table:    &field.WildCard.Table.O,
@@ -485,7 +483,7 @@ func (q *querySpanExtractor) extractSourceColumnSetFromExpression(in tidbast.Exp
 		database, table, column := node.Name.Schema.O, node.Name.Table.O, node.Name.Name.O
 		sources, ok := q.getFieldColumnSource(database, table, column)
 		if !ok {
-			return base.SourceColumnSet{}, &parsererror.ResourceNotFoundError{
+			return base.SourceColumnSet{}, &base.ResourceNotFoundError{
 				Err:      errors.New("cannot find the column ref"),
 				Database: &database,
 				Table:    &table,
@@ -797,19 +795,19 @@ func (q *querySpanExtractor) findTableSchema(databaseName string, tableName stri
 		databaseName = q.defaultDatabase
 	}
 
-	dbSchema, err := q.getDatabaseMetadata(databaseName)
+	dbMetadata, err := q.getDatabaseMetadata(databaseName)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get database metadata for %q", databaseName)
 	}
-	if dbSchema == nil {
-		return nil, &parsererror.ResourceNotFoundError{
+	if dbMetadata == nil {
+		return nil, &base.ResourceNotFoundError{
 			Database: &databaseName,
 		}
 	}
 	emptySchema := ""
-	schema := dbSchema.GetSchema("")
+	schema := dbMetadata.GetSchemaMetadata("")
 	if schema == nil {
-		return nil, &parsererror.ResourceNotFoundError{
+		return nil, &base.ResourceNotFoundError{
 			Database: &databaseName,
 			Schema:   &emptySchema,
 		}
@@ -820,7 +818,7 @@ func (q *querySpanExtractor) findTableSchema(databaseName string, tableName stri
 			var columns []string
 			tableMeta := schema.GetTable(table)
 			if tableMeta != nil {
-				for _, column := range tableMeta.GetColumns() {
+				for _, column := range tableMeta.GetProto().GetColumns() {
 					columns = append(columns, column.Name)
 				}
 				return &base.PhysicalTable{
@@ -842,14 +840,14 @@ func (q *querySpanExtractor) findTableSchema(databaseName string, tableName stri
 				}
 				return &base.PhysicalView{
 					Database: databaseName,
-					Name:     viewMeta.GetProto().Name,
+					Name:     viewMeta.Name,
 					Columns:  columns,
 				}, nil
 			}
 		}
 	}
 
-	return nil, &parsererror.ResourceNotFoundError{
+	return nil, &base.ResourceNotFoundError{
 		Database: &databaseName,
 		Schema:   &emptySchema,
 		Table:    &tableName,

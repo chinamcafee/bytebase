@@ -8,17 +8,19 @@
     @delete="doDelete"
     @update-policy="updatePolicy"
   >
-    <EnvironmentFormBody :features="features" class="w-full px-4" />
-    <EnvironmentFormButtons
-      class="sticky -bottom-4 bg-white py-4 px-2 border-t border-block-border"
-      :class="buttonsClass"
-    />
+    <div class="flex flex-col h-full w-full">
+      <EnvironmentFormBody :features="features" class="w-full flex-1 px-4" />
+      <EnvironmentFormButtons
+        class="sticky -bottom-4 bg-white py-4 px-2 border-t border-block-border"
+        :class="buttonsClass"
+      />
+    </div>
   </EnvironmentForm>
 </template>
 
 <script lang="ts" setup>
 import { cloneDeep, isEqual } from "lodash-es";
-import { computed, reactive, watch, watchEffect, ref } from "vue";
+import { computed, reactive, ref, watch, watchEffect } from "vue";
 import {
   EnvironmentForm,
   Form as EnvironmentFormBody,
@@ -26,16 +28,10 @@ import {
 } from "@/components/EnvironmentForm";
 import { useEnvironmentV1Store } from "@/store";
 import { environmentNamePrefix } from "@/store/modules/v1/common";
-import {
-  usePolicyV1Store,
-  getEmptyRolloutPolicy,
-} from "@/store/modules/v1/policy";
+import { usePolicyV1Store } from "@/store/modules/v1/policy";
 import { formatEnvironmentName } from "@/types";
 import type { Policy } from "@/types/proto-es/v1/org_policy_service_pb";
-import {
-  PolicyType,
-  PolicyResourceType,
-} from "@/types/proto-es/v1/org_policy_service_pb";
+import { PolicyType } from "@/types/proto-es/v1/org_policy_service_pb";
 import type { Environment } from "@/types/v1/environment";
 import { type VueClass } from "@/utils";
 
@@ -78,23 +74,14 @@ watch(() => props.environmentName, prepareEnvironment, {
   immediate: true,
 });
 
-const preparePolicy = () => {
-  policyV1Store
-    .fetchPolicies({
-      parent: stateEnvironmentName.value,
-      resourceType: PolicyResourceType.ENVIRONMENT,
-    })
-    .then((policies) => {
-      const rolloutPolicy = policies.find(
-        (policy) => policy.type === PolicyType.ROLLOUT_POLICY
-      );
-      state.rolloutPolicy =
-        rolloutPolicy ||
-        getEmptyRolloutPolicy(
-          stateEnvironmentName.value,
-          PolicyResourceType.ENVIRONMENT
-        );
-    });
+// Fetch rollout policy directly using getOrFetchPolicyByParentAndType
+// The backend now returns default policy if none exists, so no manual fallback needed
+const preparePolicy = async () => {
+  const policy = await policyV1Store.getOrFetchPolicyByParentAndType({
+    parentPath: stateEnvironmentName.value,
+    policyType: PolicyType.ROLLOUT_POLICY,
+  });
+  state.rolloutPolicy = policy;
 };
 
 watchEffect(preparePolicy);

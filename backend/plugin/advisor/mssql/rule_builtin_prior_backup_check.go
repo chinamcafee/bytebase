@@ -6,12 +6,13 @@ import (
 	"log/slog"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/tsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/tsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	tsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/tsql"
 )
 
@@ -26,35 +27,30 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MSSQL, advisor.BuiltinRulePriorBackupCheck, &StatementPriorBackupCheckAdvisor{})
+	advisor.Register(storepb.Engine_MSSQL, storepb.SQLReviewRule_BUILTIN_PRIOR_BACKUP_CHECK, &StatementPriorBackupCheckAdvisor{})
 }
 
 type StatementPriorBackupCheckAdvisor struct {
 }
 
 func (*StatementPriorBackupCheckAdvisor) Check(ctx context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	if !checkCtx.EnablePriorBackup || checkCtx.ChangeType != storepb.PlanCheckRunConfig_DML {
+	if !checkCtx.EnablePriorBackup {
 		return nil, nil
 	}
 
 	var adviceList []*storepb.Advice
-	stmtList, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, nil
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	title := string(checkCtx.Rule.Type)
+	title := checkCtx.Rule.Type.String()
 
-	if len(checkCtx.Statements) > common.MaxSheetCheckSize {
+	if checkCtx.StatementsTotalSize > common.MaxSheetCheckSize {
 		adviceList = append(adviceList, &storepb.Advice{
 			Status:        level,
 			Title:         title,
 			Content:       fmt.Sprintf("The size of statements in the sheet exceeds the limit of %d", common.MaxSheetCheckSize),
-			Code:          advisor.BuiltinPriorBackupCheck.Int32(),
+			Code:          code.BuiltinPriorBackupCheck.Int32(),
 			StartPosition: common.ConvertANTLRLineToPosition(1),
 		})
 	}
@@ -65,7 +61,7 @@ func (*StatementPriorBackupCheckAdvisor) Check(ctx context.Context, checkCtx adv
 			Status:        level,
 			Title:         title,
 			Content:       fmt.Sprintf("Need database %q to do prior backup but it does not exist", databaseName),
-			Code:          advisor.DatabaseNotExists.Int32(),
+			Code:          code.DatabaseNotExists.Int32(),
 			StartPosition: common.ConvertANTLRLineToPosition(1),
 		})
 		return adviceList, nil
@@ -74,22 +70,29 @@ func (*StatementPriorBackupCheckAdvisor) Check(ctx context.Context, checkCtx adv
 	// Use the refactored rule for DDL/DML checking
 	rule := NewStatementDisallowMixDMLRule(level, title)
 	checker := NewGenericChecker([]Rule{rule})
-	antlr.ParseTreeWalkerDefault.Walk(checker, stmtList)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	if rule.hasDDL {
 		adviceList = append(adviceList, &storepb.Advice{
 			Status:        level,
 			Title:         title,
 			Content:       "Prior backup cannot deal with mixed DDL and DML statements",
-			Code:          int32(advisor.BuiltinPriorBackupCheck),
+			Code:          int32(code.BuiltinPriorBackupCheck),
 			StartPosition: common.ConvertANTLRLineToPosition(1),
 		})
 	}
 
-	statementInfoList, err := prepareTransformation(checkCtx.DBSchema.Name, checkCtx.Statements)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to prepare transformation")
-	}
+	statementInfoList := prepareTransformation(checkCtx.DBSchema.Name, checkCtx.ParsedStatements)
 
 	groupByTable := make(map[string][]statementInfo)
 	for _, item := range statementInfoList {
@@ -109,7 +112,7 @@ func (*StatementPriorBackupCheckAdvisor) Check(ctx context.Context, checkCtx adv
 					Status:        level,
 					Title:         title,
 					Content:       fmt.Sprintf("The statement type is not the same for all statements on the same table %q", key),
-					Code:          advisor.BuiltinPriorBackupCheck.Int32(),
+					Code:          code.BuiltinPriorBackupCheck.Int32(),
 					StartPosition: common.ConvertANTLRLineToPosition(1),
 				})
 				break
@@ -204,17 +207,23 @@ type statementInfo struct {
 	table     *TableReference
 }
 
-func prepareTransformation(databaseName, statement string) ([]statementInfo, error) {
-	parseResult, err := tsqlparser.ParseTSQL(statement)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to parse statement")
-	}
-
+func prepareTransformation(databaseName string, parsedStatements []base.ParsedStatement) []statementInfo {
 	extractor := &dmlExtractor{
 		databaseName: databaseName,
 	}
-	antlr.ParseTreeWalkerDefault.Walk(extractor, parseResult.Tree)
-	return extractor.dmls, nil
+
+	for _, stmt := range parsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(extractor, antlrAST.Tree)
+	}
+
+	return extractor.dmls
 }
 
 type dmlExtractor struct {

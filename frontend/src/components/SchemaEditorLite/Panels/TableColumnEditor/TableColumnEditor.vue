@@ -23,53 +23,25 @@
       class="schema-editor-table-column-editor"
     />
   </div>
-
-  <SemanticTypesDrawer
-    v-if="state.pendingUpdateColumn"
-    :show="state.showSemanticTypesDrawer"
-    :semantic-type-list="semanticTypeList"
-    @dismiss="state.showSemanticTypesDrawer = false"
-    @apply="onSemanticTypeApply($event)"
-  />
-
-  <LabelEditorDrawer
-    v-if="state.pendingUpdateColumn"
-    :show="state.showLabelsDrawer"
-    :readonly="false"
-    :title="
-      $t('db.labels-for-resource', {
-        resource: `'${state.pendingUpdateColumn.name}'`,
-      })
-    "
-    :labels="[catalogForColumn(state.pendingUpdateColumn.name).labels]"
-    @dismiss="state.showLabelsDrawer = false"
-    @apply="onLabelsApply"
-  />
 </template>
 
 <script lang="ts" setup>
-import { create } from "@bufbuild/protobuf";
 import { useElementSize } from "@vueuse/core";
 import { pick, pull } from "lodash-es";
 import type { DataTableColumn, DataTableInst } from "naive-ui";
 import { NCheckbox, NDataTable } from "naive-ui";
-import { computed, h, reactive, ref } from "vue";
+import { computed, h, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import ClassificationCell from "@/components/ColumnDataTable/ClassificationCell.vue";
-import LabelEditorDrawer from "@/components/LabelEditorDrawer.vue";
 import {
-  removeColumnPrimaryKey,
-  upsertColumnPrimaryKey,
   changeColumnNameInPrimaryKey,
   removeColumnFromAllForeignKeys,
+  removeColumnPrimaryKey,
+  upsertColumnPrimaryKey,
 } from "@/components/SchemaEditorLite";
-import SemanticTypesDrawer from "@/components/SensitiveData/components/SemanticTypesDrawer.vue";
 import { InlineInput } from "@/components/v2";
-import { useSettingV1Store, hasFeature, pushNotification } from "@/store";
+import { pushNotification } from "@/store";
 import type { ComposedDatabase } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
-import type { ColumnCatalog } from "@/types/proto-es/v1/database_catalog_service_pb";
-import { ColumnCatalogSchema } from "@/types/proto-es/v1/database_catalog_service_pb";
 import type {
   ColumnMetadata,
   DatabaseMetadata,
@@ -77,8 +49,6 @@ import type {
   SchemaMetadata,
   TableMetadata,
 } from "@/types/proto-es/v1/database_service_pb";
-import { Setting_SettingName } from "@/types/proto-es/v1/setting_service_pb";
-import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import { arraySwap } from "@/utils";
 import { useSchemaEditorContext } from "../../context";
 import type { EditStatus } from "../../types";
@@ -86,20 +56,12 @@ import type { DefaultValue } from "../../utils";
 import { markUUID } from "../common";
 import {
   DataTypeCell,
+  DefaultValueCell,
   ForeignKeyCell,
   OperationCell,
   ReorderCell,
   SelectionCell,
-  DefaultValueCell,
-  SemanticTypeCell,
-  LabelsCell,
 } from "./components";
-
-interface LocalState {
-  pendingUpdateColumn?: ColumnMetadata;
-  showSemanticTypesDrawer: boolean;
-  showLabelsDrawer: boolean;
-}
 
 const props = withDefaults(
   defineProps<{
@@ -115,8 +77,6 @@ const props = withDefaults(
     allowChangePrimaryKeys?: boolean;
     allowReorderColumns?: boolean;
     maxBodyHeight?: number;
-    showDatabaseCatalogColumn?: boolean;
-    showClassificationColumn?: "ALWAYS" | "AUTO";
     filterColumn?: (column: ColumnMetadata) => boolean;
     disableAlterColumn?: (column: ColumnMetadata) => boolean;
   }>(),
@@ -127,8 +87,6 @@ const props = withDefaults(
     allowChangePrimaryKeys: false,
     allowReorderColumns: false,
     maxBodyHeight: undefined,
-    showDatabaseCatalogColumn: false,
-    showClassificationColumn: "AUTO",
     filterColumn: (_: ColumnMetadata) => true,
     disableAlterColumn: (_: ColumnMetadata) => false,
   }
@@ -147,21 +105,11 @@ const emit = defineEmits<{
   ): void;
 }>();
 
-const state = reactive<LocalState>({
-  showSemanticTypesDrawer: false,
-  showLabelsDrawer: false,
-});
-
 const {
-  classificationConfig,
-  showClassificationColumn: canShowClassificationColumn,
   selectionEnabled,
   markEditStatus,
   removeEditStatus,
   getColumnStatus,
-  getColumnCatalog,
-  removeColumnCatalog,
-  upsertColumnCatalog,
   useConsumePendingScrollToColumn,
   getAllColumnsSelectionState,
   updateAllColumnsSelection,
@@ -187,7 +135,6 @@ const tableBodyHeight = computed(() => {
 // Use this to avoid unnecessary initial rendering
 const layoutReady = computed(() => tableHeaderHeight.value > 0);
 const { t } = useI18n();
-const settingStore = useSettingV1Store();
 
 const metadataForColumn = (column: ColumnMetadata) => {
   return {
@@ -218,27 +165,6 @@ const markColumnStatus = (
     return;
   }
   markEditStatus(props.db, metadataForColumn(column), status);
-};
-
-const semanticTypeList = computed(() => {
-  const setting = settingStore.getSettingByName(
-    Setting_SettingName.SEMANTIC_TYPES
-  );
-  if (setting?.value?.value?.case === "semanticTypeSettingValue") {
-    return setting.value.value.value.types ?? [];
-  }
-  return [];
-});
-
-const catalogForColumn = (column: string) => {
-  return (
-    getColumnCatalog({
-      database: props.db.name,
-      schema: props.schema.name,
-      table: props.table.name,
-      column,
-    }) ?? create(ColumnCatalogSchema, { name: column })
-  );
 };
 
 const primaryKey = computed(() => {
@@ -284,12 +210,6 @@ const handleDropColumn = (column: ColumnMetadata) => {
 
     removeColumnPrimaryKey(table, column.name);
     removeColumnFromAllForeignKeys(table, column.name);
-    removeColumnCatalog({
-      database: props.db.name,
-      schema: props.schema.name,
-      table: props.table.name,
-      column: column.name,
-    });
   } else {
     markColumnStatus(column, "dropped");
   }
@@ -300,26 +220,6 @@ const handleRestoreColumn = (column: ColumnMetadata) => {
     return;
   }
   removeEditStatus(props.db, metadataForColumn(column), /* recursive */ false);
-};
-
-const showClassification = computed(() => {
-  return (
-    props.showClassificationColumn === "ALWAYS" ||
-    canShowClassificationColumn(
-      props.engine,
-      classificationConfig.value?.classificationFromConfig ?? false
-    )
-  );
-});
-
-const openSemanticTypeDrawer = (column: ColumnMetadata) => {
-  state.pendingUpdateColumn = column;
-  state.showSemanticTypesDrawer = true;
-};
-
-const openLabelsDrawer = (column: ColumnMetadata) => {
-  state.pendingUpdateColumn = column;
-  state.showLabelsDrawer = true;
 };
 
 const columns = computed(() => {
@@ -363,7 +263,7 @@ const columns = computed(() => {
       resizable: false,
       width: 44,
       hide: props.readonly || !props.allowReorderColumns,
-      className: "!px-0",
+      className: "px-0!",
       render: (column, index) => {
         return h(ReorderCell, {
           allowMoveUp: index > 0,
@@ -391,23 +291,6 @@ const columns = computed(() => {
             "--n-text-color-disabled": "rgb(var(--color-main))",
           },
           "onUpdate:value": (value: string) => {
-            upsertColumnCatalog(
-              {
-                database: props.db.name,
-                schema: props.schema.name,
-                table: props.table.name,
-                column: column.name,
-              },
-              (catalog) => {
-                catalog.name = value;
-              }
-            );
-            removeColumnCatalog({
-              database: props.db.name,
-              schema: props.schema.name,
-              table: props.table.name,
-              column: column.name,
-            });
             const oldStatus = statusForColumn(column);
 
             const oldName = column.name;
@@ -416,52 +299,6 @@ const columns = computed(() => {
             }
             column.name = value;
             markColumnStatus(column, "updated", oldStatus);
-          },
-        });
-      },
-    },
-    {
-      key: "semantic-types",
-      title: t("settings.sensitive-data.semantic-types.table.semantic-type"),
-      resizable: true,
-      minWidth: 140,
-      maxWidth: 320,
-      hide:
-        !props.showDatabaseCatalogColumn ||
-        !hasFeature(PlanFeature.FEATURE_DATA_MASKING),
-      render: (column) => {
-        return h(SemanticTypeCell, {
-          database: props.database.name,
-          schema: props.schema.name,
-          table: props.table.name,
-          column: column.name,
-          readonly: props.readonly,
-          disabled:
-            props.disableChangeTable || props.disableAlterColumn(column),
-          semanticTypeList: semanticTypeList.value,
-          onRemove: () => onSemanticTypeRemove(column),
-          onEdit: () => openSemanticTypeDrawer(column),
-        });
-      },
-    },
-    {
-      key: "classification",
-      title: t("schema-editor.column.classification"),
-      hide: !showClassification.value,
-      resizable: true,
-      minWidth: 140,
-      maxWidth: 320,
-      render: (column) => {
-        const config = catalogForColumn(column.name);
-        return h(ClassificationCell, {
-          classification: config.classification,
-          readonly: props.readonly,
-          disabled: props.disableChangeTable,
-          engine: props.engine,
-          classificationConfig: classificationConfig.value,
-          onApply: (id: string) => {
-            state.pendingUpdateColumn = column;
-            onClassificationSelect(id);
           },
         });
       },
@@ -535,7 +372,7 @@ const columns = computed(() => {
       className: "input-cell",
       render: (column) => {
         return h(InlineInput, {
-          value: column.userComment,
+          value: column.comment,
           disabled: props.readonly || props.disableAlterColumn(column),
           placeholder: "comment",
           style: {
@@ -544,7 +381,7 @@ const columns = computed(() => {
             "--n-text-color-disabled": "rgb(var(--color-main))",
           },
           "onUpdate:value": (value: string) => {
-            column.userComment = value;
+            column.comment = value;
             markColumnStatus(column, "updated");
           },
         });
@@ -615,31 +452,12 @@ const columns = computed(() => {
       },
     },
     {
-      key: "labels",
-      title: t("common.labels"),
-      resizable: true,
-      minWidth: 140,
-      maxWidth: 320,
-      hide: !props.showDatabaseCatalogColumn,
-      render: (column) => {
-        return h(LabelsCell, {
-          database: props.database.name,
-          schema: props.schema.name,
-          table: props.table.name,
-          column: column.name,
-          readonly: props.readonly,
-          disabled: props.disableChangeTable,
-          onEdit: () => openLabelsDrawer(column),
-        });
-      },
-    },
-    {
       key: "operations",
       title: "",
       resizable: false,
       width: 30,
       hide: props.readonly,
-      className: "!px-0",
+      className: "px-0!",
       render: (column) => {
         return h(OperationCell, {
           dropped: isDroppedColumn(column),
@@ -664,20 +482,7 @@ const isColumnPrimaryKey = (column: ColumnMetadata): boolean => {
 };
 
 const schemaTemplateColumnTypes = computed(() => {
-  const setting = settingStore.getSettingByName(
-    Setting_SettingName.SCHEMA_TEMPLATE
-  );
-  if (setting?.value?.value?.case === "schemaTemplateSettingValue") {
-    const columnTypes = setting.value.value.value.columnTypes;
-    if (columnTypes && columnTypes.length > 0) {
-      const columnType = columnTypes.find(
-        (columnType) => columnType.engine === props.engine
-      );
-      if (columnType && columnType.enabled) {
-        return columnType.types;
-      }
-    }
-  }
+  // SchemaTemplate feature has been removed
   return [];
 });
 
@@ -687,60 +492,6 @@ const handleColumnDefaultSelect = (
 ) => {
   Object.assign(column, defaultValue);
   markColumnStatus(column, "updated");
-};
-
-const onSemanticTypeApply = async (semanticTypeId: string) => {
-  if (!state.pendingUpdateColumn) {
-    return;
-  }
-
-  updateColumnConfig(state.pendingUpdateColumn, (catalog) => {
-    catalog.semanticType = semanticTypeId;
-  });
-};
-
-const onSemanticTypeRemove = async (column: ColumnMetadata) => {
-  markColumnStatus(column, "updated");
-  updateColumnConfig(column, (catalog) => {
-    catalog.semanticType = "";
-  });
-};
-
-const onClassificationSelect = (classificationId: string) => {
-  if (!state.pendingUpdateColumn) {
-    return;
-  }
-
-  markColumnStatus(state.pendingUpdateColumn, "updated");
-  updateColumnConfig(state.pendingUpdateColumn, (catalog) => {
-    catalog.classification = classificationId;
-  });
-};
-
-const updateColumnConfig = (
-  column: ColumnMetadata,
-  update: (config: ColumnCatalog) => void
-) => {
-  upsertColumnCatalog(
-    {
-      database: props.db.name,
-      schema: props.schema.name,
-      table: props.table.name,
-      column: column.name,
-    },
-    update
-  );
-  markColumnStatus(column, "updated");
-};
-
-const onLabelsApply = (labelsList: { [key: string]: string }[]) => {
-  if (!state.pendingUpdateColumn) {
-    return;
-  }
-  updateColumnConfig(state.pendingUpdateColumn, (catalog) => {
-    catalog.labels = labelsList[0];
-  });
-  markColumnStatus(state.pendingUpdateColumn, "updated");
 };
 
 const classesForRow = (column: ColumnMetadata) => {
@@ -756,7 +507,8 @@ const getColumnKey = (column: ColumnMetadata) => {
 };
 
 const vlRef = computed(() => {
-  return (dataTableRef.value as any)?.$refs?.mainTableInstRef?.bodyInstRef
+  // biome-ignore lint/suspicious/noExplicitAny: accessing internal naive-ui refs
+  return (dataTableRef.value as any)?.$refs?.mainTableInstRef?.bodyInstRef // eslint-disable-line @typescript-eslint/no-explicit-any
     ?.virtualListRef;
 });
 
@@ -789,33 +541,46 @@ useConsumePendingScrollToColumn(
 <style lang="postcss" scoped>
 .schema-editor-table-column-editor
   :deep(.n-data-table-th .n-data-table-resize-button::after) {
-  @apply bg-control-bg h-2/3;
+  background-color: var(--color-control-bg);
+  height: 66.666667%;
 }
 .schema-editor-table-column-editor :deep(.n-data-table-td.input-cell) {
-  @apply pl-0.5 pr-1 py-0;
+  padding-left: 0.125rem;
+  padding-right: 0.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 .schema-editor-table-column-editor
   :deep(.n-data-table-td.input-cell .n-input__placeholder),
 .schema-editor-table-column-editor
   :deep(.n-data-table-td.input-cell .n-base-selection-placeholder) {
-  @apply italic;
+  font-style: italic;
 }
 .schema-editor-table-column-editor :deep(.n-data-table-td.checkbox-cell) {
-  @apply pr-1 py-0;
+  padding-right: 0.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 .schema-editor-table-column-editor :deep(.n-data-table-td.text-cell) {
-  @apply pr-1 py-0;
+  padding-right: 0.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 .schema-editor-table-column-editor:not(.disable-diff-coloring)
   :deep(.n-data-table-tr.created .n-data-table-td) {
-  @apply text-green-700 !bg-green-50;
+  color: var(--color-green-700);
+  background-color: var(--color-green-50) !important;
 }
 .schema-editor-table-column-editor:not(.disable-diff-coloring)
   :deep(.n-data-table-tr.dropped .n-data-table-td) {
-  @apply text-red-700 cursor-not-allowed !bg-red-50 opacity-70;
+  color: var(--color-red-700);
+  cursor: not-allowed;
+  background-color: var(--color-red-50) !important;
+  opacity: 0.7;
 }
 .schema-editor-table-column-editor:not(.disable-diff-coloring)
   :deep(.n-data-table-tr.updated .n-data-table-td) {
-  @apply text-yellow-700 !bg-yellow-50;
+  color: var(--color-yellow-700);
+  background-color: var(--color-yellow-50) !important;
 }
 </style>

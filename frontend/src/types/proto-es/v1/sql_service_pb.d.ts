@@ -7,7 +7,6 @@ import type { Message } from "@bufbuild/protobuf";
 import type { Duration, NullValue, Timestamp, Value } from "@bufbuild/protobuf/wkt";
 import type { Engine, ExportFormat, Position } from "./common_pb";
 import type { DatabaseMetadata } from "./database_service_pb";
-import type { DatabaseCatalog } from "./database_catalog_service_pb";
 
 /**
  * Describes the file v1/sql_service.proto.
@@ -29,14 +28,14 @@ export declare type AdminExecuteRequest = Message<"bytebase.v1.AdminExecuteReque
   /**
    * The SQL statement to execute.
    *
-   * @generated from field: string statement = 3;
+   * @generated from field: string statement = 2;
    */
   statement: string;
 
   /**
    * The maximum number of rows to return.
    *
-   * @generated from field: int32 limit = 4;
+   * @generated from field: int32 limit = 3;
    */
   limit: number;
 
@@ -44,7 +43,7 @@ export declare type AdminExecuteRequest = Message<"bytebase.v1.AdminExecuteReque
    * The default schema to execute the statement. Equals to the current schema
    * in Oracle and search path in Postgres.
    *
-   * @generated from field: optional string schema = 6;
+   * @generated from field: optional string schema = 4;
    */
   schema?: string;
 
@@ -52,7 +51,7 @@ export declare type AdminExecuteRequest = Message<"bytebase.v1.AdminExecuteReque
    * Container is the container name to execute the query against, used for
    * CosmosDB only.
    *
-   * @generated from field: optional string container = 7;
+   * @generated from field: optional string container = 5;
    */
   container?: string;
 };
@@ -96,14 +95,14 @@ export declare type QueryRequest = Message<"bytebase.v1.QueryRequest"> & {
   /**
    * The SQL statement to execute.
    *
-   * @generated from field: string statement = 3;
+   * @generated from field: string statement = 2;
    */
   statement: string;
 
   /**
    * The maximum number of rows to return.
    *
-   * @generated from field: int32 limit = 4;
+   * @generated from field: int32 limit = 3;
    */
   limit: number;
 
@@ -113,14 +112,14 @@ export declare type QueryRequest = Message<"bytebase.v1.QueryRequest"> & {
    * read-only data sources. Or it can be used to query a specific read-only
    * data source.
    *
-   * @generated from field: string data_source_id = 6;
+   * @generated from field: string data_source_id = 4;
    */
   dataSourceId: string;
 
   /**
    * Explain the statement.
    *
-   * @generated from field: bool explain = 7;
+   * @generated from field: bool explain = 5;
    */
   explain: boolean;
 
@@ -128,12 +127,12 @@ export declare type QueryRequest = Message<"bytebase.v1.QueryRequest"> & {
    * The default schema to search objects. Equals to the current schema in
    * Oracle and search path in Postgres.
    *
-   * @generated from field: optional string schema = 8;
+   * @generated from field: optional string schema = 6;
    */
   schema?: string;
 
   /**
-   * @generated from field: bytebase.v1.QueryOption query_option = 9;
+   * @generated from field: bytebase.v1.QueryOption query_option = 7;
    */
   queryOption?: QueryOption;
 
@@ -141,7 +140,7 @@ export declare type QueryRequest = Message<"bytebase.v1.QueryRequest"> & {
    * Container is the container name to execute the query against, used for
    * CosmosDB only.
    *
-   * @generated from field: optional string container = 10;
+   * @generated from field: optional string container = 8;
    */
   container?: string;
 };
@@ -178,6 +177,11 @@ export declare type QueryOption = Message<"bytebase.v1.QueryOption"> & {
    * @generated from field: bytebase.v1.QueryOption.RedisRunCommandsOn redis_run_commands_on = 1;
    */
   redisRunCommandsOn: QueryOption_RedisRunCommandsOn;
+
+  /**
+   * @generated from field: bytebase.v1.QueryOption.MSSQLExplainFormat mssql_explain_format = 2;
+   */
+  mssqlExplainFormat: QueryOption_MSSQLExplainFormat;
 };
 
 /**
@@ -218,6 +222,37 @@ export enum QueryOption_RedisRunCommandsOn {
 export declare const QueryOption_RedisRunCommandsOnSchema: GenEnum<QueryOption_RedisRunCommandsOn>;
 
 /**
+ * @generated from enum bytebase.v1.QueryOption.MSSQLExplainFormat
+ */
+export enum QueryOption_MSSQLExplainFormat {
+  /**
+   * defaults to SHOWPLAN_ALL
+   *
+   * @generated from enum value: MSSQL_EXPLAIN_FORMAT_UNSPECIFIED = 0;
+   */
+  MSSQL_EXPLAIN_FORMAT_UNSPECIFIED = 0,
+
+  /**
+   * SHOWPLAN_ALL
+   *
+   * @generated from enum value: MSSQL_EXPLAIN_FORMAT_ALL = 1;
+   */
+  MSSQL_EXPLAIN_FORMAT_ALL = 1,
+
+  /**
+   * SHOWPLAN_XML
+   *
+   * @generated from enum value: MSSQL_EXPLAIN_FORMAT_XML = 2;
+   */
+  MSSQL_EXPLAIN_FORMAT_XML = 2,
+}
+
+/**
+ * Describes the enum bytebase.v1.QueryOption.MSSQLExplainFormat.
+ */
+export declare const QueryOption_MSSQLExplainFormatSchema: GenEnum<QueryOption_MSSQLExplainFormat>;
+
+/**
  * @generated from message bytebase.v1.QueryResult
  */
 export declare type QueryResult = Message<"bytebase.v1.QueryResult"> & {
@@ -244,28 +279,28 @@ export declare type QueryResult = Message<"bytebase.v1.QueryResult"> & {
   rows: QueryRow[];
 
   /**
-   * @generated from field: int64 rows_count = 10;
+   * @generated from field: int64 rows_count = 4;
    */
   rowsCount: bigint;
 
   /**
    * The error message if the query failed.
    *
-   * @generated from field: string error = 6;
+   * @generated from field: string error = 5;
    */
   error: string;
 
   /**
    * The time it takes to execute the query.
    *
-   * @generated from field: google.protobuf.Duration latency = 7;
+   * @generated from field: google.protobuf.Duration latency = 6;
    */
   latency?: Duration;
 
   /**
    * The query statement for the result.
    *
-   * @generated from field: string statement = 8;
+   * @generated from field: string statement = 7;
    */
   statement: string;
 
@@ -274,31 +309,36 @@ export declare type QueryResult = Message<"bytebase.v1.QueryResult"> & {
    */
   detailedError: {
     /**
-     * @generated from field: bytebase.v1.QueryResult.PostgresError postgres_error = 9;
+     * @generated from field: bytebase.v1.QueryResult.PostgresError postgres_error = 8;
      */
     value: QueryResult_PostgresError;
     case: "postgresError";
+  } | {
+    /**
+     * @generated from field: bytebase.v1.QueryResult.SyntaxError syntax_error = 9;
+     */
+    value: QueryResult_SyntaxError;
+    case: "syntaxError";
+  } | {
+    /**
+     * @generated from field: bytebase.v1.QueryResult.PermissionDenied permission_denied = 10;
+     */
+    value: QueryResult_PermissionDenied;
+    case: "permissionDenied";
   } | { case: undefined; value?: undefined };
-
-  /**
-   * The query result is allowed to be exported or not.
-   *
-   * @generated from field: bool allow_export = 11;
-   */
-  allowExport: boolean;
 
   /**
    * Informational or debug messages returned by the database engine during query execution.
    * Examples include PostgreSQL's RAISE NOTICE, MSSQL's PRINT, or Oracle's DBMS_OUTPUT.PUT_LINE.
    *
-   * @generated from field: repeated bytebase.v1.QueryResult.Message messages = 12;
+   * @generated from field: repeated bytebase.v1.QueryResult.Message messages = 11;
    */
   messages: QueryResult_Message[];
 
   /**
    * Masking reasons for each column (empty for non-masked columns).
    *
-   * @generated from field: repeated bytebase.v1.MaskingReason masked = 4;
+   * @generated from field: repeated bytebase.v1.MaskingReason masked = 12;
    */
   masked: MaskingReason[];
 };
@@ -407,6 +447,89 @@ export declare type QueryResult_PostgresError = Message<"bytebase.v1.QueryResult
  * Use `create(QueryResult_PostgresErrorSchema)` to create a new message.
  */
 export declare const QueryResult_PostgresErrorSchema: GenMessage<QueryResult_PostgresError>;
+
+/**
+ * Syntax error with position information for editor highlighting
+ *
+ * @generated from message bytebase.v1.QueryResult.SyntaxError
+ */
+export declare type QueryResult_SyntaxError = Message<"bytebase.v1.QueryResult.SyntaxError"> & {
+  /**
+   * Position information for highlighting in editor
+   *
+   * @generated from field: bytebase.v1.Position start_position = 1;
+   */
+  startPosition?: Position;
+};
+
+/**
+ * Describes the message bytebase.v1.QueryResult.SyntaxError.
+ * Use `create(QueryResult_SyntaxErrorSchema)` to create a new message.
+ */
+export declare const QueryResult_SyntaxErrorSchema: GenMessage<QueryResult_SyntaxError>;
+
+/**
+ * Permission denied with resource information or disallowed command_type.
+ * Either resources or command_type is available.
+ *
+ * @generated from message bytebase.v1.QueryResult.PermissionDenied
+ */
+export declare type QueryResult_PermissionDenied = Message<"bytebase.v1.QueryResult.PermissionDenied"> & {
+  /**
+   * Denied to access the resources.
+   * Format:
+   * instances/{instance}/databases/{database}
+   * instances/{instance}/databases/{database}/schemas/{schema}
+   * instances/{instance}/databases/{database}/tables/{table}
+   * instances/{instance}/databases/{database}/schemas/{schema}/tables/{table}
+   *
+   * @generated from field: repeated string resources = 1;
+   */
+  resources: string[];
+
+  /**
+   * Disallowed command_type.
+   *
+   * @generated from field: bytebase.v1.QueryResult.PermissionDenied.CommandType command_type = 2;
+   */
+  commandType: QueryResult_PermissionDenied_CommandType;
+};
+
+/**
+ * Describes the message bytebase.v1.QueryResult.PermissionDenied.
+ * Use `create(QueryResult_PermissionDeniedSchema)` to create a new message.
+ */
+export declare const QueryResult_PermissionDeniedSchema: GenMessage<QueryResult_PermissionDenied>;
+
+/**
+ * @generated from enum bytebase.v1.QueryResult.PermissionDenied.CommandType
+ */
+export enum QueryResult_PermissionDenied_CommandType {
+  /**
+   * @generated from enum value: COMMAND_TYPE_UNSPECIFIED = 0;
+   */
+  COMMAND_TYPE_UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: DDL = 1;
+   */
+  DDL = 1,
+
+  /**
+   * @generated from enum value: DML = 2;
+   */
+  DML = 2,
+
+  /**
+   * @generated from enum value: NON_READ_ONLY = 3;
+   */
+  NON_READ_ONLY = 3,
+}
+
+/**
+ * Describes the enum bytebase.v1.QueryResult.PermissionDenied.CommandType.
+ */
+export declare const QueryResult_PermissionDenied_CommandTypeSchema: GenEnum<QueryResult_PermissionDenied_CommandType>;
 
 /**
  * @generated from message bytebase.v1.QueryResult.Message
@@ -769,14 +892,21 @@ export declare type Advice = Message<"bytebase.v1.Advice"> & {
    * The start_position is inclusive and the end_position is exclusive.
    * TODO: use range instead
    *
-   * @generated from field: bytebase.v1.Position start_position = 8;
+   * @generated from field: bytebase.v1.Position start_position = 5;
    */
   startPosition?: Position;
 
   /**
-   * @generated from field: bytebase.v1.Position end_position = 9;
+   * @generated from field: bytebase.v1.Position end_position = 6;
    */
   endPosition?: Position;
+
+  /**
+   * The type of linting rule that generated this advice.
+   *
+   * @generated from field: bytebase.v1.Advice.RuleType rule_type = 7;
+   */
+  ruleType: Advice_RuleType;
 };
 
 /**
@@ -826,6 +956,41 @@ export enum Advice_Level {
 export declare const Advice_LevelSchema: GenEnum<Advice_Level>;
 
 /**
+ * RuleType indicates the source of the linting rule.
+ *
+ * @generated from enum bytebase.v1.Advice.RuleType
+ */
+export enum Advice_RuleType {
+  /**
+   * Unspecified rule type.
+   *
+   * @generated from enum value: RULE_TYPE_UNSPECIFIED = 0;
+   */
+  RULE_TYPE_UNSPECIFIED = 0,
+
+  /**
+   * Parser-based rule enforced by the built-in SQL parser.
+   * These are non-configurable, mandatory checks for schema health.
+   *
+   * @generated from enum value: PARSER_BASED = 1;
+   */
+  PARSER_BASED = 1,
+
+  /**
+   * AI-powered rule defined by user in natural language.
+   * These are custom, flexible checks powered by AI models.
+   *
+   * @generated from enum value: AI_POWERED = 2;
+   */
+  AI_POWERED = 2,
+}
+
+/**
+ * Describes the enum bytebase.v1.Advice.RuleType.
+ */
+export declare const Advice_RuleTypeSchema: GenEnum<Advice_RuleType>;
+
+/**
  * @generated from message bytebase.v1.ExportRequest
  */
 export declare type ExportRequest = Message<"bytebase.v1.ExportRequest"> & {
@@ -843,21 +1008,21 @@ export declare type ExportRequest = Message<"bytebase.v1.ExportRequest"> & {
   /**
    * The SQL statement to execute.
    *
-   * @generated from field: string statement = 3;
+   * @generated from field: string statement = 2;
    */
   statement: string;
 
   /**
    * The maximum number of rows to return.
    *
-   * @generated from field: int32 limit = 4;
+   * @generated from field: int32 limit = 3;
    */
   limit: number;
 
   /**
    * The export format.
    *
-   * @generated from field: bytebase.v1.ExportFormat format = 5;
+   * @generated from field: bytebase.v1.ExportFormat format = 4;
    */
   format: ExportFormat;
 
@@ -865,14 +1030,14 @@ export declare type ExportRequest = Message<"bytebase.v1.ExportRequest"> & {
    * The admin is used for workspace owner and DBA for exporting data from SQL
    * Editor Admin mode. The exported data is not masked.
    *
-   * @generated from field: bool admin = 6;
+   * @generated from field: bool admin = 5;
    */
   admin: boolean;
 
   /**
    * The zip password provide by users.
    *
-   * @generated from field: string password = 7;
+   * @generated from field: string password = 6;
    */
   password: string;
 
@@ -882,7 +1047,7 @@ export declare type ExportRequest = Message<"bytebase.v1.ExportRequest"> & {
    * read-only data sources. Or it can be used to query a specific read-only
    * data source.
    *
-   * @generated from field: string data_source_id = 8;
+   * @generated from field: string data_source_id = 7;
    */
   dataSourceId: string;
 
@@ -890,7 +1055,7 @@ export declare type ExportRequest = Message<"bytebase.v1.ExportRequest"> & {
    * The default schema to search objects. Equals to the current schema in
    * Oracle and search path in Postgres.
    *
-   * @generated from field: optional string schema = 9;
+   * @generated from field: optional string schema = 8;
    */
   schema?: string;
 };
@@ -938,29 +1103,11 @@ export declare type DiffMetadataRequest = Message<"bytebase.v1.DiffMetadataReque
   targetMetadata?: DatabaseMetadata;
 
   /**
-   * @generated from field: bytebase.v1.DatabaseCatalog source_catalog = 5;
-   */
-  sourceCatalog?: DatabaseCatalog;
-
-  /**
-   * @generated from field: bytebase.v1.DatabaseCatalog target_catalog = 6;
-   */
-  targetCatalog?: DatabaseCatalog;
-
-  /**
    * The database engine of the schema.
    *
    * @generated from field: bytebase.v1.Engine engine = 3;
    */
   engine: Engine;
-
-  /**
-   * If false, we will build the raw common by classification in database
-   * config.
-   *
-   * @generated from field: bool classification_from_config = 4;
-   */
-  classificationFromConfig: boolean;
 };
 
 /**

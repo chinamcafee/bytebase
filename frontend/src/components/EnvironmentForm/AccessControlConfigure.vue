@@ -1,9 +1,17 @@
 <template>
   <div class="flex flex-col gap-y-2">
-    <div class="font-medium flex items-center space-x-2">
+    <div class="font-medium flex items-center gap-x-2">
       <label>
-        {{ $t("environment.access-control.title") }}
+        {{ t("environment.access-control.title") }}
       </label>
+      <NTooltip v-if="tooltip">
+        <template #trigger>
+          <CircleQuestionMarkIcon class="w-4 textinfolabel" />
+        </template>
+        <span>
+          {{ tooltip }}
+        </span>
+      </NTooltip>
     </div>
     <div>
       <div class="w-full inline-flex items-center gap-x-2">
@@ -13,7 +21,7 @@
           :disabled="!allowUpdatePolicy || !hasRestrictCopyingDataFeature"
         />
         <span class="textlabel">{{
-          $t("environment.access-control.disable-copy-data-from-sql-editor")
+          t("environment.access-control.disable-copy-data-from-sql-editor")
         }}</span>
         <FeatureBadge :feature="PlanFeature.FEATURE_RESTRICT_COPYING_DATA" />
       </div>
@@ -26,7 +34,7 @@
             @update:value="switchDataSourceQueryPolicyEnabled"
           />
           <span class="textlabel">{{
-            $t("environment.access-control.restrict-admin-connection.self")
+            t("environment.access-control.restrict-admin-connection.self")
           }}</span>
           <FeatureBadge :feature="PlanFeature.FEATURE_QUERY_POLICY" />
         </div>
@@ -42,7 +50,7 @@
               :value="DataSourceQueryPolicy_Restriction.DISALLOW"
             >
               {{
-                $t(
+                t(
                   "environment.access-control.restrict-admin-connection.disallow"
                 )
               }}
@@ -52,7 +60,7 @@
               :value="DataSourceQueryPolicy_Restriction.FALLBACK"
             >
               {{
-                $t(
+                t(
                   "environment.access-control.restrict-admin-connection.fallback"
                 )
               }}
@@ -66,9 +74,9 @@
     v-if="resource.startsWith(environmentNamePrefix)"
     class="flex flex-col gap-y-2"
   >
-    <div class="font-medium flex items-center space-x-2">
+    <div class="font-medium flex items-center gap-x-2">
       <label>
-        {{ $t("environment.statement-execution.title") }}
+        {{ t("environment.statement-execution.title") }}
       </label>
       <FeatureBadge :feature="PlanFeature.FEATURE_QUERY_POLICY" />
     </div>
@@ -77,20 +85,20 @@
         <Switch
           v-model:value="state.dataSourceQueryPolicy.disallowDdl"
           :text="true"
-          :disabled="!allowUpdatePolicy || !hasRestrictDDLDMLFeature"
+          :disabled="!allowUpdatePolicy || !hasRestrictQueryDataSourceFeature"
         />
         <span class="textlabel">
-          {{ $t("environment.statement-execution.disallow-ddl") }}
+          {{ t("environment.statement-execution.disallow-ddl") }}
         </span>
       </div>
       <div class="w-full inline-flex items-center gap-x-2">
         <Switch
           v-model:value="state.dataSourceQueryPolicy.disallowDml"
           :text="true"
-          :disabled="!allowUpdatePolicy || !hasRestrictDDLDMLFeature"
+          :disabled="!allowUpdatePolicy || !hasRestrictQueryDataSourceFeature"
         />
         <span class="textlabel">
-          {{ $t("environment.statement-execution.disallow-dml") }}
+          {{ t("environment.statement-execution.disallow-dml") }}
         </span>
       </div>
     </div>
@@ -100,24 +108,31 @@
 <script setup lang="ts">
 import { create as createProto } from "@bufbuild/protobuf";
 import { cloneDeep, isEqual } from "lodash-es";
-import { NRadio, NRadioGroup } from "naive-ui";
+import { CircleQuestionMarkIcon } from "lucide-vue-next";
+import { NRadio, NRadioGroup, NTooltip } from "naive-ui";
 import { computed, reactive, watchEffect } from "vue";
+import { useI18n } from "vue-i18n";
 import { hasFeature, usePolicyV1Store } from "@/store";
-import { environmentNamePrefix } from "@/store/modules/v1/common";
+import {
+  environmentNamePrefix,
+  projectNamePrefix,
+} from "@/store/modules/v1/common";
 import type {
   DataSourceQueryPolicy,
   QueryDataPolicy,
 } from "@/types/proto-es/v1/org_policy_service_pb";
 import {
-  DataSourceQueryPolicySchema,
   DataSourceQueryPolicy_Restriction,
-  QueryDataPolicySchema,
+  DataSourceQueryPolicySchema,
   PolicyType,
+  QueryDataPolicySchema,
 } from "@/types/proto-es/v1/org_policy_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import { hasWorkspacePermissionV2 } from "@/utils";
 import { FeatureBadge } from "../FeatureGuard";
 import { Switch } from "../v2";
+
+const { t } = useI18n();
 
 interface LocalState {
   queryDataPolicy: QueryDataPolicy;
@@ -128,6 +143,25 @@ const props = defineProps<{
   resource: string;
   allowEdit: boolean;
 }>();
+
+const scope = computed(() => {
+  if (props.resource.startsWith(projectNamePrefix)) {
+    return t("settings.general.workspace.query-data-policy.environment-scope");
+  }
+  if (props.resource.startsWith(environmentNamePrefix)) {
+    return t("settings.general.workspace.query-data-policy.project-scope");
+  }
+  return "";
+});
+
+const tooltip = computed(() => {
+  if (!scope.value) {
+    return "";
+  }
+  return t("settings.general.workspace.query-data-policy.tooltip", {
+    scope: scope.value,
+  });
+});
 
 const policyStore = usePolicyV1Store();
 
@@ -189,10 +223,6 @@ const hasRestrictQueryDataSourceFeature = computed(() =>
 
 const hasRestrictCopyingDataFeature = computed(() =>
   hasFeature(PlanFeature.FEATURE_RESTRICT_COPYING_DATA)
-);
-
-const hasRestrictDDLDMLFeature = computed(() =>
-  hasFeature(PlanFeature.FEATURE_QUERY_POLICY)
 );
 
 const allowUpdatePolicy = computed(() => {

@@ -3,7 +3,7 @@
     :class="
       twMerge(
         'task',
-        'group px-1.5 py-1 cursor-pointer border rounded lg:flex-1 flex justify-between items-stretch overflow-hidden gap-x-1',
+        'group px-1.5 py-1 cursor-pointer border rounded-sm lg:flex-1 flex justify-between items-stretch overflow-hidden gap-x-1',
         taskClass
       )
     "
@@ -36,9 +36,6 @@
             </template>
             <span>{{ $t("task.online-migration.self") }}</span>
           </NTooltip>
-          <NTag v-if="schemaVersion" size="small" round>
-            {{ schemaVersion }}
-          </NTag>
         </div>
         <TaskExtraActionsButton :task="task" />
       </div>
@@ -59,15 +56,10 @@ import { computed } from "vue";
 import { InstanceV1Name } from "@/components/v2";
 import { useCurrentProjectV1 } from "@/store";
 import { isValidDatabaseName } from "@/types";
-import {
-  DatabaseChangeType,
-  MigrationType,
-} from "@/types/proto-es/v1/common_pb";
 import type { Task } from "@/types/proto-es/v1/rollout_service_pb";
-import { Task_Type, Task_Status } from "@/types/proto-es/v1/rollout_service_pb";
-import { databaseForTask } from "@/utils";
-import { databaseV1Url, extractSchemaVersionFromTask } from "@/utils";
-import { useInstanceForTask, specForTask, useIssueContext } from "../../logic";
+import { Task_Status, Task_Type } from "@/types/proto-es/v1/rollout_service_pb";
+import { databaseForTask, databaseV1Url } from "@/utils";
+import { specForTask, useInstanceForTask, useIssueContext } from "../../logic";
 import TaskStatusIcon from "../TaskStatusIcon.vue";
 import TaskExtraActionsButton from "./TaskExtraActionsButton.vue";
 
@@ -79,40 +71,12 @@ const { isCreating, issue, selectedTask, events } = useIssueContext();
 const { project } = useCurrentProjectV1();
 const selected = computed(() => props.task === selectedTask.value);
 
-const schemaVersion = computed(() => {
-  const v = extractSchemaVersionFromTask(props.task);
-  // Always show the schema version for tasks from a release source.
-  if (
-    (
-      issue.value.planEntity?.specs?.filter(
-        (spec) =>
-          spec.config?.case === "changeDatabaseConfig" &&
-          spec.config.value?.release
-      ) ?? []
-    ).length > 0
-  ) {
-    return v;
-  }
-  if (isCreating.value) return "";
-  return v;
-});
-
 const showGhostTag = computed(() => {
-  if (isCreating.value) {
-    const spec = specForTask(issue.value.planEntity, props.task);
-    return (
-      spec?.config?.case === "changeDatabaseConfig" &&
-      spec.config.value?.type === DatabaseChangeType.MIGRATE &&
-      spec.config.value?.migrationType === MigrationType.GHOST
-    );
-  }
-  // Check if it's a MIGRATE task with GHOST type
+  const spec = specForTask(issue.value.planEntity, props.task);
   return (
-    props.task.type === Task_Type.DATABASE_MIGRATE &&
-    props.task.payload?.case === "databaseUpdate" &&
-    props.task.payload.value.databaseChangeType ===
-      DatabaseChangeType.MIGRATE &&
-    props.task.payload.value.migrationType === MigrationType.GHOST
+    spec?.config?.case === "changeDatabaseConfig" &&
+    !spec.config.value?.release &&
+    spec.config.value?.enableGhost === true
   );
 });
 
@@ -135,22 +99,25 @@ const onClickTask = (task: Task) => {
 
 <style scoped lang="postcss">
 .task.selected {
-  @apply border-info bg-info bg-opacity-5;
+  border-color: var(--color-info);
+  background-color: var(--color-info);
+  background-opacity: 0.05;
 }
 .task .name {
-  @apply whitespace-nowrap break-all;
+  white-space: nowrap;
+  word-break: break-all;
 }
 .task.status_done .name {
-  @apply text-control;
+  color: var(--color-control);
 }
 .task.status_pending .name,
 .task.status_not_started .name {
-  @apply text-control;
+  color: var(--color-control);
 }
 .task.status_running .name {
-  @apply text-info;
+  color: var(--color-info);
 }
 .task.status_failed .name {
-  @apply text-red-500;
+  color: var(--color-red-500);
 }
 </style>

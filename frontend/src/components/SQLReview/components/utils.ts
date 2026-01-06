@@ -4,6 +4,7 @@ import type {
   SQLReviewPolicy,
 } from "@/types";
 import { convertPolicyRuleToRuleTemplate, ruleTemplateMapV2 } from "@/types";
+import { SQLReviewRule_Type } from "@/types/proto-es/v1/review_config_service_pb";
 import type { PayloadValueType } from "./RuleConfigComponents";
 
 export const getRuleKey = (rule: RuleTemplateV2) =>
@@ -16,7 +17,10 @@ export const rulesToTemplate = (review: SQLReviewPolicy) => {
   const ruleTemplateList: RuleTemplateV2[] = [];
 
   for (const rule of review.ruleList) {
-    const ruleTemplate = ruleTemplateMapV2.get(rule.engine)?.get(rule.type);
+    // rule.type is already SQLReviewRule_Type enum
+    const type = rule.type ?? SQLReviewRule_Type.TYPE_UNSPECIFIED;
+
+    const ruleTemplate = ruleTemplateMapV2.get(rule.engine)?.get(type);
     if (!ruleTemplate) {
       continue;
     }

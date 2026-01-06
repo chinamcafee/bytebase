@@ -79,32 +79,17 @@ func ConvertTiDBParserErrorPositionToPosition(line, column int) *storepb.Positio
 	}
 }
 
-func ConvertPGParserErrorCursorPosToPosition(cursorPos int, text string) *storepb.Position {
-	// PostgreSQL cursorPos is 1-based character (rune) position.
-	// Cursorpos points to the character WHERE the error is.
-	// We need to count characters BEFORE the error position.
-	if cursorPos >= 1 {
-		cursorPos--
-	}
-	line := 1 // Start at 1 for 1-based line numbering
-	column := 0
-	rText := []rune(text)
-	for i, r := range rText {
-		// Stop when we reach the error position
-		if i == cursorPos {
-			break
-		}
-		if r == '\n' {
-			line++
-			column = 0
-			continue
-		}
-		// Count characters (not bytes)
-		column++
-	}
-	// Convert from 0-based to 1-based column
+// ConvertANTLRTokenToExclusiveEndPosition converts an ANTLR token position to an exclusive end Position.
+// The end token's line and column (0-based) plus its text are used to calculate where the position
+// should point to (after the last character of the token).
+// This is used for Statement.End which should use exclusive semantics (pointing after the last character).
+func ConvertANTLRTokenToExclusiveEndPosition(line int32, column int32, tokenText string) *storepb.Position {
+	tokenCharLength := int32(len([]rune(tokenText)))
+	// For exclusive end, we simply add the token length to the column.
+	// The column is 0-based in ANTLR, so we add 1 to convert to 1-based.
+	// The result points to the position AFTER the last character of the token.
 	return &storepb.Position{
-		Line:   int32(line),
-		Column: int32(column + 1),
+		Line:   line,
+		Column: column + tokenCharLength + 1,
 	}
 }

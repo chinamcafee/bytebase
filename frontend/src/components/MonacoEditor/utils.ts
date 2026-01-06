@@ -1,6 +1,5 @@
 import { Range } from "monaco-editor";
-import { isRef, unref, watch } from "vue";
-import { h } from "vue";
+import { h, isRef, unref, watch } from "vue";
 import { t } from "@/plugins/i18n";
 import { pushNotification } from "@/store";
 import type { Language, MaybeRef, SQLDialect } from "@/types";
@@ -35,6 +34,8 @@ export const extensionNameOfLanguage = (lang: Language) => {
       return "js";
     case "redis":
       return "redis";
+    case "json":
+      return "json";
   }
   // A simple fallback
   console.warn("unexpected language", lang);

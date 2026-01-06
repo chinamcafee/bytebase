@@ -32,6 +32,28 @@ service AuthService {
     option (bytebase.v1.allow_without_credential) = true;
     option (bytebase.v1.audit) = true;
   }
+
+  // Exchanges an external OIDC token for a Bytebase access token.
+  // Used by CI/CD pipelines with Workload Identity Federation.
+  // Permissions required: None (validates via OIDC token)
+  rpc ExchangeToken(ExchangeTokenRequest) returns (ExchangeTokenResponse) {
+    option (google.api.http) = {
+      post: "/v1/auth:exchangeToken"
+      body: "*"
+    };
+    option (bytebase.v1.allow_without_credential) = true;
+    option (bytebase.v1.audit) = true;
+  }
+
+  // Refreshes the access token using the refresh token cookie.
+  // Permissions required: None (validates via refresh token cookie)
+  rpc Refresh(RefreshRequest) returns (RefreshResponse) {
+    option (google.api.http) = {
+      post: "/v1/auth/refresh"
+      body: "*"
+    };
+    option (bytebase.v1.allow_without_credential) = true;
+  }
 }
 
 message LoginRequest {
@@ -41,14 +63,15 @@ message LoginRequest {
   // User's password for authentication.
   string password = 2;
 
-  // If web is set, we will set access token, refresh token, and user to the cookie.
+  // If true, sets access token and refresh token as HTTP-only cookies instead of
+  // returning the token in the response body. Use for browser-based clients.
   bool web = 3;
 
   // The name of the identity provider.
   // Format: idps/{idp}
   string idp_name = 4;
 
-  // The idp_context is using to get the user information from identity provider.
+  // The idp_context is used to get the user information from identity provider.
   IdentityProviderContext idp_context = 5;
 
   // The otp_code is used to verify the user's identity by MFA.
@@ -78,10 +101,14 @@ message OAuth2IdentityProviderContext {
 }
 
 // OpenID Connect authentication context.
-message OIDCIdentityProviderContext {}
+message OIDCIdentityProviderContext {
+  // Authorization code from OIDC provider.
+  string code = 1;
+}
 
 message LoginResponse {
   // Access token for authenticated requests.
+  // Only returned when web=false. For web=true, the token is set as an HTTP-only cookie.
   string token = 1;
 
   // Temporary token for MFA verification.
@@ -96,3 +123,23 @@ message LoginResponse {
 
 // Request to logout current user session.
 message LogoutRequest {}
+
+message ExchangeTokenRequest {
+  // External OIDC token (JWT) from CI/CD platform.
+  string token = 1;
+
+  // Workload Identity email for identifying which identity to authenticate as.
+  // Format: {name}@workload.bytebase.com
+  string email = 2;
+}
+
+message ExchangeTokenResponse {
+  // Bytebase access token.
+  string access_token = 1;
+}
+
+// Request to refresh the access token.
+message RefreshRequest {}
+
+// Response from refreshing the access token.
+message RefreshResponse {}

@@ -6,14 +6,15 @@ import (
 	"slices"
 
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
-	"github.com/pkg/errors"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -21,9 +22,9 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleColumnNotNull, &ColumnNoNullAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleColumnNotNull, &ColumnNoNullAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleColumnNotNull, &ColumnNoNullAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_COLUMN_NO_NULL, &ColumnNoNullAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_COLUMN_NO_NULL, &ColumnNoNullAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_COLUMN_NO_NULL, &ColumnNoNullAdvisor{})
 }
 
 // ColumnNoNullAdvisor is the advisor checking for column no NULL value.
@@ -32,26 +33,28 @@ type ColumnNoNullAdvisor struct {
 
 // Check checks for column no NULL value.
 func (*ColumnNoNullAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parser result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewColumnNoNullRule(level, string(checkCtx.Rule.Type), checkCtx.Catalog)
+	rule := NewColumnNoNullRule(level, checkCtx.Rule.Type.String(), checkCtx.FinalMetadata)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmtNode := range root {
-		rule.SetBaseLine(stmtNode.BaseLine)
-		checker.SetBaseLine(stmtNode.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmtNode.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	// Generate advice after walking
@@ -73,19 +76,19 @@ func (c columnName) name() string {
 // ColumnNoNullRule checks for column no NULL value.
 type ColumnNoNullRule struct {
 	BaseRule
-	columnSet map[string]columnName
-	catalog   *catalog.Finder
+	columnSet     map[string]columnName
+	finalMetadata *model.DatabaseMetadata
 }
 
 // NewColumnNoNullRule creates a new ColumnNoNullRule.
-func NewColumnNoNullRule(level storepb.Advice_Status, title string, catalog *catalog.Finder) *ColumnNoNullRule {
+func NewColumnNoNullRule(level storepb.Advice_Status, title string, finalMetadata *model.DatabaseMetadata) *ColumnNoNullRule {
 	return &ColumnNoNullRule{
 		BaseRule: BaseRule{
 			level: level,
 			title: title,
 		},
-		columnSet: make(map[string]columnName),
-		catalog:   catalog,
+		columnSet:     make(map[string]columnName),
+		finalMetadata: finalMetadata,
 	}
 }
 
@@ -134,14 +137,19 @@ func (r *ColumnNoNullRule) generateAdvice() {
 	})
 
 	for _, column := range columnList {
-		col := r.catalog.Final.FindColumn(&catalog.ColumnFind{
-			TableName:  column.tableName,
-			ColumnName: column.columnName,
-		})
-		if col != nil && col.Nullable() {
+		schema := r.finalMetadata.GetSchemaMetadata("")
+		if schema == nil {
+			continue
+		}
+		table := schema.GetTable(column.tableName)
+		if table == nil {
+			continue
+		}
+		col := table.GetColumn(column.columnName)
+		if col != nil && col.GetProto().Nullable {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.ColumnCannotNull.Int32(),
+				Code:          code.ColumnCannotNull.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("`%s`.`%s` cannot have NULL value", column.tableName, column.columnName),
 				StartPosition: common.ConvertANTLRLineToPosition(column.line),
@@ -174,7 +182,7 @@ func (r *ColumnNoNullRule) checkCreateTable(ctx *mysql.CreateTableContext) {
 		col := columnName{
 			tableName:  tableName,
 			columnName: column,
-			line:       r.baseLine + tableElement.GetStart().GetLine(),
+			line:       r.baseLine + tableElement.ColumnDefinition().GetStart().GetLine(),
 		}
 		if _, exists := r.columnSet[col.name()]; !exists {
 			r.columnSet[col.name()] = col

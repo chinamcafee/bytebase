@@ -90,7 +90,7 @@ func buildMockDatabaseMetadataGetter(defaultMetadata []*storepb.DatabaseSchemaMe
 			}
 			m := make(map[string]*model.DatabaseMetadata)
 			for _, metadata := range databaseMetadata {
-				m[metadata.Name] = model.NewDatabaseMetadata(metadata, true /* isObjectCaseSensitive */, true /* isDetailCaseSensitive */)
+				m[metadata.Name] = model.NewDatabaseMetadata(metadata, nil, nil, storepb.Engine_ORACLE, true /* isObjectCaseSensitive */)
 			}
 
 			if databaseMetadata, ok := m[databaseName]; ok {
@@ -128,7 +128,7 @@ func buildMockDatabaseMetadataGetter(defaultMetadata []*storepb.DatabaseSchemaMe
 
 			for _, metadata := range getLinkedDatabaseMetadata() {
 				if metadata.Name == linkedDBInfo.Username {
-					return instanceIDB, metadata.Name, model.NewDatabaseMetadata(metadata, true /* isObjectCaseSensitive */, true /* isDetailCaseSensitive */), nil
+					return instanceIDB, metadata.Name, model.NewDatabaseMetadata(metadata, nil, nil, storepb.Engine_ORACLE, true /* isObjectCaseSensitive */), nil
 				}
 			}
 
@@ -228,9 +228,10 @@ func TestGetAccessTables(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		r, _, err := ParsePLSQL(test.statement)
+		results, err := ParsePLSQL(test.statement)
 		require.NoError(t, err)
-		resources := getAccessTables("DB", r)
+		require.NotEmpty(t, results)
+		resources := getAccessTables("DB", results[0].Tree)
 		require.Equal(t, test.expected, resources, test.statement)
 	}
 }

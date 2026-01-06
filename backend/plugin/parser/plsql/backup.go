@@ -9,7 +9,7 @@ import (
 	"github.com/antlr4-go/antlr/v4"
 	"github.com/pkg/errors"
 
-	parser "github.com/bytebase/plsql-parser"
+	parser "github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/generated-go/store"
@@ -19,7 +19,6 @@ import (
 const (
 	maxTableNameLengthAfter12_2  = 128
 	maxTableNameLengthBefore12_2 = 30
-	maxMixedDMLCount             = 5
 )
 
 func init() {
@@ -49,6 +48,7 @@ type statementInfo struct {
 	statement string
 	tree      antlr.ParserRuleContext
 	table     *TableReference
+	baseLine  int
 }
 
 // TransformDMLToSelect transforms DML statement to SELECT statement.
@@ -175,11 +175,11 @@ func generateSQLForTable(ctx base.TransformContext, statementInfoList []statemen
 		SourceTableName: table.Table,
 		TargetTableName: targetTable,
 		StartPosition: &store.Position{
-			Line:   int32(statementInfoList[0].tree.GetStart().GetLine()),
+			Line:   int32(statementInfoList[0].tree.GetStart().GetLine() + statementInfoList[0].baseLine),
 			Column: int32(statementInfoList[0].tree.GetStart().GetColumn()),
 		},
 		EndPosition: &store.Position{
-			Line:   int32(statementInfoList[len(statementInfoList)-1].tree.GetStop().GetLine()),
+			Line:   int32(statementInfoList[len(statementInfoList)-1].tree.GetStop().GetLine() + statementInfoList[len(statementInfoList)-1].baseLine),
 			Column: int32(statementInfoList[len(statementInfoList)-1].tree.GetStop().GetColumn()),
 		},
 	}, nil
@@ -245,15 +245,24 @@ func (e *suffixSelectClauseExtractor) EnterUpdate_statement(ctx *parser.Update_s
 }
 
 func prepareTransformation(databaseName, statement string) ([]statementInfo, error) {
-	tree, _, err := ParsePLSQL(statement)
+	results, err := ParsePLSQL(statement)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse PLSQL")
+	}
+	if len(results) == 0 {
+		return nil, errors.New("no parse results")
 	}
 
 	extractor := &dmlExtractor{
 		databaseName: databaseName,
 	}
-	antlr.ParseTreeWalkerDefault.Walk(extractor, tree)
+
+	// Walk each ANTLRAST tree to extract DML statements
+	for _, result := range results {
+		extractor.baseLine = base.GetLineOffset(result.StartPosition)
+		antlr.ParseTreeWalkerDefault.Walk(extractor, result.Tree)
+	}
+
 	return extractor.dmls, nil
 }
 
@@ -277,6 +286,7 @@ type dmlExtractor struct {
 	databaseName string
 	dmls         []statementInfo
 	offset       int
+	baseLine     int
 }
 
 func (e *dmlExtractor) ExitUnit_statement(_ *parser.Unit_statementContext) {
@@ -300,6 +310,7 @@ func (e *dmlExtractor) EnterDelete_statement(ctx *parser.Delete_statementContext
 			statement: ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx),
 			tree:      ctx,
 			table:     extractor.table,
+			baseLine:  e.baseLine,
 		})
 	}
 }
@@ -317,6 +328,7 @@ func (e *dmlExtractor) EnterUpdate_statement(ctx *parser.Update_statementContext
 			statement: ctx.GetParser().GetTokenStream().GetTextFromRuleContext(ctx),
 			tree:      ctx,
 			table:     extractor.table,
+			baseLine:  e.baseLine,
 		})
 	}
 }

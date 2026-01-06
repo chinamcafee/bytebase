@@ -14,21 +14,27 @@
     @update:checked-row-keys="
       (val) => $emit('update:selected-database-names', val as string[])
     "
+    @update:sorter="$emit('update:sorters', $event)"
   />
 </template>
 
 <script setup lang="tsx">
-import { NDataTable, type DataTableColumn } from "naive-ui";
+import {
+  type DataTableColumn,
+  type DataTableSortState,
+  NDataTable,
+} from "naive-ui";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { EnvironmentV1Name, InstanceV1Name } from "@/components/v2";
 import {
   DatabaseNameCell,
-  ProjectNameCell,
   LabelsCell,
+  ProjectNameCell,
 } from "@/components/v2/Model/cells";
 import type { ComposedDatabase } from "@/types";
 import { hostPortOfInstanceV1 } from "@/utils";
+import { mapSorterStatus } from "../utils";
 
 type DatabaseDataTableColumn = DataTableColumn<ComposedDatabase> & {
   hide?: boolean;
@@ -62,6 +68,7 @@ const props = withDefaults(
           defaultPageSize: number;
           disabled: boolean;
         };
+    sorters?: DataTableSortState[];
   }>(),
   {
     mode: "ALL",
@@ -77,6 +84,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (event: "update:selected-database-names", val: string[]): void;
+  (event: "update:sorters", sorters: DataTableSortState[]): void;
 }>();
 
 const { t } = useI18n();
@@ -96,7 +104,7 @@ const columnList = computed((): DatabaseDataTableColumn[] => {
     },
   };
   const NAME: DatabaseDataTableColumn = {
-    key: "title",
+    key: "name",
     title: t("common.name"),
     resizable: true,
     render: (data) => {
@@ -132,11 +140,7 @@ const columnList = computed((): DatabaseDataTableColumn[] => {
     resizable: true,
     ellipsis: true,
     render: (data) => (
-      <ProjectNameCell
-        project={data.projectEntity}
-        mode={props.mode}
-        keyword={props.keyword}
-      />
+      <ProjectNameCell project={data.projectEntity} keyword={props.keyword} />
     ),
   };
   const INSTANCE: DatabaseDataTableColumn = {
@@ -188,9 +192,13 @@ const columnList = computed((): DatabaseDataTableColumn[] => {
     ["PROJECT_SHORT", [NAME, ENVIRONMENT, SCHEMA_VERSION, INSTANCE, ADDRESS]],
   ]);
 
-  return [SELECTION, ...(columnsMap.get(props.mode) || [])].filter(
-    (column) => !column.hide
-  );
+  const columns: DatabaseDataTableColumn[] = (
+    [
+      SELECTION,
+      ...(columnsMap.get(props.mode) || []),
+    ] as DatabaseDataTableColumn[]
+  ).filter((column) => !column.hide);
+  return mapSorterStatus(columns, props.sorters);
 });
 
 const rowProps = (database: ComposedDatabase) => {

@@ -9,12 +9,13 @@ import (
 	"github.com/antlr4-go/antlr/v4"
 	"github.com/pkg/errors"
 
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	parserbase "github.com/bytebase/bytebase/backend/plugin/parser/base"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 	"github.com/bytebase/bytebase/backend/store/model"
 )
@@ -24,8 +25,8 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleOnlineMigration, &OnlineMigrationAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleOnlineMigration, &OnlineMigrationAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_ADVICE_ONLINE_MIGRATION, &OnlineMigrationAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_ADVICE_ONLINE_MIGRATION, &OnlineMigrationAdvisor{})
 }
 
 // OnlineMigrationAdvisor is the advisor checking for using gh-ost to migrate large tables.
@@ -34,26 +35,21 @@ type OnlineMigrationAdvisor struct {
 
 // Check checks for using gh-ost to migrate large tables.
 func (*OnlineMigrationAdvisor) Check(ctx context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	numberPayload := checkCtx.Rule.GetNumberPayload()
+	if numberPayload == nil {
+		return nil, errors.New("number_payload is required for this rule")
 	}
-
-	payload, err := advisor.UnmarshalNumberTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
-	minRows := int64(payload.Number)
+	minRows := int64(int(numberPayload.Number))
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	dbSchema := model.NewDatabaseSchema(checkCtx.DBSchema, nil, nil, storepb.Engine_MYSQL, checkCtx.IsObjectCaseSensitive)
-	title := string(checkCtx.Rule.Type)
+	dbMetadata := model.NewDatabaseMetadata(checkCtx.DBSchema, nil, nil, storepb.Engine_MYSQL, checkCtx.IsObjectCaseSensitive)
+	title := checkCtx.Rule.Type.String()
 
-	// Check gh-ost database existence first if the change type is gh-ost.
-	if checkCtx.ChangeType == storepb.PlanCheckRunConfig_DDL_GHOST {
+	// Check gh-ost database existence first if gh-ost is enabled.
+	if checkCtx.EnableGhost {
 		ghostDatabaseName := common.BackupDatabaseNameOfEngine(storepb.Engine_MYSQL)
 		if !advisor.DatabaseExists(ctx, checkCtx, ghostDatabaseName) {
 			return []*storepb.Advice{
@@ -61,7 +57,7 @@ func (*OnlineMigrationAdvisor) Check(ctx context.Context, checkCtx advisor.Conte
 					Status:        level,
 					Title:         title,
 					Content:       fmt.Sprintf("Needs database %q to save temporary data for online migration but it does not exist", ghostDatabaseName),
-					Code:          advisor.DatabaseNotExists.Int32(),
+					Code:          code.DatabaseNotExists.Int32(),
 					StartPosition: nil,
 				},
 			}, nil
@@ -69,15 +65,22 @@ func (*OnlineMigrationAdvisor) Check(ctx context.Context, checkCtx advisor.Conte
 	}
 
 	// Create the rule
-	rule := NewOnlineMigrationRule(level, title, minRows, dbSchema, checkCtx)
+	rule := NewOnlineMigrationRule(level, title, minRows, dbMetadata, checkCtx)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	adviceList := rule.GetAdviceList()
@@ -89,29 +92,29 @@ func (*OnlineMigrationAdvisor) Check(ctx context.Context, checkCtx advisor.Conte
 	}
 	// One statement needs online migration, others don't.
 	// Advise running the statement in another issue.
-	if len(adviceList) == 1 && len(stmtList) > 1 {
+	if len(adviceList) == 1 && len(checkCtx.ParsedStatements) > 1 {
 		return adviceList, nil
 	}
 
 	// We have only one statement, and the statement
 	// needs online migration.
 	// Advise to enable online migration for the issue, or return OK if it's already enabled.
-	if len(adviceList) == 1 && len(stmtList) == 1 {
-		if checkCtx.ChangeType == storepb.PlanCheckRunConfig_DDL_GHOST {
+	if len(adviceList) == 1 && len(checkCtx.ParsedStatements) == 1 {
+		if checkCtx.EnableGhost {
 			return nil, nil
 		}
 
-		adviceList[0].Code = advisor.AdviseOnlineMigration.Int32()
+		adviceList[0].Code = code.AdviseOnlineMigration.Int32()
 		return adviceList, nil
 	}
 
 	// No statement needs online migration.
 	// Advise to disable online migration if it's enabled.
 	if len(adviceList) == 0 {
-		if checkCtx.ChangeType == storepb.PlanCheckRunConfig_DDL_GHOST {
+		if checkCtx.EnableGhost {
 			return []*storepb.Advice{{
 				Status:  level,
-				Code:    advisor.AdviseNoOnlineMigration.Int32(),
+				Code:    code.AdviseNoOnlineMigration.Int32(),
 				Title:   title,
 				Content: "Advise to disable online migration because found no statements that need online migration",
 			}}, nil
@@ -127,27 +130,27 @@ func (*OnlineMigrationAdvisor) Check(ctx context.Context, checkCtx advisor.Conte
 type OnlineMigrationRule struct {
 	BaseRule
 	minRows          int64
-	dbSchema         *model.DatabaseSchema
+	dbMetadata       *model.DatabaseMetadata
 	checkCtx         advisor.Context
 	currentDatabase  string
-	changedResources map[string]parserbase.SchemaResource
+	changedResources map[string]base.SchemaResource
 	ghostCompatible  bool
 	start            *storepb.Position
 	end              *storepb.Position
 }
 
 // NewOnlineMigrationRule creates a new OnlineMigrationRule.
-func NewOnlineMigrationRule(level storepb.Advice_Status, title string, minRows int64, dbSchema *model.DatabaseSchema, checkCtx advisor.Context) *OnlineMigrationRule {
+func NewOnlineMigrationRule(level storepb.Advice_Status, title string, minRows int64, dbMetadata *model.DatabaseMetadata, checkCtx advisor.Context) *OnlineMigrationRule {
 	return &OnlineMigrationRule{
 		BaseRule: BaseRule{
 			level: level,
 			title: title,
 		},
 		minRows:          minRows,
-		dbSchema:         dbSchema,
+		dbMetadata:       dbMetadata,
 		checkCtx:         checkCtx,
 		currentDatabase:  checkCtx.CurrentDatabase,
-		changedResources: make(map[string]parserbase.SchemaResource),
+		changedResources: make(map[string]base.SchemaResource),
 	}
 }
 
@@ -179,23 +182,11 @@ func (r *OnlineMigrationRule) OnExit(ctx antlr.ParserRuleContext, nodeType strin
 }
 
 func (r *OnlineMigrationRule) checkAlterStatement(ctx *mysql.AlterStatementContext) {
-	r.start = common.ConvertANTLRPositionToPosition(
-		&common.ANTLRPosition{
-			Line:   int32(ctx.GetStart().GetLine()),
-			Column: int32(ctx.GetStart().GetColumn()),
-		},
-		r.checkCtx.Statements,
-	)
+	r.start = common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine())
 }
 
 func (r *OnlineMigrationRule) exitAlterStatement(ctx *mysql.AlterStatementContext) {
-	r.end = common.ConvertANTLRPositionToPosition(
-		&common.ANTLRPosition{
-			Line:   int32(r.baseLine) + int32(ctx.GetStop().GetLine()),
-			Column: int32(ctx.GetStop().GetColumn() + len([]rune(ctx.GetStop().GetText()))),
-		},
-		r.checkCtx.Statements,
-	)
+	r.end = common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStop().GetLine())
 
 	if !r.ghostCompatible {
 		return
@@ -203,7 +194,7 @@ func (r *OnlineMigrationRule) exitAlterStatement(ctx *mysql.AlterStatementContex
 
 	for _, resource := range r.changedResources {
 		var tableRows int64
-		for _, table := range r.dbSchema.GetMetadata().GetSchemas()[0].GetTables() {
+		for _, table := range r.dbMetadata.GetProto().GetSchemas()[0].GetTables() {
 			if table.GetName() == resource.Table {
 				tableRows = table.GetRowCount()
 				break
@@ -212,7 +203,7 @@ func (r *OnlineMigrationRule) exitAlterStatement(ctx *mysql.AlterStatementContex
 		if tableRows >= r.minRows {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.AdviseOnlineMigrationForStatement.Int32(),
+				Code:          code.AdviseOnlineMigrationForStatement.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("Estimated table row count of %q is %d exceeding the set value %d. Consider using online migration for this statement", fmt.Sprintf("%s.%s", resource.Schema, resource.Table), tableRows, r.minRows),
 				StartPosition: r.start,
@@ -226,7 +217,7 @@ func (r *OnlineMigrationRule) checkAlterTable(ctx *mysql.AlterTableContext) {
 	if !mysqlparser.IsTopMySQLRule(&ctx.BaseParserRuleContext) {
 		return
 	}
-	resource := parserbase.SchemaResource{
+	resource := base.SchemaResource{
 		Database: r.currentDatabase,
 	}
 	db, table := mysqlparser.NormalizeMySQLTableRef(ctx.TableRef())

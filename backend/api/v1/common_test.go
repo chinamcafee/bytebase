@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 )
 
 func TestIsValidResourceID(t *testing.T) {
@@ -36,60 +38,6 @@ func TestIsValidResourceID(t *testing.T) {
 	for _, test := range tests {
 		got := isValidResourceID(test.resourceID)
 		require.Equal(t, test.want, got, test.resourceID)
-	}
-}
-
-func TestGetEBNFTokens(t *testing.T) {
-	testCases := []struct {
-		input   string
-		key     string
-		want    []string
-		wantErr bool
-	}{
-		{
-			input: `resource="environments/e1/instances/i2".`,
-			key:   "resource",
-			want: []string{
-				"environments/e1/instances/i2",
-			},
-			wantErr: false,
-		},
-		{
-			input: `resource="environments/e1/instances/i2/databases/db3".`,
-			key:   "resource",
-			want: []string{
-				"environments/e1/instances/i2/databases/db3",
-			},
-			wantErr: false,
-		},
-		{
-			input: `type="DATABASE_BACKUP_MISSING" | "DATABASE_BACKUP_FAILED".`,
-			key:   "type",
-			want: []string{
-				"DATABASE_BACKUP_MISSING",
-				"DATABASE_BACKUP_FAILED",
-			},
-			wantErr: false,
-		},
-		{
-			input: `a="1" | "2". b="3" | "4".`,
-			key:   "b",
-			want: []string{
-				"3",
-				"4",
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tc := range testCases {
-		got, err := getEBNFTokens(tc.input, tc.key)
-		if tc.wantErr {
-			require.Error(t, err)
-		} else {
-			require.NoError(t, err)
-			require.Equal(t, tc.want, got)
-		}
 	}
 }
 
@@ -142,52 +90,70 @@ func TestParseFilter(t *testing.T) {
 	}
 }
 
-func TestParseOrderBy(t *testing.T) {
-	testCases := []struct {
-		input string
-		want  []orderByKey
-		err   error
+func TestIsValidateOnlyRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		request any
+		want    bool
 	}{
 		{
-			input: "start_time",
-			want: []orderByKey{
-				{
-					key:      "start_time",
-					isAscend: true,
-				},
-			},
+			name:    "nil request",
+			request: nil,
+			want:    false,
 		},
 		{
-			input: "start_time desc",
-			want: []orderByKey{
-				{
-					key:      "start_time",
-					isAscend: false,
-				},
-			},
+			name:    "non-proto request",
+			request: "not a proto",
+			want:    false,
 		},
 		{
-			input: "start_time desc, count",
-			want: []orderByKey{
-				{
-					key:      "start_time",
-					isAscend: false,
-				},
-				{
-					key:      "count",
-					isAscend: true,
-				},
+			name: "request without validate_only field",
+			request: &v1pb.GetInstanceRequest{
+				Name: "instances/test",
 			},
+			want: false,
+		},
+		{
+			name: "CreateInstanceRequest with validate_only=false",
+			request: &v1pb.CreateInstanceRequest{
+				InstanceId:   "test",
+				Instance:     &v1pb.Instance{},
+				ValidateOnly: false,
+			},
+			want: false,
+		},
+		{
+			name: "CreateInstanceRequest with validate_only=true",
+			request: &v1pb.CreateInstanceRequest{
+				InstanceId:   "test",
+				Instance:     &v1pb.Instance{},
+				ValidateOnly: true,
+			},
+			want: true,
+		},
+		{
+			name: "UpdateSettingRequest with validate_only=true",
+			request: &v1pb.UpdateSettingRequest{
+				Setting:      &v1pb.Setting{},
+				ValidateOnly: true,
+			},
+			want: true,
+		},
+		{
+			name: "AddDataSourceRequest with validate_only=true",
+			request: &v1pb.AddDataSourceRequest{
+				Name:         "instances/test",
+				DataSource:   &v1pb.DataSource{},
+				ValidateOnly: true,
+			},
+			want: true,
 		},
 	}
 
-	for _, test := range testCases {
-		got, err := parseOrderBy(test.input)
-		if test.err != nil {
-			require.EqualError(t, err, test.err.Error())
-		} else {
-			require.NoError(t, err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := isValidateOnlyRequest(test.request)
 			require.Equal(t, test.want, got)
-		}
+		})
 	}
 }

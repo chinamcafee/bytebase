@@ -6,13 +6,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -21,7 +22,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleColumnDisallowDropInIndex, &ColumnDisallowDropInIndexAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_COLUMN_DISALLOW_DROP_IN_INDEX, &ColumnDisallowDropInIndexAdvisor{})
 }
 
 // ColumnDisallowDropInIndexAdvisor is the advisor checking for disallow DROP COLUMN in index.
@@ -30,9 +31,10 @@ type ColumnDisallowDropInIndexAdvisor struct {
 
 // Check checks for disallow Drop COLUMN in index statement.
 func (*ColumnDisallowDropInIndexAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -41,10 +43,10 @@ func (*ColumnDisallowDropInIndexAdvisor) Check(_ context.Context, checkCtx advis
 	}
 
 	checker := &columnDisallowDropInIndexChecker{
-		level:   level,
-		title:   string(checkCtx.Rule.Type),
-		tables:  make(tableState),
-		catalog: checkCtx.Catalog,
+		level:            level,
+		title:            checkCtx.Rule.Type.String(),
+		tables:           make(tableState),
+		originalMetadata: checkCtx.OriginalMetadata,
 	}
 
 	for _, stmt := range stmtList {
@@ -57,13 +59,13 @@ func (*ColumnDisallowDropInIndexAdvisor) Check(_ context.Context, checkCtx advis
 }
 
 type columnDisallowDropInIndexChecker struct {
-	adviceList []*storepb.Advice
-	level      storepb.Advice_Status
-	title      string
-	text       string
-	tables     tableState // the variable mean whether the column in index.
-	catalog    *catalog.Finder
-	line       int
+	adviceList       []*storepb.Advice
+	level            storepb.Advice_Status
+	title            string
+	text             string
+	tables           tableState // the variable mean whether the column in index.
+	originalMetadata *model.DatabaseMetadata
+	line             int
 }
 
 func (checker *columnDisallowDropInIndexChecker) Enter(in ast.Node) (ast.Node, bool) {
@@ -86,18 +88,13 @@ func (checker *columnDisallowDropInIndexChecker) dropColumn(in ast.Node) (ast.No
 			if spec.Tp == ast.AlterTableDropColumn {
 				table := node.Table.Name.O
 
-				index := checker.catalog.Origin.Index(&catalog.TableIndexFind{
-					// In MySQL, the SchemaName is "".
-					SchemaName: "",
-					TableName:  table,
-				})
-
-				if index != nil {
+				tableMetadata := checker.originalMetadata.GetSchemaMetadata("").GetTable(table)
+				if tableMetadata != nil {
 					if checker.tables[table] == nil {
 						checker.tables[table] = make(columnSet)
 					}
-					for _, indexColumn := range *index {
-						for _, column := range indexColumn.ExpressionList() {
+					for _, indexColumn := range tableMetadata.ListIndexes() {
+						for _, column := range indexColumn.GetProto().GetExpressions() {
 							checker.tables[table][column] = true
 						}
 					}
@@ -107,7 +104,7 @@ func (checker *columnDisallowDropInIndexChecker) dropColumn(in ast.Node) (ast.No
 				if !checker.canDrop(table, colName) {
 					checker.adviceList = append(checker.adviceList, &storepb.Advice{
 						Status:        checker.level,
-						Code:          advisor.DropIndexColumn.Int32(),
+						Code:          code.DropIndexColumn.Int32(),
 						Title:         checker.title,
 						Content:       fmt.Sprintf("`%s`.`%s` cannot drop index column", table, colName),
 						StartPosition: common.ConvertANTLRLineToPosition(checker.line),

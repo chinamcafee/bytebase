@@ -1,9 +1,15 @@
 <template>
-  <div class="space-y-4">
-    <slot name="table" :list="dataList" :loading="state.loading" />
+  <div class="flex flex-col gap-y-4">
+    <slot
+      name="table"
+      :list="dataList"
+      :loading="state.loading"
+      :sorters="sorters"
+      :on-sorters-update="onSortersUpdate"
+    />
 
-    <div :class="['flex items-center justify-end space-x-2', footerClass]">
-      <div class="flex items-center space-x-2">
+    <div :class="['flex items-center justify-end gap-x-2', footerClass]">
+      <div class="flex items-center gap-x-2">
         <div class="textinfolabel">
           {{ $t("common.rows-per-page") }}
         </div>
@@ -34,10 +40,10 @@
 <script lang="ts" setup generic="T extends { name: string }">
 import { useDebounceFn } from "@vueuse/core";
 import { sortBy, uniq } from "lodash-es";
-import { NSelect, NButton } from "naive-ui";
-import { computed, reactive, watch, ref, type Ref } from "vue";
+import { type DataTableSortState, NButton, NSelect } from "naive-ui";
+import { computed, type Ref, reactive, ref, watch } from "vue";
 import { useAuthStore, useCurrentUserV1 } from "@/store";
-import { useDynamicLocalStorage, getDefaultPagination } from "@/utils";
+import { getDefaultPagination, useDynamicLocalStorage } from "@/utils";
 
 type LocalState = {
   loading: boolean;
@@ -45,8 +51,6 @@ type LocalState = {
 };
 
 type SessionState = {
-  // How many times the user clicks the "load more" button.
-  page: number;
   // Help us to check if the session is outdated.
   updatedTs: number;
   pageSize: number;
@@ -63,12 +67,15 @@ const props = withDefaults(
       pageSize: number;
       pageToken: string;
       refresh?: boolean;
+      orderBy?: string;
     }) => Promise<{ nextPageToken?: string; list: T[] }>;
+    orderKeys?: string[];
   }>(),
   {
     hideLoadMore: false,
     footerClass: "",
     debounce: 500,
+    orderKeys: () => [],
   }
 );
 
@@ -78,6 +85,46 @@ const emit = defineEmits<{
 
 const authStore = useAuthStore();
 const currentUser = useCurrentUserV1();
+const sorters = ref<DataTableSortState[]>(
+  props.orderKeys.map((key) => ({
+    columnKey: key,
+    order: false,
+    sorter: true,
+  }))
+);
+
+const onSortersUpdate = (
+  sortStates: DataTableSortState[] | DataTableSortState | null
+) => {
+  if (!sortStates) {
+    return;
+  }
+  let states: DataTableSortState[] = [];
+  if (Array.isArray(sortStates)) {
+    states = sortStates;
+  } else {
+    states = [sortStates];
+  }
+  for (const sortState of states) {
+    const sorterIndex = sorters.value.findIndex(
+      (s) => s.columnKey === sortState.columnKey
+    );
+    if (sorterIndex >= 0) {
+      sorters.value[sorterIndex] = sortState;
+    }
+  }
+};
+
+const orderBy = computed(() => {
+  return sorters.value
+    .filter((sorter) => sorter.order)
+    .map((sorter) => {
+      const key = sorter.columnKey.toString();
+      const order = sorter.order == "ascend" ? "asc" : "desc";
+      return `${key} ${order}`;
+    })
+    .join(", ");
+});
 
 const options = computed(() => {
   const defaultPageSize = getDefaultPagination();
@@ -99,7 +146,6 @@ const dataList = ref([]) as Ref<T[]>;
 const sessionState = useDynamicLocalStorage<SessionState>(
   computed(() => `${props.sessionKey}.${currentUser.value.name}`),
   {
-    page: 1,
     updatedTs: 0,
     pageSize: options.value[0].value,
   }
@@ -125,28 +171,17 @@ const fetchData = async (refresh = false) => {
 
   state.loading = true;
 
-  const isFirstFetch = state.paginationToken === "";
-  const expectedRowCount = isFirstFetch
-    ? // Load one or more page for the first fetch to restore the session
-      pageSize.value * sessionState.value.page
-    : // Always load one page if NOT the first fetch
-      pageSize.value;
-
   try {
     const { nextPageToken, list } = await props.fetchList({
-      pageSize: expectedRowCount,
+      pageSize: pageSize.value,
       pageToken: state.paginationToken,
       refresh,
+      orderBy: orderBy.value,
     });
     if (refresh) {
       dataList.value = list;
     } else {
       dataList.value.push(...list);
-    }
-
-    if (!isFirstFetch && list.length === expectedRowCount) {
-      // If we didn't reach the end, memorize we've clicked the "load more" button.
-      sessionState.value.page++;
     }
 
     sessionState.value.updatedTs = Date.now();
@@ -160,7 +195,6 @@ const fetchData = async (refresh = false) => {
 
 const resetSession = () => {
   sessionState.value = {
-    page: 1,
     updatedTs: 0,
     pageSize: pageSize.value,
   };
@@ -194,6 +228,11 @@ watch(
   (list) => emit("list:update", list)
 );
 
+watch(
+  () => orderBy.value,
+  () => refresh()
+);
+
 const updateCache = (data: T[]) => {
   for (const item of data) {
     const index = dataList.value.findIndex((d) => d.name === item.name);
@@ -215,5 +254,6 @@ defineExpose({
   updateCache,
   removeCache,
   dataList,
+  orderBy,
 });
 </script>

@@ -1,7 +1,7 @@
 <template>
   <div
     ref="container"
-    class="droppable-textarea"
+    class="droppable-textarea relative"
     :class="{
       reading: state.reading,
       'drop-over': isOverDropZone,
@@ -53,8 +53,7 @@ export default {
 import { useDropZone, useMutationObserver } from "@vueuse/core";
 import { head } from "lodash-es";
 import { NInput } from "naive-ui";
-import { computed, reactive, ref, watch } from "vue";
-import { onMounted } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { BBSpin } from "@/bbkit";
 import { pushNotification } from "@/store";
@@ -166,11 +165,8 @@ onMounted(() => {
 </script>
 
 <style lang="postcss" scoped>
-.droppable-textarea {
-  @apply relative;
-}
 .droppable-textarea.reading {
-  @apply pointer-events-none;
+  pointer-events: none;
 }
 .droppable-textarea.drop-over :deep(.n-input__state-border),
 .droppable-textarea.reading :deep(.n-input__state-border) {

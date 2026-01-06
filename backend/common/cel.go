@@ -14,31 +14,58 @@ import (
 
 const celLimit = 1024 * 1024
 
-// RiskFactors are the variables when evaluating the risk level.
-var RiskFactors = []cel.EnvOption{
+// ApprovalFactors are the variables when finding the approval template.
+// After the risk layer removal (3.13), approval rules use the same variables as risk evaluation.
+var ApprovalFactors = []cel.EnvOption{
+	// Resource scope
 	cel.Variable(CELAttributeResourceEnvironmentID, cel.StringType),
 	cel.Variable(CELAttributeResourceProjectID, cel.StringType),
 	cel.Variable(CELAttributeResourceInstanceID, cel.StringType),
 	cel.Variable(CELAttributeResourceDBEngine, cel.StringType),
-
 	cel.Variable(CELAttributeResourceDatabaseName, cel.StringType),
 	cel.Variable(CELAttributeResourceSchemaName, cel.StringType),
 	cel.Variable(CELAttributeResourceTableName, cel.StringType),
-
+	// Statement scope
 	cel.Variable(CELAttributeStatementAffectedRows, cel.IntType),
 	cel.Variable(CELAttributeStatementTableRows, cel.IntType),
 	cel.Variable(CELAttributeStatementSQLType, cel.StringType),
 	cel.Variable(CELAttributeStatementText, cel.StringType),
-
+	// Request scope
 	cel.Variable(CELAttributeRequestExpirationDays, cel.IntType),
 	cel.Variable(CELAttributeRequestRole, cel.StringType),
+	// Risk scope
+	cel.Variable(CELAttributeRiskLevel, cel.StringType),
+	// Size limit
+	cel.ParserExpressionSizeLimit(celLimit),
 }
 
-// ApprovalFactors are the variables when finding the approval template.
-var ApprovalFactors = []cel.EnvOption{
-	cel.Variable(CELAttributeLevel, cel.StringType),
-	cel.Variable(CELAttributeSource, cel.StringType),
+// FallbackApprovalFactors are the variables for SOURCE_UNSPECIFIED fallback rules.
+// These rules can only use resource.project_id since it's the only variable
+// guaranteed to be available across all issue types.
+var FallbackApprovalFactors = []cel.EnvOption{
+	cel.Variable(CELAttributeResourceProjectID, cel.StringType),
 	cel.ParserExpressionSizeLimit(celLimit),
+}
+
+// ValidateFallbackApprovalExpr validates that a CEL expression only uses
+// variables allowed in fallback approval rules (only resource.project_id).
+func ValidateFallbackApprovalExpr(expression string) error {
+	if expression == "" || expression == "true" {
+		return nil
+	}
+
+	e, err := cel.NewEnv(FallbackApprovalFactors...)
+	if err != nil {
+		return errors.Wrap(err, "failed to create CEL env")
+	}
+
+	_, issues := e.Compile(expression)
+	if issues != nil && issues.Err() != nil {
+		return connect.NewError(connect.CodeInvalidArgument,
+			errors.Errorf("fallback rules can only use resource.project_id in conditions: %v", issues.Err()))
+	}
+
+	return nil
 }
 
 // IAMPolicyConditionCELAttributes are the variables when evaluating IAM policy condition.
@@ -64,8 +91,8 @@ var MaskingRulePolicyCELAttributes = []cel.EnvOption{
 	cel.ParserExpressionSizeLimit(celLimit),
 }
 
-// MaskingExceptionPolicyCELAttributes are the variables when evaluating masking exception.
-var MaskingExceptionPolicyCELAttributes = []cel.EnvOption{
+// MaskingExemptionPolicyCELAttributes are the variables when evaluating masking exemption.
+var MaskingExemptionPolicyCELAttributes = []cel.EnvOption{
 	cel.Variable(CELAttributeResourceInstanceID, cel.StringType),
 	cel.Variable(CELAttributeResourceDatabaseName, cel.StringType),
 	cel.Variable(CELAttributeResourceTableName, cel.StringType),
@@ -82,27 +109,6 @@ var DatabaseGroupCELAttributes = []cel.EnvOption{
 	cel.Variable(CELAttributeResourceDatabaseName, cel.StringType),
 	cel.Variable(CELAttributeResourceDatabaseLabels, cel.MapType(cel.StringType, cel.StringType)),
 	cel.ParserExpressionSizeLimit(celLimit),
-}
-
-// ConvertUnparsedRisk converts unparsed risk to parsed format.
-func ConvertUnparsedRisk(expression *expr.Expr) (*exprproto.ParsedExpr, error) {
-	if expression == nil || expression.Expression == "" {
-		return nil, nil
-	}
-	e, err := cel.NewEnv(RiskFactors...)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create cel env")
-	}
-
-	ast, issues := e.Parse(expression.Expression)
-	if issues != nil && issues.Err() != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("failed to parse expression: %v", issues.Err()))
-	}
-	expr, err := cel.AstToParsedExpr(ast)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to convert ast to parsed expression: %v", err))
-	}
-	return expr, nil
 }
 
 // ConvertUnparsedApproval converts unparsed approval to parsed format.
@@ -162,9 +168,9 @@ func ValidateMaskingRuleCELExpr(expr string) (cel.Program, error) {
 	return prog, nil
 }
 
-// ValidateMaskingExceptionCELExpr validates masking exception expr.
-func ValidateMaskingExceptionCELExpr(expression *expr.Expr) (cel.Program, error) {
-	return validateCELExpr(expression, MaskingExceptionPolicyCELAttributes)
+// ValidateMaskingExemptionCELExpr validates masking exemption expr.
+func ValidateMaskingExemptionCELExpr(expression *expr.Expr) (cel.Program, error) {
+	return validateCELExpr(expression, MaskingExemptionPolicyCELAttributes)
 }
 
 func ValidateProjectMemberCELExpr(expression *expr.Expr) (cel.Program, error) {

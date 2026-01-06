@@ -19,16 +19,15 @@ type ReleaseMessage struct {
 	Payload   *storepb.ReleasePayload
 
 	// output only
-	UID        int64
-	Deleted    bool
-	CreatorUID int
-	At         time.Time
+	UID     int64
+	Deleted bool
+	Creator string
+	At      time.Time
 }
 
 type FindReleaseMessage struct {
 	ProjectID   *string
 	UID         *int64
-	Digest      *string
 	Limit       *int
 	Offset      *int
 	ShowDeleted bool
@@ -41,7 +40,7 @@ type UpdateReleaseMessage struct {
 	Payload *storepb.ReleasePayload
 }
 
-func (s *Store) CreateRelease(ctx context.Context, release *ReleaseMessage, creatorUID int) (*ReleaseMessage, error) {
+func (s *Store) CreateRelease(ctx context.Context, release *ReleaseMessage, creator string) (*ReleaseMessage, error) {
 	p, err := protojson.Marshal(release.Payload)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to marshal release payload")
@@ -49,7 +48,7 @@ func (s *Store) CreateRelease(ctx context.Context, release *ReleaseMessage, crea
 
 	q := qb.Q().Space(`
 		INSERT INTO release (
-			creator_id,
+			creator,
 			project,
 			digest,
 			payload
@@ -59,7 +58,7 @@ func (s *Store) CreateRelease(ctx context.Context, release *ReleaseMessage, crea
 			?,
 			?
 		) RETURNING id, created_at
-	`, creatorUID, release.ProjectID, release.Digest, p)
+	`, creator, release.ProjectID, release.Digest, p)
 
 	query, args, err := q.ToSQL()
 	if err != nil {
@@ -83,14 +82,14 @@ func (s *Store) CreateRelease(ctx context.Context, release *ReleaseMessage, crea
 	}
 
 	release.UID = id
-	release.CreatorUID = creatorUID
+	release.Creator = creator
 	release.At = createdTime
 
 	return release, nil
 }
 
-func (s *Store) GetRelease(ctx context.Context, uid int64) (*ReleaseMessage, error) {
-	releases, err := s.ListReleases(ctx, &FindReleaseMessage{UID: &uid, ShowDeleted: true})
+func (s *Store) GetRelease(ctx context.Context, find *FindReleaseMessage) (*ReleaseMessage, error) {
+	releases, err := s.ListReleases(ctx, find)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to list releases")
 	}
@@ -98,9 +97,13 @@ func (s *Store) GetRelease(ctx context.Context, uid int64) (*ReleaseMessage, err
 		return nil, nil
 	}
 	if len(releases) > 1 {
-		return nil, errors.Errorf("found %d releases with uid=%v, expect 1", len(releases), uid)
+		return nil, errors.Errorf("found %d releases, expect 1", len(releases))
 	}
 	return releases[0], nil
+}
+
+func (s *Store) GetReleaseByUID(ctx context.Context, uid int64) (*ReleaseMessage, error) {
+	return s.GetRelease(ctx, &FindReleaseMessage{UID: &uid, ShowDeleted: true})
 }
 
 func (s *Store) ListReleases(ctx context.Context, find *FindReleaseMessage) ([]*ReleaseMessage, error) {
@@ -110,7 +113,7 @@ func (s *Store) ListReleases(ctx context.Context, find *FindReleaseMessage) ([]*
 			deleted,
 			project,
 			digest,
-			creator_id,
+			creator,
 			created_at,
 			payload
 		FROM release
@@ -122,9 +125,6 @@ func (s *Store) ListReleases(ctx context.Context, find *FindReleaseMessage) ([]*
 	}
 	if v := find.UID; v != nil {
 		q.And("id = ?", *v)
-	}
-	if v := find.Digest; v != nil {
-		q.And("digest = ?", *v)
 	}
 	if !find.ShowDeleted {
 		q.And("deleted = ?", false)
@@ -167,7 +167,7 @@ func (s *Store) ListReleases(ctx context.Context, find *FindReleaseMessage) ([]*
 			&r.Deleted,
 			&r.ProjectID,
 			&r.Digest,
-			&r.CreatorUID,
+			&r.Creator,
 			&r.At,
 			&payload,
 		); err != nil {
@@ -228,5 +228,5 @@ func (s *Store) UpdateRelease(ctx context.Context, update *UpdateReleaseMessage)
 		return nil, errors.Wrapf(err, "failed to commit tx")
 	}
 
-	return s.GetRelease(ctx, update.UID)
+	return s.GetReleaseByUID(ctx, update.UID)
 }

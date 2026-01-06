@@ -5,7 +5,7 @@ import { useRoute, useRouter, type LocationQuery } from "vue-router";
 import {
   issueServiceClientConnect,
   rolloutServiceClientConnect,
-} from "@/grpcweb";
+} from "@/connect";
 import { projectNamePrefix, usePlanStore } from "@/store";
 import { EMPTY_ID, UNKNOWN_ID } from "@/types";
 import {
@@ -16,8 +16,13 @@ import type { Issue } from "@/types/proto-es/v1/issue_service_pb";
 import type { Plan, PlanCheckRun } from "@/types/proto-es/v1/plan_service_pb";
 import { GetRolloutRequestSchema } from "@/types/proto-es/v1/rollout_service_pb";
 import type { Rollout, TaskRun } from "@/types/proto-es/v1/rollout_service_pb";
+import { getRolloutFromPlan, extractPlanNameFromRolloutName } from "@/utils";
 import { emptyPlan } from "@/types/v1/issue/plan";
 import { createPlanSkeleton } from "./create";
+import {
+  WORKSPACE_ROUTE_403,
+  WORKSPACE_ROUTE_404,
+} from "@/router/dashboard/workspaceRoutes";
 
 export * from "./create";
 
@@ -26,11 +31,11 @@ export * from "./util";
 export function useInitializePlan(
   projectId: MaybeRef<string>,
   planId: MaybeRef<string | undefined>,
-  issueId: MaybeRef<string | undefined>,
-  rolloutId?: MaybeRef<string | undefined>
+  issueId?: MaybeRef<string | undefined>,
+  legacyRolloutId?: MaybeRef<string | undefined>
 ) {
   const isCreating = computed(() => {
-    const id = unref(planId) || unref(issueId) || unref(rolloutId);
+    const id = unref(planId) || unref(issueId) || unref(legacyRolloutId);
     return id?.toLowerCase() === "create";
   });
 
@@ -43,9 +48,9 @@ export function useInitializePlan(
       if (uid > 0) return String(uid);
       return String(UNKNOWN_ID);
     }
-    // Otherwise, if rolloutId is provided, we'll fetch the plan from the rollout
-    if (unref(rolloutId)) {
-      const id = unref(rolloutId)!;
+    // Otherwise, if legacyRolloutId is provided, we'll fetch the plan from the rollout
+    if (unref(legacyRolloutId)) {
+      const id = unref(legacyRolloutId)!;
       if (id.toLowerCase() === "create") return String(EMPTY_ID);
       // For rollout-based initialization, return a special marker
       return `rollout:${id}`;
@@ -84,29 +89,31 @@ export function useInitializePlan(
       );
     } else if (uid.startsWith("rollout:")) {
       // Fetch plan from rollout
-      const rolloutUid = uid.substring(8);
+      const planUid = uid.substring(8);
       const rolloutRequest = create(GetRolloutRequestSchema, {
-        name: `${projectNamePrefix}${projectId}/rollouts/${rolloutUid}`,
+        name: `${projectNamePrefix}${projectId}/plans/${planUid}/rollout`,
       });
 
       const newRollout =
         await rolloutServiceClientConnect.getRollout(rolloutRequest);
       rolloutResult = newRollout;
 
-      if (!rolloutResult.plan) {
+      // Extract plan name from rollout name
+      const planName = extractPlanNameFromRolloutName(rolloutResult.name);
+      if (!planName) {
         throw new Error(
-          `Rollout ${rolloutUid} does not have an associated plan`
+          `Rollout ${planUid} does not have a valid plan reference in its name`
         );
       }
 
-      // Fetch the plan using the rollout's plan reference
-      planResult = await planStore.fetchPlanByName(rolloutResult.plan);
+      // Fetch the plan using the extracted plan name
+      planResult = await planStore.fetchPlanByName(planName);
 
-      // Fetch the associated issue if it exists
-      if (rolloutResult.issue) {
+      // Fetch the associated issue if it exists via the plan
+      if (planResult.issue) {
         try {
           const issueRequest = create(GetIssueRequestSchema, {
-            name: rolloutResult.issue,
+            name: planResult.issue,
           });
           const newIssue =
             await issueServiceClientConnect.getIssue(issueRequest);
@@ -145,14 +152,20 @@ export function useInitializePlan(
       // Fetch the plan using the issue's plan reference
       planResult = await planStore.fetchPlanByName(issueResult.plan);
 
-      // Fetch the associated rollout if it exists
-      if (issueResult.rollout) {
-        const rolloutRequest = create(GetRolloutRequestSchema, {
-          name: issueResult.rollout,
-        });
-        const newRollout =
-          await rolloutServiceClientConnect.getRollout(rolloutRequest);
-        rolloutResult = newRollout;
+      if (planResult.hasRollout) {
+        try {
+          const rolloutName = getRolloutFromPlan(planResult.name);
+          const rolloutRequest = create(GetRolloutRequestSchema, {
+            name: rolloutName,
+          });
+          const newRollout =
+            await rolloutServiceClientConnect.getRollout(rolloutRequest);
+          rolloutResult = newRollout;
+        } catch (error) {
+          console.error("Failed to fetch rollout:", error);
+          // Rollout might not exist yet, that's ok
+          rolloutResult = undefined;
+        }
       }
     } else {
       // Direct plan ID
@@ -169,14 +182,20 @@ export function useInitializePlan(
         issueResult = newIssue;
       }
 
-      // If we have a plan, try to fetch the associated rollout if it exists
-      if (planResult.rollout) {
-        const rolloutRequest = create(GetRolloutRequestSchema, {
-          name: planResult.rollout,
-        });
-        const newRollout =
-          await rolloutServiceClientConnect.getRollout(rolloutRequest);
-        rolloutResult = newRollout;
+      if (planResult.hasRollout) {
+        try {
+          const rolloutName = getRolloutFromPlan(planResult.name);
+          const rolloutRequest = create(GetRolloutRequestSchema, {
+            name: rolloutName,
+          });
+          const newRollout =
+            await rolloutServiceClientConnect.getRollout(rolloutRequest);
+          rolloutResult = newRollout;
+        } catch (error) {
+          console.error("Failed to fetch rollout:", error);
+          // Rollout might not exist yet, that's ok
+          rolloutResult = undefined;
+        }
       }
     }
 
@@ -192,7 +211,7 @@ export function useInitializePlan(
     [uid, () => unref(projectId)],
     async ([uid, projectId]) => {
       if (uid === String(UNKNOWN_ID)) {
-        router.push({ name: "error.404" });
+        router.push({ name: WORKSPACE_ROUTE_404 });
         return;
       }
       const url = route.fullPath;
@@ -208,13 +227,13 @@ export function useInitializePlan(
         issue.value = result.issue;
         rollout.value = result.rollout;
         isInitializing.value = false;
-      } catch (error: any) {
+      } catch (error: unknown) {
         // Check Connect error type and handle accordingly
         if (error instanceof ConnectError) {
           if (error.code === Code.NotFound) {
-            router.push({ name: "error.404" });
+            router.push({ name: WORKSPACE_ROUTE_404 });
           } else if (error.code === Code.PermissionDenied) {
-            router.push({ name: "error.403" });
+            router.push({ name: WORKSPACE_ROUTE_403 });
           }
           isInitializing.value = false;
           return;
@@ -241,7 +260,7 @@ export function useInitializePlan(
 
 export const convertRouterQuery = (query: LocationQuery) => {
   const kv: Record<string, string> = {};
-  for (const key in query) {
+  for (const key of Object.keys(query)) {
     const value = query[key];
     if (typeof value === "string") {
       kv[key] = value;

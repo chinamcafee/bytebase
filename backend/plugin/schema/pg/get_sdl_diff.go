@@ -20,7 +20,7 @@ func init() {
 	schema.RegisterGetSDLDiff(storepb.Engine_COCKROACHDB, GetSDLDiff)
 }
 
-func GetSDLDiff(currentSDLText, previousUserSDLText string, currentSchema, previousSchema *model.DatabaseSchema) (*schema.MetadataDiff, error) {
+func GetSDLDiff(currentSDLText, previousUserSDLText string, currentSchema, previousSchema *model.DatabaseMetadata) (*schema.MetadataDiff, error) {
 	generatedSDL, err := convertDatabaseSchemaToSDL(currentSchema)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to convert current schema to SDL format for initialization")
@@ -88,8 +88,14 @@ func GetSDLDiff(currentSDLText, previousUserSDLText string, currentSchema, previ
 	// Process index changes (standalone CREATE INDEX statements)
 	processStandaloneIndexChanges(currentChunks, previousChunks, currentDBSDLChunks, diff)
 
+	// Process trigger changes (standalone CREATE TRIGGER statements)
+	processStandaloneTriggerChanges(currentChunks, previousChunks, currentDBSDLChunks, diff)
+
 	// Process view changes
 	processViewChanges(currentChunks, previousChunks, currentDBSDLChunks, diff)
+
+	// Process materialized view changes
+	processMaterializedViewChanges(currentChunks, previousChunks, currentDBSDLChunks, diff)
 
 	// Process function changes
 	processFunctionChanges(currentChunks, previousChunks, currentDBSDLChunks, diff)
@@ -97,2100 +103,38 @@ func GetSDLDiff(currentSDLText, previousUserSDLText string, currentSchema, previ
 	// Process sequence changes
 	processSequenceChanges(currentChunks, previousChunks, currentDBSDLChunks, diff)
 
+	// Process enum type changes
+	processEnumTypeChanges(currentChunks, previousChunks, currentDBSDLChunks, diff)
+
+	// Process extension changes
+	processExtensionChanges(currentChunks, previousChunks, currentDBSDLChunks, diff)
+
+	// Process event trigger changes
+	processEventTriggerChanges(currentChunks, previousChunks, currentDBSDLChunks, diff)
+
+	// Process explicit schema changes (CREATE SCHEMA statements)
+	processSchemaChanges(currentChunks, previousChunks, currentSchema, diff)
+
 	// Process comment changes (must be after all object changes are processed)
 	processCommentChanges(currentChunks, previousChunks, currentDBSDLChunks, diff)
+
+	// Add implicit schema creation for schemas referenced by new objects
+	// This handles the case where users define objects in a new schema without explicit CREATE SCHEMA
+	addImplicitSchemaCreation(diff, currentSchema)
 
 	return diff, nil
 }
 
-func ChunkSDLText(sdlText string) (*schema.SDLChunks, error) {
-	if strings.TrimSpace(sdlText) == "" {
-		return &schema.SDLChunks{
-			Tables:         make(map[string]*schema.SDLChunk),
-			Views:          make(map[string]*schema.SDLChunk),
-			Functions:      make(map[string]*schema.SDLChunk),
-			Indexes:        make(map[string]*schema.SDLChunk),
-			Sequences:      make(map[string]*schema.SDLChunk),
-			Schemas:        make(map[string]*schema.SDLChunk),
-			ColumnComments: make(map[string]map[string]antlr.ParserRuleContext),
-			IndexComments:  make(map[string]map[string]antlr.ParserRuleContext),
-		}, nil
-	}
-
-	parseResult, err := pgparser.ParsePostgreSQL(sdlText)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to parse SDL text")
-	}
-
-	extractor := &sdlChunkExtractor{
-		sdlText: sdlText,
-		chunks: &schema.SDLChunks{
-			Tables:         make(map[string]*schema.SDLChunk),
-			Views:          make(map[string]*schema.SDLChunk),
-			Functions:      make(map[string]*schema.SDLChunk),
-			Indexes:        make(map[string]*schema.SDLChunk),
-			Sequences:      make(map[string]*schema.SDLChunk),
-			Schemas:        make(map[string]*schema.SDLChunk),
-			ColumnComments: make(map[string]map[string]antlr.ParserRuleContext),
-			IndexComments:  make(map[string]map[string]antlr.ParserRuleContext),
-		},
-		tokens: parseResult.Tokens,
-	}
-
-	antlr.ParseTreeWalkerDefault.Walk(extractor, parseResult.Tree)
-
-	return extractor.chunks, nil
-}
-
-type sdlChunkExtractor struct {
-	*parser.BasePostgreSQLParserListener
-	sdlText string
-	chunks  *schema.SDLChunks
-	tokens  *antlr.CommonTokenStream
-}
-
-func (l *sdlChunkExtractor) EnterCreatestmt(ctx *parser.CreatestmtContext) {
-	if ctx.Qualified_name(0) == nil {
-		return
-	}
-
-	identifier := pgparser.NormalizePostgreSQLQualifiedName(ctx.Qualified_name(0))
-	identifierStr := strings.Join(identifier, ".")
-
-	// Ensure schema.tableName format
-	var schemaQualifiedName string
-	if strings.Contains(identifierStr, ".") {
-		schemaQualifiedName = identifierStr
-	} else {
-		schemaQualifiedName = "public." + identifierStr
-	}
-
-	chunk := &schema.SDLChunk{
-		Identifier: schemaQualifiedName,
-		ASTNode:    ctx,
-	}
-
-	l.chunks.Tables[schemaQualifiedName] = chunk
-}
-
-func (l *sdlChunkExtractor) EnterCreateseqstmt(ctx *parser.CreateseqstmtContext) {
-	if ctx.Qualified_name() == nil {
-		return
-	}
-
-	identifier := pgparser.NormalizePostgreSQLQualifiedName(ctx.Qualified_name())
-	identifierStr := strings.Join(identifier, ".")
-
-	// Ensure schema.sequenceName format
-	var schemaQualifiedName string
-	if strings.Contains(identifierStr, ".") {
-		schemaQualifiedName = identifierStr
-	} else {
-		schemaQualifiedName = "public." + identifierStr
-	}
-
-	chunk := &schema.SDLChunk{
-		Identifier:      schemaQualifiedName,
-		ASTNode:         ctx,
-		AlterStatements: []antlr.ParserRuleContext{},
-	}
-
-	l.chunks.Sequences[schemaQualifiedName] = chunk
-}
-
-func (l *sdlChunkExtractor) EnterAlterseqstmt(ctx *parser.AlterseqstmtContext) {
-	// Extract the sequence name from ALTER SEQUENCE statement
-	if ctx.Qualified_name() == nil {
-		return
-	}
-
-	identifier := pgparser.NormalizePostgreSQLQualifiedName(ctx.Qualified_name())
-	identifierStr := strings.Join(identifier, ".")
-
-	// Ensure schema.sequenceName format
-	var schemaQualifiedName string
-	if strings.Contains(identifierStr, ".") {
-		schemaQualifiedName = identifierStr
-	} else {
-		schemaQualifiedName = "public." + identifierStr
-	}
-
-	// Find the corresponding CREATE SEQUENCE chunk and append this ALTER statement
-	if chunk, exists := l.chunks.Sequences[schemaQualifiedName]; exists {
-		chunk.AlterStatements = append(chunk.AlterStatements, ctx)
-	} else {
-		// If CREATE SEQUENCE doesn't exist yet, create a placeholder chunk
-		// This handles cases where ALTER appears before CREATE in the SDL text
-		// (though this is unusual, we handle it for robustness)
-		chunk := &schema.SDLChunk{
-			Identifier:      schemaQualifiedName,
-			ASTNode:         nil, // No CREATE statement yet
-			AlterStatements: []antlr.ParserRuleContext{ctx},
-		}
-		l.chunks.Sequences[schemaQualifiedName] = chunk
-	}
-}
-
-func (l *sdlChunkExtractor) EnterCreatefunctionstmt(ctx *parser.CreatefunctionstmtContext) {
-	funcNameCtx := ctx.Func_name()
-	if funcNameCtx == nil {
-		return
-	}
-
-	// Extract function name using proper normalization
-	funcNameParts := pgparser.NormalizePostgreSQLFuncName(funcNameCtx)
-	if len(funcNameParts) == 0 {
-		return
-	}
-
-	// Parse schema and function name directly from parts
-	var schemaName string
-	if len(funcNameParts) == 2 {
-		// Schema qualified: schema.function_name
-		schemaName = funcNameParts[0]
-	} else if len(funcNameParts) == 1 {
-		// Unqualified: function_name (assume public schema)
-		schemaName = "public"
-	} else {
-		// Unexpected format
-		return
-	}
-
-	// Use the unified function signature extraction
-	signature := extractFunctionSignatureFromAST(ctx)
-	if signature == "" {
-		return
-	}
-
-	schemaQualifiedSignature := schemaName + "." + signature
-
-	chunk := &schema.SDLChunk{
-		Identifier: schemaQualifiedSignature,
-		ASTNode:    ctx,
-	}
-
-	l.chunks.Functions[schemaQualifiedSignature] = chunk
-}
-
-func (l *sdlChunkExtractor) EnterIndexstmt(ctx *parser.IndexstmtContext) {
-	// Check if this is CREATE INDEX
-	if ctx.CREATE() == nil || ctx.INDEX() == nil {
-		return
-	}
-
-	// Extract index name
-	var indexName string
-	if name := ctx.Name(); name != nil {
-		indexName = pgparser.NormalizePostgreSQLName(name)
-	}
-
-	// If no explicit name, we skip it as PostgreSQL will generate one
-	if indexName == "" {
-		return
-	}
-
-	// Ensure schema.indexName format
-	var schemaQualifiedName string
-	if strings.Contains(indexName, ".") {
-		schemaQualifiedName = indexName
-	} else {
-		schemaQualifiedName = "public." + indexName
-	}
-
-	chunk := &schema.SDLChunk{
-		Identifier: schemaQualifiedName,
-		ASTNode:    ctx,
-	}
-
-	l.chunks.Indexes[schemaQualifiedName] = chunk
-}
-
-func (l *sdlChunkExtractor) EnterViewstmt(ctx *parser.ViewstmtContext) {
-	if ctx.Qualified_name() == nil {
-		return
-	}
-
-	identifier := pgparser.NormalizePostgreSQLQualifiedName(ctx.Qualified_name())
-	identifierStr := strings.Join(identifier, ".")
-
-	// Ensure schema.viewName format
-	var schemaQualifiedName string
-	if strings.Contains(identifierStr, ".") {
-		schemaQualifiedName = identifierStr
-	} else {
-		schemaQualifiedName = "public." + identifierStr
-	}
-
-	chunk := &schema.SDLChunk{
-		Identifier: schemaQualifiedName,
-		ASTNode:    ctx,
-	}
-
-	l.chunks.Views[schemaQualifiedName] = chunk
-}
-
-func (l *sdlChunkExtractor) EnterCreateschemastmt(ctx *parser.CreateschemastmtContext) {
-	// Extract schema name
-	var schemaName string
-
-	// Schema name can be either from optschemaname or colid
-	if ctx.Colid() != nil {
-		schemaName = pgparser.NormalizePostgreSQLColid(ctx.Colid())
-	} else if ctx.Optschemaname() != nil && ctx.Optschemaname().Colid() != nil {
-		schemaName = pgparser.NormalizePostgreSQLColid(ctx.Optschemaname().Colid())
-	} else {
-		// Skip if we can't determine schema name
-		return
-	}
-
-	// Skip pg_catalog and information_schema
-	if schemaName == "pg_catalog" || schemaName == "information_schema" {
-		return
-	}
-
-	// Create chunk for this schema
-	l.chunks.Schemas[schemaName] = &schema.SDLChunk{
-		Identifier: schemaName,
-		ASTNode:    ctx,
-	}
-}
-
-func (l *sdlChunkExtractor) EnterCommentstmt(ctx *parser.CommentstmtContext) {
-	// Extract the comment text (can be sconst or NULL)
-	// We store the entire AST node, not just the comment text
-
-	// Check for COLUMN comment: COMMENT ON COLUMN any_name IS comment_text
-	if ctx.COLUMN() != nil {
-		if ctx.Any_name() != nil {
-			// Extract schema.table.column from any_name
-			anyName := pgparser.NormalizePostgreSQLAnyName(ctx.Any_name())
-			if len(anyName) >= 3 {
-				// Format: schema.table.column
-				schemaName := anyName[0]
-				tableName := anyName[1]
-				columnName := anyName[2]
-				tableIdentifier := schemaName + "." + tableName
-
-				// Ensure the map for this table exists
-				if l.chunks.ColumnComments[tableIdentifier] == nil {
-					l.chunks.ColumnComments[tableIdentifier] = make(map[string]antlr.ParserRuleContext)
-				}
-				l.chunks.ColumnComments[tableIdentifier][columnName] = ctx
-			} else if len(anyName) == 2 {
-				// Format: table.column (assume public schema)
-				tableName := anyName[0]
-				columnName := anyName[1]
-				tableIdentifier := "public." + tableName
-
-				if l.chunks.ColumnComments[tableIdentifier] == nil {
-					l.chunks.ColumnComments[tableIdentifier] = make(map[string]antlr.ParserRuleContext)
-				}
-				l.chunks.ColumnComments[tableIdentifier][columnName] = ctx
-			}
-		}
-		return
-	}
-
-	// Check for FUNCTION/PROCEDURE comment
-	// Note: ctx.FUNCTION() is true for both COMMENT ON FUNCTION and COMMENT ON PROCEDURE
-	// We need to check ctx.PROCEDURE() to distinguish between them
-	if ctx.FUNCTION() != nil || ctx.PROCEDURE() != nil {
-		if ctx.Function_with_argtypes() != nil {
-			funcWithArgsCtx := ctx.Function_with_argtypes()
-
-			// Extract function name from func_name
-			var funcNameParts []string
-			if funcWithArgsCtx.Func_name() != nil {
-				funcNameParts = pgparser.NormalizePostgreSQLFuncName(funcWithArgsCtx.Func_name())
-			} else if funcWithArgsCtx.Colid() != nil {
-				// Single identifier case
-				funcNameParts = []string{pgparser.NormalizePostgreSQLColid(funcWithArgsCtx.Colid())}
-			} else {
-				// Fallback: use the whole text
-				funcNameParts = []string{funcWithArgsCtx.GetText()}
-			}
-
-			// Determine schema name
-			var schemaName string
-			var funcName string
-			if len(funcNameParts) >= 2 {
-				schemaName = funcNameParts[0]
-				funcName = funcNameParts[1]
-			} else if len(funcNameParts) == 1 {
-				schemaName = "public"
-				funcName = funcNameParts[0]
-			} else {
-				return
-			}
-
-			// Try to find matching function by name prefix (schema.funcname)
-			// This is necessary because CREATE FUNCTION uses parameter names and normalized types,
-			// while COMMENT ON FUNCTION may use different type representations
-			funcNamePrefix := schemaName + "." + funcName
-			var matchedChunk *schema.SDLChunk
-			for identifier, chunk := range l.chunks.Functions {
-				if strings.HasPrefix(identifier, funcNamePrefix+"(") || identifier == funcNamePrefix {
-					matchedChunk = chunk
-					break
-				}
-			}
-
-			if matchedChunk != nil {
-				// Add comment to the existing function chunk
-				matchedChunk.CommentStatements = append(matchedChunk.CommentStatements, ctx)
-			}
-			// If no match found, we don't create a new chunk because the function
-			// should already exist from CREATE FUNCTION statement
-		}
-		return
-	}
-
-	// Check for object_type_any_name: TABLE, SEQUENCE, VIEW, INDEX, etc.
-	if ctx.Object_type_any_name() != nil && ctx.Any_name() != nil {
-		objectType := ctx.Object_type_any_name().GetText()
-		anyName := pgparser.NormalizePostgreSQLAnyName(ctx.Any_name())
-
-		var identifier string
-		if len(anyName) >= 2 {
-			// Format: schema.object
-			identifier = strings.Join(anyName, ".")
-		} else if len(anyName) == 1 {
-			// Format: object (assume public schema)
-			identifier = "public." + anyName[0]
-		} else {
-			return
-		}
-
-		// Route to appropriate chunk map based on object type
-		switch strings.ToUpper(objectType) {
-		case "TABLE":
-			if chunk, exists := l.chunks.Tables[identifier]; exists {
-				chunk.CommentStatements = append(chunk.CommentStatements, ctx)
-			} else {
-				chunk := &schema.SDLChunk{
-					Identifier:        identifier,
-					ASTNode:           nil,
-					CommentStatements: []antlr.ParserRuleContext{ctx},
-				}
-				l.chunks.Tables[identifier] = chunk
-			}
-		case "VIEW":
-			if chunk, exists := l.chunks.Views[identifier]; exists {
-				chunk.CommentStatements = append(chunk.CommentStatements, ctx)
-			} else {
-				chunk := &schema.SDLChunk{
-					Identifier:        identifier,
-					ASTNode:           nil,
-					CommentStatements: []antlr.ParserRuleContext{ctx},
-				}
-				l.chunks.Views[identifier] = chunk
-			}
-		case "SEQUENCE":
-			if chunk, exists := l.chunks.Sequences[identifier]; exists {
-				chunk.CommentStatements = append(chunk.CommentStatements, ctx)
-			} else {
-				chunk := &schema.SDLChunk{
-					Identifier:        identifier,
-					ASTNode:           nil,
-					CommentStatements: []antlr.ParserRuleContext{ctx},
-				}
-				l.chunks.Sequences[identifier] = chunk
-			}
-		case "INDEX":
-			if chunk, exists := l.chunks.Indexes[identifier]; exists {
-				chunk.CommentStatements = append(chunk.CommentStatements, ctx)
-			} else {
-				chunk := &schema.SDLChunk{
-					Identifier:        identifier,
-					ASTNode:           nil,
-					CommentStatements: []antlr.ParserRuleContext{ctx},
-				}
-				l.chunks.Indexes[identifier] = chunk
-			}
-		default:
-			// Unsupported object type for comment tracking (e.g., MATERIALIZED VIEW, FOREIGN TABLE)
-			// We skip these for now
-		}
-		return
-	}
-
-	// Check for object_type_name: SCHEMA, DATABASE, etc.
-	if ctx.Object_type_name() != nil && ctx.Name() != nil {
-		objectType := ctx.Object_type_name().GetText()
-		name := pgparser.NormalizePostgreSQLName(ctx.Name())
-
-		if strings.ToUpper(objectType) == "SCHEMA" {
-			if chunk, exists := l.chunks.Schemas[name]; exists {
-				chunk.CommentStatements = append(chunk.CommentStatements, ctx)
-			} else {
-				chunk := &schema.SDLChunk{
-					Identifier:        name,
-					ASTNode:           nil,
-					CommentStatements: []antlr.ParserRuleContext{ctx},
-				}
-				l.chunks.Schemas[name] = chunk
-			}
-		}
-		return
-	}
-
-	// Check for object_type_name_on_any_name: TRIGGER, RULE, POLICY (we don't track these currently)
-	// These are table-level objects that we may want to support in the future
-}
-
-// processTableChanges processes changes to tables by comparing SDL chunks
-// nolint:unparam
-func processTableChanges(currentChunks, previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseSchema, currentDBSDLChunks *currentDatabaseSDLChunks, diff *schema.MetadataDiff) error {
-	// Process current table chunks to find created and modified tables
-	for _, currentChunk := range currentChunks.Tables {
-		schemaName, tableName := parseIdentifier(currentChunk.Identifier)
-
-		if previousChunk, exists := previousChunks.Tables[currentChunk.Identifier]; exists {
-			// Table exists in both - check if modified (excluding comments)
-			currentText := currentChunk.GetTextWithoutComments()
-			previousText := previousChunk.GetTextWithoutComments()
-			if currentText != previousText {
-				// Apply usability check: skip diff if current chunk matches database metadata SDL
-				if currentDBSDLChunks.shouldSkipChunkDiffForUsability(currentText, currentChunk.Identifier) {
-					continue
-				}
-				// Table was modified - process column changes
-				oldASTNode, ok := previousChunk.ASTNode.(*parser.CreatestmtContext)
-				if !ok {
-					return errors.Errorf("expected CreatestmtContext for previous table %s", previousChunk.Identifier)
-				}
-				newASTNode, ok := currentChunk.ASTNode.(*parser.CreatestmtContext)
-				if !ok {
-					return errors.Errorf("expected CreatestmtContext for current table %s", currentChunk.Identifier)
-				}
-
-				columnChanges := processColumnChanges(oldASTNode, newASTNode, currentSchema, previousSchema, currentDBSDLChunks, currentChunk.Identifier)
-				foreignKeyChanges := processForeignKeyChanges(oldASTNode, newASTNode, currentDBSDLChunks, currentChunk.Identifier)
-				checkConstraintChanges := processCheckConstraintChanges(oldASTNode, newASTNode, currentDBSDLChunks, currentChunk.Identifier)
-				primaryKeyChanges := processPrimaryKeyChanges(oldASTNode, newASTNode, currentDBSDLChunks, currentChunk.Identifier)
-				uniqueConstraintChanges := processUniqueConstraintChanges(oldASTNode, newASTNode, currentDBSDLChunks, currentChunk.Identifier)
-
-				tableDiff := &schema.TableDiff{
-					Action:                  schema.MetadataDiffActionAlter,
-					SchemaName:              schemaName,
-					TableName:               tableName,
-					OldTable:                nil, // Will be populated when SDL drift detection is implemented
-					NewTable:                nil, // Will be populated when SDL drift detection is implemented
-					OldASTNode:              oldASTNode,
-					NewASTNode:              newASTNode,
-					ColumnChanges:           columnChanges,
-					ForeignKeyChanges:       foreignKeyChanges,
-					CheckConstraintChanges:  checkConstraintChanges,
-					PrimaryKeyChanges:       primaryKeyChanges,
-					UniqueConstraintChanges: uniqueConstraintChanges,
-				}
-				diff.TableChanges = append(diff.TableChanges, tableDiff)
-			}
-		} else {
-			// New table
-			// Handle generated chunks (from drift detection) that don't have AST nodes
-			if currentChunk.ASTNode == nil {
-				// This is a generated chunk, create a simplified diff entry
-				tableDiff := &schema.TableDiff{
-					Action:        schema.MetadataDiffActionCreate,
-					SchemaName:    schemaName,
-					TableName:     tableName,
-					OldTable:      nil,
-					NewTable:      nil,
-					OldASTNode:    nil,
-					NewASTNode:    nil,                    // No AST node for generated content
-					ColumnChanges: []*schema.ColumnDiff{}, // Empty - table creation automatically creates all columns
-				}
-				diff.TableChanges = append(diff.TableChanges, tableDiff)
-			} else {
-				newASTNode, ok := currentChunk.ASTNode.(*parser.CreatestmtContext)
-				if !ok {
-					return errors.Errorf("expected CreatestmtContext for new table %s", currentChunk.Identifier)
-				}
-
-				tableDiff := &schema.TableDiff{
-					Action:        schema.MetadataDiffActionCreate,
-					SchemaName:    schemaName,
-					TableName:     tableName,
-					OldTable:      nil,
-					NewTable:      nil, // Will be populated when SDL drift detection is implemented
-					OldASTNode:    nil,
-					NewASTNode:    newASTNode,
-					ColumnChanges: []*schema.ColumnDiff{}, // Empty - table creation automatically creates all columns
-				}
-				diff.TableChanges = append(diff.TableChanges, tableDiff)
-				// Add COMMENT ON TABLE diffs if they exist
-				if len(currentChunk.CommentStatements) > 0 {
-					for _, commentNode := range currentChunk.CommentStatements {
-						commentText := extractCommentTextFromNode(commentNode)
-						diff.CommentChanges = append(diff.CommentChanges, &schema.CommentDiff{
-							Action:     schema.MetadataDiffActionCreate,
-							ObjectType: schema.CommentObjectTypeTable,
-							SchemaName: schemaName,
-							ObjectName: tableName,
-							OldComment: "",
-							NewComment: commentText,
-							OldASTNode: nil,
-							NewASTNode: commentNode,
-						})
-					}
-				}
-				// Add COMMENT ON COLUMN diffs if they exist
-				tableIdentifier := currentChunk.Identifier
-				if columnComments := currentChunks.ColumnComments[tableIdentifier]; len(columnComments) > 0 {
-					for columnName, commentNode := range columnComments {
-						commentText := extractCommentTextFromNode(commentNode)
-						if commentText != "" {
-							diff.CommentChanges = append(diff.CommentChanges, &schema.CommentDiff{
-								Action:     schema.MetadataDiffActionCreate,
-								ObjectType: schema.CommentObjectTypeColumn,
-								SchemaName: schemaName,
-								ObjectName: tableName,
-								ColumnName: columnName,
-								OldComment: "",
-								NewComment: commentText,
-								OldASTNode: nil,
-								NewASTNode: commentNode,
-							})
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Process previous table chunks to find dropped tables
-	for identifier, previousChunk := range previousChunks.Tables {
-		if _, exists := currentChunks.Tables[identifier]; !exists {
-			// Table was dropped
-			schemaName, tableName := parseIdentifier(previousChunk.Identifier)
-
-			// Handle generated chunks (from drift detection) that don't have AST nodes
-			if previousChunk.ASTNode == nil {
-				// This is a generated chunk that was removed, skip it in the diff
-				// It means this table was added during drift detection but doesn't exist in current SDL
-				continue
-			}
-
-			oldASTNode, ok := previousChunk.ASTNode.(*parser.CreatestmtContext)
-			if !ok {
-				return errors.Errorf("expected CreatestmtContext for dropped table %s", previousChunk.Identifier)
-			}
-
-			tableDiff := &schema.TableDiff{
-				Action:        schema.MetadataDiffActionDrop,
-				SchemaName:    schemaName,
-				TableName:     tableName,
-				OldTable:      nil, // Will be populated when SDL drift detection is implemented
-				NewTable:      nil,
-				OldASTNode:    oldASTNode,
-				NewASTNode:    nil,
-				ColumnChanges: []*schema.ColumnDiff{}, // Empty - table drop doesn't need column analysis
-			}
-			diff.TableChanges = append(diff.TableChanges, tableDiff)
-		}
-	}
-
-	return nil
-}
-
-// processColumnChanges analyzes column changes between old and new table definitions
-// Following the same pattern as processTableChanges: compare text first, then analyze differences
-// If schemas are nil, operates in AST-only mode without metadata extraction
-func processColumnChanges(oldTable, newTable *parser.CreatestmtContext, currentSchema, previousSchema *model.DatabaseSchema, currentDBSDLChunks *currentDatabaseSDLChunks, tableIdentifier string) []*schema.ColumnDiff {
-	if oldTable == nil || newTable == nil {
-		return []*schema.ColumnDiff{}
-	}
-
-	// Detect AST-only mode: when both schemas are nil, operate without metadata extraction
-	astOnlyMode := currentSchema == nil && previousSchema == nil
-
-	// Step 1: Extract all column definitions with their AST nodes for text comparison
-	oldColumns := extractColumnDefinitionsWithAST(oldTable)
-	newColumns := extractColumnDefinitionsWithAST(newTable)
-
-	var columnDiffs []*schema.ColumnDiff
-
-	// Step 2: Process current columns to find created and modified columns
-	// Use the order from the new table's AST to maintain original column order
-	for _, columnName := range newColumns.Order {
-		newColumnDef := newColumns.Map[columnName]
-		if oldColumnDef, exists := oldColumns.Map[columnName]; exists {
-			// Column exists in both - check if modified by comparing text first
-			currentText := getColumnText(newColumnDef.ASTNode)
-			previousText := getColumnText(oldColumnDef.ASTNode)
-			if currentText != previousText {
-				// Apply column-level usability check: skip diff if current column matches database metadata SDL
-				schemaName, tableName := parseIdentifier(tableIdentifier)
-				if currentDBSDLChunks != nil && currentDBSDLChunks.shouldSkipColumnDiffForUsability(currentText, schemaName, tableName, columnName) {
-					continue
-				}
-				// Column was modified - extract metadata only if not in AST-only mode
-				var oldColumn, newColumn *storepb.ColumnMetadata
-				if !astOnlyMode {
-					oldColumn = extractColumnMetadata(oldColumnDef.ASTNode)
-					newColumn = extractColumnMetadata(newColumnDef.ASTNode)
-				}
-
-				columnDiffs = append(columnDiffs, &schema.ColumnDiff{
-					Action:     schema.MetadataDiffActionAlter,
-					OldColumn:  oldColumn,
-					NewColumn:  newColumn,
-					OldASTNode: oldColumnDef.ASTNode,
-					NewASTNode: newColumnDef.ASTNode,
-				})
-			}
-			// If text is identical, skip - no changes detected
-		} else {
-			// New column - extract metadata only if not in AST-only mode
-			var newColumn *storepb.ColumnMetadata
-			if !astOnlyMode {
-				newColumn = extractColumnMetadata(newColumnDef.ASTNode)
-			}
-			columnDiffs = append(columnDiffs, &schema.ColumnDiff{
-				Action:     schema.MetadataDiffActionCreate,
-				OldColumn:  nil,
-				NewColumn:  newColumn,
-				OldASTNode: nil,
-				NewASTNode: newColumnDef.ASTNode,
-			})
-		}
-	}
-
-	// Step 3: Process previous columns to find dropped columns
-	// Use the order from the old table's AST to maintain original column order
-	for _, columnName := range oldColumns.Order {
-		oldColumnDef := oldColumns.Map[columnName]
-		if _, exists := newColumns.Map[columnName]; !exists {
-			// Column was dropped - extract metadata only if not in AST-only mode
-			var oldColumn *storepb.ColumnMetadata
-			if !astOnlyMode {
-				oldColumn = extractColumnMetadata(oldColumnDef.ASTNode)
-			}
-			columnDiffs = append(columnDiffs, &schema.ColumnDiff{
-				Action:     schema.MetadataDiffActionDrop,
-				OldColumn:  oldColumn,
-				NewColumn:  nil,
-				OldASTNode: oldColumnDef.ASTNode,
-				NewASTNode: nil,
-			})
-		}
-	}
-
-	return columnDiffs
-}
-
-// ColumnDefWithAST holds a column definition AST node with its name for efficient lookup
-type ColumnDefWithAST struct {
-	Name    string
-	ASTNode parser.IColumnDefContext
-}
-
-// ColumnDefWithASTOrdered holds column definitions in AST order for deterministic processing
-type ColumnDefWithASTOrdered struct {
-	Map   map[string]*ColumnDefWithAST
-	Order []string // Column names in the order they appear in the AST
-}
-
-// extractColumnDefinitionsWithAST extracts column definitions and preserves their AST order
-// This ensures deterministic processing while maintaining the original column order
-func extractColumnDefinitionsWithAST(createStmt *parser.CreatestmtContext) *ColumnDefWithASTOrdered {
-	result := &ColumnDefWithASTOrdered{
-		Map:   make(map[string]*ColumnDefWithAST),
-		Order: []string{},
-	}
-
-	if createStmt == nil {
-		return result
-	}
-
-	// Get the optTableElementList which contains column definitions
-	if createStmt.Opttableelementlist() != nil && createStmt.Opttableelementlist().Tableelementlist() != nil {
-		elementList := createStmt.Opttableelementlist().Tableelementlist()
-
-		for _, element := range elementList.AllTableelement() {
-			// Check if this is a columnDef (column definition)
-			if element.ColumnDef() != nil {
-				columnDef := element.ColumnDef()
-				if columnDef.Colid() != nil {
-					columnName := pgparser.NormalizePostgreSQLColid(columnDef.Colid())
-
-					result.Map[columnName] = &ColumnDefWithAST{
-						Name:    columnName,
-						ASTNode: columnDef,
-					}
-					// Preserve the order columns appear in the AST
-					result.Order = append(result.Order, columnName)
-				}
-			}
-		}
-	}
-
-	return result
-}
-
-// extractColumnMetadata extracts full column metadata from a single column AST node
-// This is called only when we actually need the detailed information
-func extractColumnMetadata(columnDef parser.IColumnDefContext) *storepb.ColumnMetadata {
-	if columnDef == nil {
-		return nil
-	}
-
-	columnName := pgparser.NormalizePostgreSQLColid(columnDef.Colid())
-
-	return &storepb.ColumnMetadata{
-		Name:      columnName,
-		Type:      extractColumnType(columnDef.Typename()),
-		Nullable:  extractColumnNullable(columnDef),
-		Default:   extractColumnDefault(columnDef),
-		Comment:   extractColumnComment(columnDef),
-		Collation: extractColumnCollation(columnDef),
-	}
-}
-
-// parseIdentifier parses a table identifier and returns schema name and table name
-func parseIdentifier(identifier string) (schemaName, objectName string) {
-	parts := strings.Split(identifier, ".")
-	if len(parts) == 2 {
-		return parts[0], parts[1]
-	}
-	return "public", identifier
-}
-
-// extractAlterTexts extracts and concatenates text from a list of ALTER statement nodes
-func extractAlterTexts(alterNodes []antlr.ParserRuleContext) string {
-	if len(alterNodes) == 0 {
-		return ""
-	}
-
-	var parts []string
-	for _, node := range alterNodes {
-		text := extractTextFromNode(node)
-		if text != "" {
-			parts = append(parts, text)
-		}
-	}
-	return strings.Join(parts, "\n\n")
-}
-
-// extractTextFromNode extracts text from a parser rule context node
-func extractTextFromNode(node antlr.ParserRuleContext) string {
-	if node == nil {
-		return ""
-	}
-
-	// Check for interfaces that have the required methods
-	type parserContext interface {
-		GetParser() antlr.Parser
-		GetStart() antlr.Token
-		GetStop() antlr.Token
-	}
-
-	if ruleContext, ok := node.(parserContext); ok {
-		if parser := ruleContext.GetParser(); parser != nil {
-			if tokenStream := parser.GetTokenStream(); tokenStream != nil {
-				start := ruleContext.GetStart()
-				stop := ruleContext.GetStop()
-				if start != nil && stop != nil {
-					return tokenStream.GetTextFromTokens(start, stop)
-				}
-			}
-		}
-	}
-
-	// Fallback to node's GetText method
-	return node.GetText()
-}
-
-// createTableExtractor extracts CREATE TABLE AST node from parse tree
-type createTableExtractor struct {
-	*parser.BasePostgreSQLParserListener
-	result **parser.CreatestmtContext
-}
-
-func (e *createTableExtractor) EnterCreatestmt(ctx *parser.CreatestmtContext) {
-	*e.result = ctx
-}
-
-// getColumnText extracts the text representation of a column definition
-func getColumnText(columnAST parser.IColumnDefContext) string {
-	if columnAST == nil {
-		return ""
-	}
-
-	// Get tokens from the parser
-	if parser := columnAST.GetParser(); parser != nil {
-		if tokenStream := parser.GetTokenStream(); tokenStream != nil {
-			start := columnAST.GetStart()
-			stop := columnAST.GetStop()
-			if start != nil && stop != nil {
-				return tokenStream.GetTextFromTokens(start, stop)
-			}
-		}
-	}
-
-	// Fallback to GetText() if tokens are not available
-	return columnAST.GetText()
-}
-
-// extractColumnType extracts column type information from the typename AST node
-func extractColumnType(typename parser.ITypenameContext) string {
-	if typename == nil {
-		return "unknown"
-	}
-
-	// Get tokens from the parser
-	if parser := typename.GetParser(); parser != nil {
-		if tokenStream := parser.GetTokenStream(); tokenStream != nil {
-			start := typename.GetStart()
-			stop := typename.GetStop()
-			if start != nil && stop != nil {
-				return tokenStream.GetTextFromTokens(start, stop)
-			}
-		}
-	}
-
-	// Fallback to GetText() if tokens are not available
-	return typename.GetText()
-}
-
-// extractColumnNullable extracts whether a column is nullable from column constraints
-func extractColumnNullable(columnDef parser.IColumnDefContext) bool {
-	if columnDef == nil || columnDef.Colquallist() == nil {
-		return true // Default is nullable
-	}
-
-	// Check all column constraints
-	for _, constraint := range columnDef.Colquallist().AllColconstraint() {
-		if constraint.Colconstraintelem() != nil {
-			elem := constraint.Colconstraintelem()
-			if elem.NOT() != nil && elem.NULL_P() != nil {
-				return false // NOT NULL
-			}
-			if elem.PRIMARY() != nil && elem.KEY() != nil {
-				return false // PRIMARY KEY implies NOT NULL
-			}
-		}
-	}
-
-	return true // Default is nullable
-}
-
-// extractColumnDefault extracts the default value from column constraints
-func extractColumnDefault(columnDef parser.IColumnDefContext) string {
-	if columnDef == nil || columnDef.Colquallist() == nil {
-		return ""
-	}
-
-	// Check all column constraints for DEFAULT
-	for _, constraint := range columnDef.Colquallist().AllColconstraint() {
-		if constraint.Colconstraintelem() != nil {
-			elem := constraint.Colconstraintelem()
-			if elem.DEFAULT() != nil && elem.B_expr() != nil {
-				// Extract default value text
-				if parser := elem.GetParser(); parser != nil {
-					if tokenStream := parser.GetTokenStream(); tokenStream != nil {
-						start := elem.B_expr().GetStart()
-						stop := elem.B_expr().GetStop()
-						if start != nil && stop != nil {
-							return tokenStream.GetTextFromTokens(start, stop)
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return ""
-}
-
-// extractColumnComment extracts column comment (PostgreSQL doesn't store comments in CREATE TABLE syntax)
-func extractColumnComment(_ parser.IColumnDefContext) string {
-	// PostgreSQL column comments are set using COMMENT ON COLUMN, not in CREATE TABLE
-	// This information is not available in the CREATE TABLE AST
-	return ""
-}
-
-// extractColumnCollation extracts collation from column constraints
-func extractColumnCollation(columnDef parser.IColumnDefContext) string {
-	if columnDef == nil || columnDef.Colquallist() == nil {
-		return ""
-	}
-
-	// Check all column constraints for COLLATE
-	for _, constraint := range columnDef.Colquallist().AllColconstraint() {
-		if constraint.COLLATE() != nil && constraint.Any_name() != nil {
-			// Extract collation name
-			return extractAnyName(constraint.Any_name())
-		}
-	}
-
-	return ""
-}
-
-// extractAnyName extracts the string representation from an Any_name context
-func extractAnyName(anyName parser.IAny_nameContext) string {
-	if anyName == nil {
-		return ""
-	}
-
-	// Get tokens from the parser
-	if parser := anyName.GetParser(); parser != nil {
-		if tokenStream := parser.GetTokenStream(); tokenStream != nil {
-			start := anyName.GetStart()
-			stop := anyName.GetStop()
-			if start != nil && stop != nil {
-				return tokenStream.GetTextFromTokens(start, stop)
-			}
-		}
-	}
-
-	// Fallback to GetText() if tokens are not available
-	return anyName.GetText()
-}
-
-// ForeignKeyDefWithAST holds foreign key constraint definition with its AST node for text comparison
-type ForeignKeyDefWithAST struct {
-	Name    string
-	ASTNode parser.ITableconstraintContext
-}
-
-// CheckConstraintDefWithAST holds check constraint definition with its AST node for text comparison
-type CheckConstraintDefWithAST struct {
-	Name    string
-	ASTNode parser.ITableconstraintContext
-}
-
-// IndexDefWithAST holds index/unique constraint definition with its AST node for text comparison
-type IndexDefWithAST struct {
-	Name    string
-	ASTNode parser.ITableconstraintContext
-}
-
-// processForeignKeyChanges analyzes foreign key constraint changes between old and new table definitions
-// Following the text-first comparison pattern for performance optimization
-func processForeignKeyChanges(oldTable, newTable *parser.CreatestmtContext, currentDBSDLChunks *currentDatabaseSDLChunks, tableIdentifier string) []*schema.ForeignKeyDiff {
-	if oldTable == nil || newTable == nil {
-		return []*schema.ForeignKeyDiff{}
-	}
-
-	// Step 1: Extract all foreign key definitions with their AST nodes for text comparison
-	oldFKList := extractForeignKeyDefinitionsInOrder(oldTable)
-	newFKList := extractForeignKeyDefinitionsInOrder(newTable)
-
-	// Create maps for quick lookup
-	oldFKMap := make(map[string]*ForeignKeyDefWithAST)
-	for _, def := range oldFKList {
-		oldFKMap[def.Name] = def
-	}
-	newFKMap := make(map[string]*ForeignKeyDefWithAST)
-	for _, def := range newFKList {
-		newFKMap[def.Name] = def
-	}
-
-	var fkDiffs []*schema.ForeignKeyDiff
-
-	// Step 2: Process current foreign keys to find created and modified foreign keys
-	for _, newFKDef := range newFKList {
-		if oldFKDef, exists := oldFKMap[newFKDef.Name]; exists {
-			// FK exists in both - check if modified by comparing text first
-			currentText := getForeignKeyText(newFKDef.ASTNode)
-			previousText := getForeignKeyText(oldFKDef.ASTNode)
-			if currentText != previousText {
-				// Apply constraint-level usability check: skip diff if current constraint matches database metadata SDL
-				schemaName, tableName := parseIdentifier(tableIdentifier)
-				if currentDBSDLChunks != nil && currentDBSDLChunks.shouldSkipConstraintDiffForUsability(currentText, schemaName, tableName, newFKDef.Name) {
-					continue
-				}
-				// FK was modified - drop and recreate (PostgreSQL pattern)
-				fkDiffs = append(fkDiffs, &schema.ForeignKeyDiff{
-					Action:     schema.MetadataDiffActionDrop,
-					OldASTNode: oldFKDef.ASTNode,
-				})
-				fkDiffs = append(fkDiffs, &schema.ForeignKeyDiff{
-					Action:     schema.MetadataDiffActionCreate,
-					NewASTNode: newFKDef.ASTNode,
-				})
-			}
-		} else {
-			// New foreign key - store AST node only
-			fkDiffs = append(fkDiffs, &schema.ForeignKeyDiff{
-				Action:     schema.MetadataDiffActionCreate,
-				NewASTNode: newFKDef.ASTNode,
-			})
-		}
-	}
-
-	// Step 3: Process old foreign keys to find dropped ones
-	for _, oldFKDef := range oldFKList {
-		if _, exists := newFKMap[oldFKDef.Name]; !exists {
-			// Foreign key was dropped - store AST node only
-			fkDiffs = append(fkDiffs, &schema.ForeignKeyDiff{
-				Action:     schema.MetadataDiffActionDrop,
-				OldASTNode: oldFKDef.ASTNode,
-			})
-		}
-	}
-
-	return fkDiffs
-}
-
-// processCheckConstraintChanges analyzes check constraint changes between old and new table definitions
-// Following the text-first comparison pattern for performance optimization
-func processCheckConstraintChanges(oldTable, newTable *parser.CreatestmtContext, currentDBSDLChunks *currentDatabaseSDLChunks, tableIdentifier string) []*schema.CheckConstraintDiff {
-	if oldTable == nil || newTable == nil {
-		return []*schema.CheckConstraintDiff{}
-	}
-
-	// Step 1: Extract all check constraint definitions with their AST nodes for text comparison
-	oldCheckList := extractCheckConstraintDefinitionsInOrder(oldTable)
-	newCheckList := extractCheckConstraintDefinitionsInOrder(newTable)
-
-	// Create maps for quick lookup
-	oldCheckMap := make(map[string]*CheckConstraintDefWithAST)
-	for _, def := range oldCheckList {
-		oldCheckMap[def.Name] = def
-	}
-	newCheckMap := make(map[string]*CheckConstraintDefWithAST)
-	for _, def := range newCheckList {
-		newCheckMap[def.Name] = def
-	}
-
-	var checkDiffs []*schema.CheckConstraintDiff
-
-	// Step 2: Process current check constraints to find created and modified check constraints
-	for _, newCheckDef := range newCheckList {
-		if oldCheckDef, exists := oldCheckMap[newCheckDef.Name]; exists {
-			// Check constraint exists in both - check if modified by comparing text first
-			currentText := getCheckConstraintText(newCheckDef.ASTNode)
-			previousText := getCheckConstraintText(oldCheckDef.ASTNode)
-			if currentText != previousText {
-				// Apply constraint-level usability check: skip diff if current constraint matches database metadata SDL
-				schemaName, tableName := parseIdentifier(tableIdentifier)
-				if currentDBSDLChunks != nil && currentDBSDLChunks.shouldSkipConstraintDiffForUsability(currentText, schemaName, tableName, newCheckDef.Name) {
-					continue
-				}
-				// Check constraint was modified - drop and recreate (PostgreSQL pattern)
-				checkDiffs = append(checkDiffs, &schema.CheckConstraintDiff{
-					Action:     schema.MetadataDiffActionDrop,
-					OldASTNode: oldCheckDef.ASTNode,
-				})
-				checkDiffs = append(checkDiffs, &schema.CheckConstraintDiff{
-					Action:     schema.MetadataDiffActionCreate,
-					NewASTNode: newCheckDef.ASTNode,
-				})
-			}
-		} else {
-			// New check constraint - store AST node only
-			checkDiffs = append(checkDiffs, &schema.CheckConstraintDiff{
-				Action:     schema.MetadataDiffActionCreate,
-				NewASTNode: newCheckDef.ASTNode,
-			})
-		}
-	}
-
-	// Step 3: Process old check constraints to find dropped ones
-	for _, oldCheckDef := range oldCheckList {
-		if _, exists := newCheckMap[oldCheckDef.Name]; !exists {
-			// Check constraint was dropped - store AST node only
-			checkDiffs = append(checkDiffs, &schema.CheckConstraintDiff{
-				Action:     schema.MetadataDiffActionDrop,
-				OldASTNode: oldCheckDef.ASTNode,
-			})
-		}
-	}
-
-	return checkDiffs
-}
-
-// processPrimaryKeyChanges analyzes primary key constraint changes between old and new table definitions
-func processPrimaryKeyChanges(oldTable, newTable *parser.CreatestmtContext, currentDBSDLChunks *currentDatabaseSDLChunks, tableIdentifier string) []*schema.PrimaryKeyDiff {
-	if oldTable == nil || newTable == nil {
-		return []*schema.PrimaryKeyDiff{}
-	}
-
-	// Step 1: Extract all primary key constraint definitions with their AST nodes for text comparison
-	oldPKMap := extractPrimaryKeyDefinitionsWithAST(oldTable)
-	newPKMap := extractPrimaryKeyDefinitionsWithAST(newTable)
-
-	var pkDiffs []*schema.PrimaryKeyDiff
-
-	// Step 2: Process current primary keys to find created and modified primary keys
-	for pkName, newPKDef := range newPKMap {
-		if oldPKDef, exists := oldPKMap[pkName]; exists {
-			// PK exists in both - check if modified by comparing text first
-			currentText := getIndexText(newPKDef.ASTNode)
-			previousText := getIndexText(oldPKDef.ASTNode)
-			if currentText != previousText {
-				// Apply constraint-level usability check: skip diff if current constraint matches database metadata SDL
-				schemaName, tableName := parseIdentifier(tableIdentifier)
-				if currentDBSDLChunks != nil && currentDBSDLChunks.shouldSkipConstraintDiffForUsability(currentText, schemaName, tableName, pkName) {
-					continue
-				}
-				// PK was modified - store AST nodes only
-				pkDiffs = append(pkDiffs, &schema.PrimaryKeyDiff{
-					Action:     schema.MetadataDiffActionDrop,
-					OldASTNode: oldPKDef.ASTNode,
-				})
-				pkDiffs = append(pkDiffs, &schema.PrimaryKeyDiff{
-					Action:     schema.MetadataDiffActionCreate,
-					NewASTNode: newPKDef.ASTNode,
-				})
-			}
-		} else {
-			// New PK - store AST node only
-			pkDiffs = append(pkDiffs, &schema.PrimaryKeyDiff{
-				Action:     schema.MetadataDiffActionCreate,
-				NewASTNode: newPKDef.ASTNode,
-			})
-		}
-	}
-
-	// Step 3: Process old primary keys to find dropped ones
-	for pkName, oldPKDef := range oldPKMap {
-		if _, exists := newPKMap[pkName]; !exists {
-			// PK was dropped - store AST node only
-			pkDiffs = append(pkDiffs, &schema.PrimaryKeyDiff{
-				Action:     schema.MetadataDiffActionDrop,
-				OldASTNode: oldPKDef.ASTNode,
-			})
-		}
-	}
-
-	return pkDiffs
-}
-
-// processUniqueConstraintChanges analyzes unique constraint changes between old and new table definitions
-func processUniqueConstraintChanges(oldTable, newTable *parser.CreatestmtContext, currentDBSDLChunks *currentDatabaseSDLChunks, tableIdentifier string) []*schema.UniqueConstraintDiff {
-	if oldTable == nil || newTable == nil {
-		return []*schema.UniqueConstraintDiff{}
-	}
-
-	// Step 1: Extract all unique constraint definitions with their AST nodes for text comparison
-	oldUKList := extractUniqueConstraintDefinitionsInOrder(oldTable)
-	newUKList := extractUniqueConstraintDefinitionsInOrder(newTable)
-
-	// Create maps for quick lookup
-	oldUKMap := make(map[string]*IndexDefWithAST)
-	for _, def := range oldUKList {
-		oldUKMap[def.Name] = def
-	}
-	newUKMap := make(map[string]*IndexDefWithAST)
-	for _, def := range newUKList {
-		newUKMap[def.Name] = def
-	}
-
-	var ukDiffs []*schema.UniqueConstraintDiff
-
-	// Step 2: Process current unique constraints to find created and modified unique constraints
-	for _, newUKDef := range newUKList {
-		if oldUKDef, exists := oldUKMap[newUKDef.Name]; exists {
-			// UK exists in both - check if modified by comparing text first
-			currentText := getIndexText(newUKDef.ASTNode)
-			previousText := getIndexText(oldUKDef.ASTNode)
-			if currentText != previousText {
-				// Apply constraint-level usability check: skip diff if current constraint matches database metadata SDL
-				schemaName, tableName := parseIdentifier(tableIdentifier)
-				if currentDBSDLChunks != nil && currentDBSDLChunks.shouldSkipConstraintDiffForUsability(currentText, schemaName, tableName, newUKDef.Name) {
-					continue
-				}
-				// UK was modified - drop and recreate (PostgreSQL pattern)
-				ukDiffs = append(ukDiffs, &schema.UniqueConstraintDiff{
-					Action:     schema.MetadataDiffActionDrop,
-					OldASTNode: oldUKDef.ASTNode,
-				})
-				ukDiffs = append(ukDiffs, &schema.UniqueConstraintDiff{
-					Action:     schema.MetadataDiffActionCreate,
-					NewASTNode: newUKDef.ASTNode,
-				})
-			}
-		} else {
-			// New UK - store AST node only
-			ukDiffs = append(ukDiffs, &schema.UniqueConstraintDiff{
-				Action:     schema.MetadataDiffActionCreate,
-				NewASTNode: newUKDef.ASTNode,
-			})
-		}
-	}
-
-	// Step 3: Process old unique constraints to find dropped ones
-	for _, oldUKDef := range oldUKList {
-		if _, exists := newUKMap[oldUKDef.Name]; !exists {
-			// UK was dropped - store AST node only
-			ukDiffs = append(ukDiffs, &schema.UniqueConstraintDiff{
-				Action:     schema.MetadataDiffActionDrop,
-				OldASTNode: oldUKDef.ASTNode,
-			})
-		}
-	}
-
-	return ukDiffs
-}
-
-// extractUniqueConstraintDefinitionsInOrder extracts unique constraints with their AST nodes in SQL order
-func extractUniqueConstraintDefinitionsInOrder(createStmt *parser.CreatestmtContext) []*IndexDefWithAST {
-	var ukList []*IndexDefWithAST
-
-	if createStmt == nil || createStmt.Opttableelementlist() == nil {
-		return ukList
-	}
-
-	tableElementList := createStmt.Opttableelementlist().Tableelementlist()
-	if tableElementList == nil {
-		return ukList
-	}
-
-	for _, element := range tableElementList.AllTableelement() {
-		if element.Tableconstraint() != nil {
-			constraint := element.Tableconstraint()
-			if constraint.Constraintelem() != nil {
-				elem := constraint.Constraintelem()
-				// Check for UNIQUE constraints (but not PRIMARY KEY)
-				isUnique := elem.UNIQUE() != nil && (elem.PRIMARY() == nil || elem.KEY() == nil)
-
-				if isUnique {
-					// This is a unique constraint
-					name := ""
-					if constraint.Name() != nil {
-						name = pgparser.NormalizePostgreSQLName(constraint.Name())
-					}
-					// Use constraint definition text as fallback key if name is empty
-					if name == "" {
-						// Get the full original text from tokens
-						if parser := constraint.GetParser(); parser != nil {
-							if tokenStream := parser.GetTokenStream(); tokenStream != nil {
-								name = tokenStream.GetTextFromRuleContext(constraint)
-							}
-						}
-						if name == "" {
-							name = constraint.GetText() // Final fallback
-						}
-					}
-					ukList = append(ukList, &IndexDefWithAST{
-						Name:    name,
-						ASTNode: constraint,
-					})
-				}
-			}
-		}
-	}
-
-	return ukList
-}
-
-// extractForeignKeyDefinitionsInOrder extracts foreign key constraints with their AST nodes in SQL order
-func extractForeignKeyDefinitionsInOrder(createStmt *parser.CreatestmtContext) []*ForeignKeyDefWithAST {
-	var fkList []*ForeignKeyDefWithAST
-
-	if createStmt == nil || createStmt.Opttableelementlist() == nil {
-		return fkList
-	}
-
-	tableElementList := createStmt.Opttableelementlist().Tableelementlist()
-	if tableElementList == nil {
-		return fkList
-	}
-
-	for _, element := range tableElementList.AllTableelement() {
-		if element.Tableconstraint() != nil {
-			constraint := element.Tableconstraint()
-			if constraint.Constraintelem() != nil {
-				elem := constraint.Constraintelem()
-				if elem.FOREIGN() != nil && elem.KEY() != nil {
-					// This is a foreign key constraint
-					name := ""
-					if constraint.Name() != nil {
-						name = pgparser.NormalizePostgreSQLName(constraint.Name())
-					}
-					// Use constraint definition text as fallback key if name is empty
-					if name == "" {
-						// Get the full original text from tokens
-						if parser := constraint.GetParser(); parser != nil {
-							if tokenStream := parser.GetTokenStream(); tokenStream != nil {
-								name = tokenStream.GetTextFromRuleContext(constraint)
-							}
-						}
-						if name == "" {
-							name = constraint.GetText() // Final fallback
-						}
-					}
-					fkList = append(fkList, &ForeignKeyDefWithAST{
-						Name:    name,
-						ASTNode: constraint,
-					})
-				}
-			}
-		}
-	}
-
-	return fkList
-}
-
-// extractCheckConstraintDefinitionsInOrder extracts check constraints with their AST nodes in SQL order
-func extractCheckConstraintDefinitionsInOrder(createStmt *parser.CreatestmtContext) []*CheckConstraintDefWithAST {
-	var checkList []*CheckConstraintDefWithAST
-
-	if createStmt == nil || createStmt.Opttableelementlist() == nil {
-		return checkList
-	}
-
-	tableElementList := createStmt.Opttableelementlist().Tableelementlist()
-	if tableElementList == nil {
-		return checkList
-	}
-
-	for _, element := range tableElementList.AllTableelement() {
-		if element.Tableconstraint() != nil {
-			constraint := element.Tableconstraint()
-			if constraint.Constraintelem() != nil {
-				elem := constraint.Constraintelem()
-				if elem.CHECK() != nil {
-					// This is a check constraint
-					name := ""
-					if constraint.Name() != nil {
-						name = pgparser.NormalizePostgreSQLName(constraint.Name())
-					}
-					// Use constraint definition text as fallback key if name is empty
-					if name == "" {
-						// Get the full original text from tokens
-						if parser := constraint.GetParser(); parser != nil {
-							if tokenStream := parser.GetTokenStream(); tokenStream != nil {
-								name = tokenStream.GetTextFromRuleContext(constraint)
-							}
-						}
-						if name == "" {
-							name = constraint.GetText() // Final fallback
-						}
-					}
-					checkList = append(checkList, &CheckConstraintDefWithAST{
-						Name:    name,
-						ASTNode: constraint,
-					})
-				}
-			}
-		}
-	}
-
-	return checkList
-}
-
-// extractPrimaryKeyDefinitionsWithAST extracts primary key constraints with their AST nodes
-func extractPrimaryKeyDefinitionsWithAST(createStmt *parser.CreatestmtContext) map[string]*IndexDefWithAST {
-	pkMap := make(map[string]*IndexDefWithAST)
-
-	if createStmt == nil || createStmt.Opttableelementlist() == nil {
-		return pkMap
-	}
-
-	tableElementList := createStmt.Opttableelementlist().Tableelementlist()
-	if tableElementList == nil {
-		return pkMap
-	}
-
-	for _, element := range tableElementList.AllTableelement() {
-		if element.Tableconstraint() != nil {
-			constraint := element.Tableconstraint()
-			if constraint.Constraintelem() != nil {
-				elem := constraint.Constraintelem()
-				// Check for PRIMARY KEY constraints
-				isPrimary := elem.PRIMARY() != nil && elem.KEY() != nil
-
-				if isPrimary {
-					// This is a primary key constraint
-					name := ""
-					if constraint.Name() != nil {
-						name = pgparser.NormalizePostgreSQLName(constraint.Name())
-					}
-					// Use constraint definition text as fallback key if name is empty
-					if name == "" {
-						// Get the full original text from tokens
-						if parser := constraint.GetParser(); parser != nil {
-							if tokenStream := parser.GetTokenStream(); tokenStream != nil {
-								name = tokenStream.GetTextFromRuleContext(constraint)
-							}
-						}
-						if name == "" {
-							name = constraint.GetText() // Final fallback
-						}
-					}
-					pkMap[name] = &IndexDefWithAST{
-						Name:    name,
-						ASTNode: constraint,
-					}
-				}
-			}
-		}
-	}
-
-	return pkMap
-}
-
-// getForeignKeyText returns the text representation of a foreign key constraint for comparison
-func getForeignKeyText(constraintAST parser.ITableconstraintContext) string {
-	if constraintAST == nil {
-		return ""
-	}
-
-	// Get tokens from the parser for precise text extraction
-	if parser := constraintAST.GetParser(); parser != nil {
-		if tokenStream := parser.GetTokenStream(); tokenStream != nil {
-			start := constraintAST.GetStart()
-			stop := constraintAST.GetStop()
-			if start != nil && stop != nil {
-				return tokenStream.GetTextFromTokens(start, stop)
-			}
-		}
-	}
-
-	// Fallback to GetText() if tokens are not available
-	return constraintAST.GetText()
-}
-
-// getCheckConstraintText returns the text representation of a check constraint for comparison
-func getCheckConstraintText(constraintAST parser.ITableconstraintContext) string {
-	if constraintAST == nil {
-		return ""
-	}
-
-	// Get tokens from the parser for precise text extraction
-	if parser := constraintAST.GetParser(); parser != nil {
-		if tokenStream := parser.GetTokenStream(); tokenStream != nil {
-			start := constraintAST.GetStart()
-			stop := constraintAST.GetStop()
-			if start != nil && stop != nil {
-				return tokenStream.GetTextFromTokens(start, stop)
-			}
-		}
-	}
-
-	// Fallback to GetText() if tokens are not available
-	return constraintAST.GetText()
-}
-
-// getIndexText returns the text representation of an index/unique constraint for comparison
-func getIndexText(constraintAST parser.ITableconstraintContext) string {
-	if constraintAST == nil {
-		return ""
-	}
-
-	// Get tokens from the parser for precise text extraction
-	if parser := constraintAST.GetParser(); parser != nil {
-		if tokenStream := parser.GetTokenStream(); tokenStream != nil {
-			start := constraintAST.GetStart()
-			stop := constraintAST.GetStop()
-			if start != nil && stop != nil {
-				return tokenStream.GetTextFromTokens(start, stop)
-			}
-		}
-	}
-
-	// Fallback to GetText() if tokens are not available
-	return constraintAST.GetText()
-}
-
-// processStandaloneIndexChanges analyzes standalone CREATE INDEX statement changes
-// and adds them to the appropriate table's IndexChanges
-func processStandaloneIndexChanges(currentChunks, previousChunks *schema.SDLChunks, currentDBSDLChunks *currentDatabaseSDLChunks, diff *schema.MetadataDiff) {
-	if currentChunks == nil || previousChunks == nil {
-		return
-	}
-
-	// Initialize map with all existing table diffs for efficient lookups
-	// Use schema.table format as key for consistency with extractTableNameFromIndex
-	affectedTables := make(map[string]*schema.TableDiff, len(diff.TableChanges))
-	for _, tableDiff := range diff.TableChanges {
-		qualifiedTableName := tableDiff.SchemaName + "." + tableDiff.TableName
-		affectedTables[qualifiedTableName] = tableDiff
-	}
-
-	// Step 1: Process current indexes to find created and modified indexes
-	for _, currentChunk := range currentChunks.Indexes {
-		tableName := extractTableNameFromIndex(currentChunk.ASTNode)
-		if tableName == "" {
-			continue // Skip if we can't determine the table name
-		}
-
-		if previousChunk, exists := previousChunks.Indexes[currentChunk.Identifier]; exists {
-			// Index exists in both - check if modified by comparing text first
-			currentText := getStandaloneIndexText(currentChunk.ASTNode)
-			previousText := getStandaloneIndexText(previousChunk.ASTNode)
-			if currentText != previousText {
-				// Apply usability check: skip diff if current chunk matches database metadata
-				if currentDBSDLChunks.shouldSkipChunkDiffForUsability(currentText, currentChunk.Identifier) {
-					continue
-				}
-				// Index was modified - use drop and recreate pattern (PostgreSQL standard)
-				tableDiff := getOrCreateTableDiff(diff, tableName, affectedTables)
-				tableDiff.IndexChanges = append(tableDiff.IndexChanges, &schema.IndexDiff{
-					Action:     schema.MetadataDiffActionDrop,
-					OldASTNode: previousChunk.ASTNode,
-				})
-				tableDiff.IndexChanges = append(tableDiff.IndexChanges, &schema.IndexDiff{
-					Action:     schema.MetadataDiffActionCreate,
-					NewASTNode: currentChunk.ASTNode,
-				})
-				// Add COMMENT ON INDEX diffs if they exist in the new version
-				if len(currentChunk.CommentStatements) > 0 {
-					schemaName, indexName := parseIdentifier(currentChunk.Identifier)
-					for _, commentNode := range currentChunk.CommentStatements {
-						commentText := extractCommentTextFromNode(commentNode)
-						diff.CommentChanges = append(diff.CommentChanges, &schema.CommentDiff{
-							Action:     schema.MetadataDiffActionCreate,
-							ObjectType: schema.CommentObjectTypeIndex,
-							SchemaName: schemaName,
-							ObjectName: indexName,
-							OldComment: "",
-							NewComment: commentText,
-							OldASTNode: nil,
-							NewASTNode: commentNode,
-						})
-					}
-				}
-			}
-			// If text is identical, skip - no changes detected
-		} else {
-			// New index - store AST node only
-			tableDiff := getOrCreateTableDiff(diff, tableName, affectedTables)
-			tableDiff.IndexChanges = append(tableDiff.IndexChanges, &schema.IndexDiff{
-				Action:     schema.MetadataDiffActionCreate,
-				NewASTNode: currentChunk.ASTNode,
-			})
-			// Add COMMENT ON INDEX diffs if they exist
-			if len(currentChunk.CommentStatements) > 0 {
-				schemaName, indexName := parseIdentifier(currentChunk.Identifier)
-				for _, commentNode := range currentChunk.CommentStatements {
-					commentText := extractCommentTextFromNode(commentNode)
-					diff.CommentChanges = append(diff.CommentChanges, &schema.CommentDiff{
-						Action:     schema.MetadataDiffActionCreate,
-						ObjectType: schema.CommentObjectTypeIndex,
-						SchemaName: schemaName,
-						ObjectName: indexName,
-						OldComment: "",
-						NewComment: commentText,
-						OldASTNode: nil,
-						NewASTNode: commentNode,
-					})
-				}
-			}
-		}
-	}
-
-	// Step 2: Process previous indexes to find dropped ones
-	for indexName, previousChunk := range previousChunks.Indexes {
-		if _, exists := currentChunks.Indexes[indexName]; !exists {
-			// Index was dropped - store AST node only
-			tableName := extractTableNameFromIndex(previousChunk.ASTNode)
-			if tableName == "" {
-				continue // Skip if we can't determine the table name
-			}
-
-			tableDiff := getOrCreateTableDiff(diff, tableName, affectedTables)
-			tableDiff.IndexChanges = append(tableDiff.IndexChanges, &schema.IndexDiff{
-				Action:     schema.MetadataDiffActionDrop,
-				OldASTNode: previousChunk.ASTNode,
-			})
-		}
-	}
-}
-
-// getStandaloneIndexText returns the text representation of a standalone CREATE INDEX statement for comparison
-func getStandaloneIndexText(astNode any) string {
-	indexStmt, ok := astNode.(*parser.IndexstmtContext)
-	if !ok || indexStmt == nil {
-		return ""
-	}
-
-	// Get tokens from the parser for precise text extraction with original spacing
-	if parser := indexStmt.GetParser(); parser != nil {
-		if tokenStream := parser.GetTokenStream(); tokenStream != nil {
-			start := indexStmt.GetStart()
-			stop := indexStmt.GetStop()
-			if start != nil && stop != nil {
-				return tokenStream.GetTextFromTokens(start, stop)
-			}
-		}
-	}
-
-	// Fallback to GetText() if tokens are not available
-	return indexStmt.GetText()
-}
-
-// extractTableNameFromIndex extracts the fully qualified table name from a CREATE INDEX statement
-// Returns schema.table format, defaulting to public schema if not specified
-func extractTableNameFromIndex(astNode any) string {
-	indexStmt, ok := astNode.(*parser.IndexstmtContext)
-	if !ok || indexStmt == nil {
-		return ""
-	}
-
-	// Extract table name from relation_expr in CREATE INDEX ... ON table_name
-	if relationExpr := indexStmt.Relation_expr(); relationExpr != nil {
-		if qualifiedName := relationExpr.Qualified_name(); qualifiedName != nil {
-			// Extract qualified name parts
-			qualifiedNameParts := pgparser.NormalizePostgreSQLQualifiedName(qualifiedName)
-			if len(qualifiedNameParts) == 0 {
-				return ""
-			}
-
-			// Return fully qualified name (schema.table)
-			if len(qualifiedNameParts) == 1 {
-				// No schema specified, default to public
-				return "public." + qualifiedNameParts[0]
-			}
-			// Schema is specified
-			return strings.Join(qualifiedNameParts, ".")
-		}
-	}
-
-	return ""
-}
-
-// getOrCreateTableDiff finds an existing table diff or creates a new one for the given table
-// tableName should be in schema.table format
-func getOrCreateTableDiff(diff *schema.MetadataDiff, tableName string, affectedTables map[string]*schema.TableDiff) *schema.TableDiff {
-	// Check if we already have this table in our map
-	if tableDiff, exists := affectedTables[tableName]; exists {
-		return tableDiff
-	}
-
-	// Parse schema and table name from tableName (format: schema.table)
-	schemaName, tableNameOnly := parseIdentifier(tableName)
-
-	// Create a new table diff for standalone index changes
-	// We set Action to ALTER since we're modifying an existing table by adding/removing indexes
-	newTableDiff := &schema.TableDiff{
-		Action:                  schema.MetadataDiffActionAlter,
-		SchemaName:              schemaName,
-		TableName:               tableNameOnly,
-		OldTable:                nil, // Will be populated when SDL drift detection is implemented
-		NewTable:                nil, // Will be populated when SDL drift detection is implemented
-		OldASTNode:              nil, // No table-level AST changes for standalone indexes
-		NewASTNode:              nil, // No table-level AST changes for standalone indexes
-		ColumnChanges:           []*schema.ColumnDiff{},
-		IndexChanges:            []*schema.IndexDiff{},
-		PrimaryKeyChanges:       []*schema.PrimaryKeyDiff{},
-		UniqueConstraintChanges: []*schema.UniqueConstraintDiff{},
-		ForeignKeyChanges:       []*schema.ForeignKeyDiff{},
-		CheckConstraintChanges:  []*schema.CheckConstraintDiff{},
-	}
-
-	diff.TableChanges = append(diff.TableChanges, newTableDiff)
-	affectedTables[tableName] = newTableDiff
-	return newTableDiff
-}
-
-// processViewChanges analyzes view changes between current and previous chunks
-// Following the text-first comparison pattern for performance optimization
-func processViewChanges(currentChunks, previousChunks *schema.SDLChunks, currentDBSDLChunks *currentDatabaseSDLChunks, diff *schema.MetadataDiff) {
-	// Process current views to find created and modified views
-	for _, currentChunk := range currentChunks.Views {
-		if previousChunk, exists := previousChunks.Views[currentChunk.Identifier]; exists {
-			// View exists in both - check if modified by comparing text first (excluding comments)
-			currentText := currentChunk.GetTextWithoutComments()
-			previousText := previousChunk.GetTextWithoutComments()
-			if currentText != previousText {
-				// Apply usability check: skip diff if current chunk matches database metadata SDL
-				if currentDBSDLChunks.shouldSkipChunkDiffForUsability(currentText, currentChunk.Identifier) {
-					continue
-				}
-				// View was modified - use drop and recreate pattern (PostgreSQL standard)
-				schemaName, viewName := parseIdentifier(currentChunk.Identifier)
-				diff.ViewChanges = append(diff.ViewChanges, &schema.ViewDiff{
-					Action:     schema.MetadataDiffActionDrop,
-					SchemaName: schemaName,
-					ViewName:   viewName,
-					OldView:    nil, // Will be populated when SDL drift detection is implemented
-					NewView:    nil, // Will be populated when SDL drift detection is implemented
-					OldASTNode: previousChunk.ASTNode,
-					NewASTNode: nil,
-				})
-				diff.ViewChanges = append(diff.ViewChanges, &schema.ViewDiff{
-					Action:     schema.MetadataDiffActionCreate,
-					SchemaName: schemaName,
-					ViewName:   viewName,
-					OldView:    nil, // Will be populated when SDL drift detection is implemented
-					NewView:    nil, // Will be populated when SDL drift detection is implemented
-					OldASTNode: nil,
-					NewASTNode: currentChunk.ASTNode,
-				})
-				// Add COMMENT ON VIEW diffs if they exist
-				if len(currentChunk.CommentStatements) > 0 {
-					for _, commentNode := range currentChunk.CommentStatements {
-						commentText := extractCommentTextFromNode(commentNode)
-						diff.CommentChanges = append(diff.CommentChanges, &schema.CommentDiff{
-							Action:     schema.MetadataDiffActionCreate,
-							ObjectType: schema.CommentObjectTypeView,
-							SchemaName: schemaName,
-							ObjectName: viewName,
-							OldComment: "",
-							NewComment: commentText,
-							OldASTNode: nil,
-							NewASTNode: commentNode,
-						})
-					}
-				}
-			}
-			// If text is identical, skip - no changes detected
-		} else {
-			// New view
-			schemaName, viewName := parseIdentifier(currentChunk.Identifier)
-			diff.ViewChanges = append(diff.ViewChanges, &schema.ViewDiff{
-				Action:     schema.MetadataDiffActionCreate,
-				SchemaName: schemaName,
-				ViewName:   viewName,
-				OldView:    nil,
-				NewView:    nil, // Will be populated when SDL drift detection is implemented
-				OldASTNode: nil,
-				NewASTNode: currentChunk.ASTNode,
-			})
-			// Add COMMENT ON VIEW diffs if they exist
-			if len(currentChunk.CommentStatements) > 0 {
-				for _, commentNode := range currentChunk.CommentStatements {
-					commentText := extractCommentTextFromNode(commentNode)
-					diff.CommentChanges = append(diff.CommentChanges, &schema.CommentDiff{
-						Action:     schema.MetadataDiffActionCreate,
-						ObjectType: schema.CommentObjectTypeView,
-						SchemaName: schemaName,
-						ObjectName: viewName,
-						OldComment: "",
-						NewComment: commentText,
-						OldASTNode: nil,
-						NewASTNode: commentNode,
-					})
-				}
-			}
-		}
-	}
-
-	// Process previous views to find dropped ones
-	for identifier, previousChunk := range previousChunks.Views {
-		if _, exists := currentChunks.Views[identifier]; !exists {
-			// View was dropped
-			schemaName, viewName := parseIdentifier(identifier)
-			diff.ViewChanges = append(diff.ViewChanges, &schema.ViewDiff{
-				Action:     schema.MetadataDiffActionDrop,
-				SchemaName: schemaName,
-				ViewName:   viewName,
-				OldView:    nil, // Will be populated when SDL drift detection is implemented
-				NewView:    nil,
-				OldASTNode: previousChunk.ASTNode,
-				NewASTNode: nil,
-			})
-		}
-	}
-}
-
-// processFunctionChanges analyzes function changes between current and previous chunks
-// Following the text-first comparison pattern for performance optimization
-func processFunctionChanges(currentChunks, previousChunks *schema.SDLChunks, currentDBSDLChunks *currentDatabaseSDLChunks, diff *schema.MetadataDiff) {
-	// Process current functions to find created and modified functions
-	for _, currentChunk := range currentChunks.Functions {
-		if previousChunk, exists := previousChunks.Functions[currentChunk.Identifier]; exists {
-			// Function exists in both - check if modified by comparing text first (excluding comments)
-			currentText := currentChunk.GetTextWithoutComments()
-			previousText := previousChunk.GetTextWithoutComments()
-			if currentText != previousText {
-				// Apply usability check: skip diff if current chunk matches database metadata SDL
-				if currentDBSDLChunks.shouldSkipChunkDiffForUsability(currentText, currentChunk.Identifier) {
-					continue
-				}
-				// Function was modified - use CREATE OR REPLACE (AST-only mode)
-				schemaName, functionName := parseIdentifier(currentChunk.Identifier)
-				diff.FunctionChanges = append(diff.FunctionChanges, &schema.FunctionDiff{
-					Action:       schema.MetadataDiffActionAlter,
-					SchemaName:   schemaName,
-					FunctionName: functionName,
-					OldFunction:  nil, // Will be populated when SDL drift detection is implemented
-					NewFunction:  nil, // Will be populated when SDL drift detection is implemented
-					OldASTNode:   previousChunk.ASTNode,
-					NewASTNode:   currentChunk.ASTNode,
-				})
-			}
-			// If text is identical, skip - no changes detected
-		} else {
-			// New function
-			schemaName, functionName := parseIdentifier(currentChunk.Identifier)
-			diff.FunctionChanges = append(diff.FunctionChanges, &schema.FunctionDiff{
-				Action:       schema.MetadataDiffActionCreate,
-				SchemaName:   schemaName,
-				FunctionName: functionName,
-				OldFunction:  nil,
-				NewFunction:  nil,
-				OldASTNode:   nil,
-				NewASTNode:   currentChunk.ASTNode,
-			})
-			// Add COMMENT ON FUNCTION diffs if they exist
-			if len(currentChunk.CommentStatements) > 0 {
-				for _, commentNode := range currentChunk.CommentStatements {
-					commentText := extractCommentTextFromNode(commentNode)
-					diff.CommentChanges = append(diff.CommentChanges, &schema.CommentDiff{
-						Action:     schema.MetadataDiffActionCreate,
-						ObjectType: schema.CommentObjectTypeFunction,
-						SchemaName: schemaName,
-						ObjectName: functionName,
-						OldComment: "",
-						NewComment: commentText,
-						OldASTNode: nil,
-						NewASTNode: commentNode,
-					})
-				}
-			}
-		}
-	}
-
-	// Process previous functions to find dropped ones
-	for identifier, previousChunk := range previousChunks.Functions {
-		if _, exists := currentChunks.Functions[identifier]; !exists {
-			// Function was dropped
-			schemaName, functionName := parseIdentifier(identifier)
-			diff.FunctionChanges = append(diff.FunctionChanges, &schema.FunctionDiff{
-				Action:       schema.MetadataDiffActionDrop,
-				SchemaName:   schemaName,
-				FunctionName: functionName,
-				OldFunction:  nil, // Will be populated when SDL drift detection is implemented
-				NewFunction:  nil,
-				OldASTNode:   previousChunk.ASTNode,
-				NewASTNode:   nil,
-			})
-		}
-	}
-}
-
-// processSequenceChanges analyzes sequence changes between current and previous chunks
-// Following the text-first comparison pattern for performance optimization
-// Supports fine-grained diff: if only ALTER SEQUENCE OWNED BY changed, generate ALTER instead of DROP+CREATE
-func processSequenceChanges(currentChunks, previousChunks *schema.SDLChunks, currentDBSDLChunks *currentDatabaseSDLChunks, diff *schema.MetadataDiff) {
-	// Process current sequences to find created and modified sequences
-	for _, currentChunk := range currentChunks.Sequences {
-		if previousChunk, exists := previousChunks.Sequences[currentChunk.Identifier]; exists {
-			// Sequence exists in both - check if modified (excluding comments)
-			currentText := currentChunk.GetTextWithoutComments()
-			previousText := previousChunk.GetTextWithoutComments()
-			if currentText != previousText {
-				// Apply usability check: skip diff if current chunk matches database metadata SDL
-				if currentDBSDLChunks.shouldSkipChunkDiffForUsability(currentText, currentChunk.Identifier) {
-					continue
-				}
-
-				// Fine-grained comparison: check if only ALTER statements changed
-				currentCreateText := extractTextFromNode(currentChunk.ASTNode)
-				previousCreateText := extractTextFromNode(previousChunk.ASTNode)
-				currentAlterTexts := extractAlterTexts(currentChunk.AlterStatements)
-				previousAlterTexts := extractAlterTexts(previousChunk.AlterStatements)
-
-				createChanged := currentCreateText != previousCreateText
-				alterChanged := currentAlterTexts != previousAlterTexts
-
-				schemaName, sequenceName := parseIdentifier(currentChunk.Identifier)
-
-				if createChanged && alterChanged {
-					// Both CREATE and ALTER changed - use drop and recreate
-					diff.SequenceChanges = append(diff.SequenceChanges, &schema.SequenceDiff{
-						Action:       schema.MetadataDiffActionDrop,
-						SchemaName:   schemaName,
-						SequenceName: sequenceName,
-						OldSequence:  nil,
-						NewSequence:  nil,
-						OldASTNode:   previousChunk.ASTNode,
-						NewASTNode:   nil,
-					})
-					diff.SequenceChanges = append(diff.SequenceChanges, &schema.SequenceDiff{
-						Action:       schema.MetadataDiffActionCreate,
-						SchemaName:   schemaName,
-						SequenceName: sequenceName,
-						OldSequence:  nil,
-						NewSequence:  nil,
-						OldASTNode:   nil,
-						NewASTNode:   currentChunk.ASTNode,
-					})
-					// Also need to add ALTER if current has ALTER statements
-					if len(currentChunk.AlterStatements) > 0 {
-						for _, alterNode := range currentChunk.AlterStatements {
-							diff.SequenceChanges = append(diff.SequenceChanges, &schema.SequenceDiff{
-								Action:       schema.MetadataDiffActionAlter,
-								SchemaName:   schemaName,
-								SequenceName: sequenceName,
-								OldSequence:  nil,
-								NewSequence:  nil,
-								OldASTNode:   nil,
-								NewASTNode:   alterNode,
-							})
-						}
-					}
-					// Add COMMENT ON SEQUENCE diffs if they exist in the new version
-					if len(currentChunk.CommentStatements) > 0 {
-						for _, commentNode := range currentChunk.CommentStatements {
-							commentText := extractCommentTextFromNode(commentNode)
-							diff.CommentChanges = append(diff.CommentChanges, &schema.CommentDiff{
-								Action:     schema.MetadataDiffActionCreate,
-								ObjectType: schema.CommentObjectTypeSequence,
-								SchemaName: schemaName,
-								ObjectName: sequenceName,
-								OldComment: "",
-								NewComment: commentText,
-								OldASTNode: nil,
-								NewASTNode: commentNode,
-							})
-						}
-					}
-				} else if createChanged {
-					// Only CREATE changed - use drop and recreate
-					diff.SequenceChanges = append(diff.SequenceChanges, &schema.SequenceDiff{
-						Action:       schema.MetadataDiffActionDrop,
-						SchemaName:   schemaName,
-						SequenceName: sequenceName,
-						OldSequence:  nil,
-						NewSequence:  nil,
-						OldASTNode:   previousChunk.ASTNode,
-						NewASTNode:   nil,
-					})
-					diff.SequenceChanges = append(diff.SequenceChanges, &schema.SequenceDiff{
-						Action:       schema.MetadataDiffActionCreate,
-						SchemaName:   schemaName,
-						SequenceName: sequenceName,
-						OldSequence:  nil,
-						NewSequence:  nil,
-						OldASTNode:   nil,
-						NewASTNode:   currentChunk.ASTNode,
-					})
-					// Preserve ALTER if it exists in current
-					if len(currentChunk.AlterStatements) > 0 {
-						for _, alterNode := range currentChunk.AlterStatements {
-							diff.SequenceChanges = append(diff.SequenceChanges, &schema.SequenceDiff{
-								Action:       schema.MetadataDiffActionAlter,
-								SchemaName:   schemaName,
-								SequenceName: sequenceName,
-								OldSequence:  nil,
-								NewSequence:  nil,
-								OldASTNode:   nil,
-								NewASTNode:   alterNode,
-							})
-						}
-					}
-					// Add COMMENT ON SEQUENCE diffs if they exist in the new version
-					if len(currentChunk.CommentStatements) > 0 {
-						for _, commentNode := range currentChunk.CommentStatements {
-							commentText := extractCommentTextFromNode(commentNode)
-							diff.CommentChanges = append(diff.CommentChanges, &schema.CommentDiff{
-								Action:     schema.MetadataDiffActionCreate,
-								ObjectType: schema.CommentObjectTypeSequence,
-								SchemaName: schemaName,
-								ObjectName: sequenceName,
-								OldComment: "",
-								NewComment: commentText,
-								OldASTNode: nil,
-								NewASTNode: commentNode,
-							})
-						}
-					}
-				} else if alterChanged {
-					// Only ALTER changed - generate ALTER statements
-					// This handles ownership changes without recreating the sequence
-					if len(currentChunk.AlterStatements) > 0 {
-						// Adding or modifying ALTER statements
-						for _, alterNode := range currentChunk.AlterStatements {
-							diff.SequenceChanges = append(diff.SequenceChanges, &schema.SequenceDiff{
-								Action:       schema.MetadataDiffActionAlter,
-								SchemaName:   schemaName,
-								SequenceName: sequenceName,
-								OldSequence:  nil,
-								NewSequence:  nil,
-								OldASTNode:   nil,
-								NewASTNode:   alterNode,
-							})
-						}
-					} else if len(previousChunk.AlterStatements) > 0 {
-						// Removing ALTER statements - use the previous ALTER node to represent the removal
-						// The migration generator should interpret this as removing the ownership
-						for _, alterNode := range previousChunk.AlterStatements {
-							diff.SequenceChanges = append(diff.SequenceChanges, &schema.SequenceDiff{
-								Action:       schema.MetadataDiffActionAlter,
-								SchemaName:   schemaName,
-								SequenceName: sequenceName,
-								OldSequence:  nil,
-								NewSequence:  nil,
-								OldASTNode:   alterNode,
-								NewASTNode:   nil,
-							})
-						}
-					}
-				}
-			}
-			// If text is identical, skip - no changes detected
-		} else {
-			// New sequence
-			schemaName, sequenceName := parseIdentifier(currentChunk.Identifier)
-			// Add CREATE SEQUENCE diff
-			diff.SequenceChanges = append(diff.SequenceChanges, &schema.SequenceDiff{
-				Action:       schema.MetadataDiffActionCreate,
-				SchemaName:   schemaName,
-				SequenceName: sequenceName,
-				OldSequence:  nil,
-				NewSequence:  nil,
-				OldASTNode:   nil,
-				NewASTNode:   currentChunk.ASTNode,
-			})
-			// Add ALTER SEQUENCE OWNED BY diffs if they exist
-			if len(currentChunk.AlterStatements) > 0 {
-				for _, alterNode := range currentChunk.AlterStatements {
-					diff.SequenceChanges = append(diff.SequenceChanges, &schema.SequenceDiff{
-						Action:       schema.MetadataDiffActionAlter,
-						SchemaName:   schemaName,
-						SequenceName: sequenceName,
-						OldSequence:  nil,
-						NewSequence:  nil,
-						OldASTNode:   nil,
-						NewASTNode:   alterNode,
-					})
-				}
-			}
-			// Add COMMENT ON SEQUENCE diffs if they exist
-			if len(currentChunk.CommentStatements) > 0 {
-				for _, commentNode := range currentChunk.CommentStatements {
-					commentText := extractCommentTextFromNode(commentNode)
-					diff.CommentChanges = append(diff.CommentChanges, &schema.CommentDiff{
-						Action:     schema.MetadataDiffActionCreate,
-						ObjectType: schema.CommentObjectTypeSequence,
-						SchemaName: schemaName,
-						ObjectName: sequenceName,
-						OldComment: "",
-						NewComment: commentText,
-						OldASTNode: nil,
-						NewASTNode: commentNode,
-					})
-				}
-			}
-		}
-	}
-
-	// Process previous sequences to find dropped ones
-	for identifier, previousChunk := range previousChunks.Sequences {
-		if _, exists := currentChunks.Sequences[identifier]; !exists {
-			// Sequence was dropped
-			schemaName, sequenceName := parseIdentifier(identifier)
-			diff.SequenceChanges = append(diff.SequenceChanges, &schema.SequenceDiff{
-				Action:       schema.MetadataDiffActionDrop,
-				SchemaName:   schemaName,
-				SequenceName: sequenceName,
-				OldSequence:  nil, // Will be populated when SDL drift detection is implemented
-				NewSequence:  nil,
-				OldASTNode:   previousChunk.ASTNode,
-				NewASTNode:   nil,
-			})
-		}
-	}
-}
-
 // applyMinimalChangesToChunks applies minimal changes to the previous SDL chunks based on schema differences
 // This implements the minimal change principle for drift scenarios by directly manipulating chunks
-func applyMinimalChangesToChunks(previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseSchema) error {
+func applyMinimalChangesToChunks(previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseMetadata) error {
 	if currentSchema == nil || previousSchema == nil || previousChunks == nil {
 		return nil
 	}
 
 	// Get table differences between schemas
-	currentMetadata := currentSchema.GetMetadata()
-	previousMetadata := previousSchema.GetMetadata()
+	currentMetadata := currentSchema.GetProto()
+	previousMetadata := previousSchema.GetProto()
 	if currentMetadata == nil || previousMetadata == nil {
 		return nil
 	}
@@ -2261,12 +205,16 @@ func applyMinimalChangesToChunks(previousChunks *schema.SDLChunks, currentSchema
 			tableSDL := buf.String()
 
 			// Parse the generated SDL to create AST node
-			parseResult, err := pgparser.ParsePostgreSQL(tableSDL)
+			parseResults, err := pgparser.ParsePostgreSQL(tableSDL)
 			if err != nil {
 				return errors.Wrapf(err, "failed to parse generated SDL for new table %s", tableKey)
 			}
 
 			// Extract the CREATE TABLE AST node
+			if len(parseResults) != 1 {
+				return errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+			}
+			parseResult := parseResults[0]
 			var createTableNode *parser.CreatestmtContext
 			antlr.ParseTreeWalkerDefault.Walk(&createTableExtractor{
 				result: &createTableNode,
@@ -2341,6 +289,31 @@ func applyMinimalChangesToChunks(previousChunks *schema.SDLChunks, currentSchema
 		return errors.Wrap(err, "failed to apply view changes")
 	}
 
+	// Process materialized view changes: apply minimal changes to materialized view chunks
+	err = applyMaterializedViewChangesToChunks(previousChunks, currentSchema, previousSchema)
+	if err != nil {
+		return errors.Wrap(err, "failed to apply materialized view changes")
+	}
+
+	// Process enum type changes: apply minimal changes to enum type chunks
+	err = applyEnumTypeChangesToChunks(previousChunks, currentSchema, previousSchema)
+	if err != nil {
+		return errors.Wrap(err, "failed to apply enum type changes")
+	}
+
+	// Process extension changes: apply minimal changes to extension chunks
+	// Extensions are database-level objects
+	err = applyExtensionChangesToChunks(previousChunks, currentSchema, previousSchema)
+	if err != nil {
+		return errors.Wrap(err, "failed to apply extension changes")
+	}
+
+	// Process trigger changes: apply minimal changes to trigger chunks
+	err = applyTriggerChangesToChunks(previousChunks, currentSchema, previousSchema)
+	if err != nil {
+		return errors.Wrap(err, "failed to apply trigger changes")
+	}
+
 	// Process column comment changes: sync column comments based on metadata
 	err = applyColumnCommentChanges(previousChunks, currentSchema, previousSchema)
 	if err != nil {
@@ -2364,10 +337,16 @@ func applyTableChangesToChunk(chunk *schema.SDLChunk, currentTable, previousTabl
 	}
 
 	// Parse the individual chunk text to get a fresh AST with its own tokenStream
-	parseResult, err := pgparser.ParsePostgreSQL(originalChunkText)
+	parseResults, err := pgparser.ParsePostgreSQL(originalChunkText)
 	if err != nil {
 		return errors.Wrapf(err, "failed to parse original chunk text: %s", originalChunkText)
 	}
+
+	// Expect single statement
+	if len(parseResults) != 1 {
+		return errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+	}
+	parseResult := parseResults[0]
 
 	// Extract the CREATE TABLE AST node from the fresh parse
 	var createStmt *parser.CreatestmtContext
@@ -2414,11 +393,15 @@ func applyTableChangesToChunk(chunk *schema.SDLChunk, currentTable, previousTabl
 		return errors.Wrapf(err, "failed to parse modified SQL: %s", modifiedSQL)
 	}
 
+	if len(finalParseResult) != 1 {
+		return errors.Errorf("expected exactly one statement in modified SQL, got %d", len(finalParseResult))
+	}
+
 	// Extract the final CREATE TABLE AST node
 	var newCreateTableNode *parser.CreatestmtContext
 	antlr.ParseTreeWalkerDefault.Walk(&createTableExtractor{
 		result: &newCreateTableNode,
-	}, finalParseResult.Tree)
+	}, finalParseResult[0].Tree)
 
 	if newCreateTableNode == nil {
 		return errors.New("failed to extract CREATE TABLE AST node from modified text")
@@ -2508,6 +491,8 @@ func applyConstraintChanges(rewriter *antlr.TokenStreamRewriter, createStmt *par
 	previousPKConstraints := make(map[string]*storepb.IndexMetadata)
 	currentUKConstraints := make(map[string]*storepb.IndexMetadata)
 	previousUKConstraints := make(map[string]*storepb.IndexMetadata)
+	currentExcludeConstraints := make(map[string]*storepb.ExcludeConstraintMetadata)
+	previousExcludeConstraints := make(map[string]*storepb.ExcludeConstraintMetadata)
 
 	// Build constraint maps from metadata
 	for _, constraint := range currentTable.CheckConstraints {
@@ -2544,12 +529,20 @@ func applyConstraintChanges(rewriter *antlr.TokenStreamRewriter, createStmt *par
 			previousUKConstraints[index.Name] = index
 		}
 	}
+	// Build EXCLUDE constraint maps
+	for _, constraint := range currentTable.ExcludeConstraints {
+		currentExcludeConstraints[constraint.Name] = constraint
+	}
+	for _, constraint := range previousTable.ExcludeConstraints {
+		previousExcludeConstraints[constraint.Name] = constraint
+	}
 
 	// Extract constraint definitions with AST nodes for precise manipulation
 	currentCheckDefs := extractCheckConstraintDefinitionsWithAST(createStmt)
 	currentFKDefs := extractForeignKeyDefinitionsWithAST(createStmt)
 	currentPKDefs := extractPrimaryKeyDefinitionsInOrder(createStmt)
 	currentUKDefs := extractUniqueKeyDefinitionsInOrder(createStmt)
+	currentExcludeDefs := extractExcludeConstraintDefinitionsWithAST(createStmt)
 
 	// Phase 1: Handle constraint deletions (reverse order for stability)
 	// Delete check constraints
@@ -2596,6 +589,18 @@ func applyConstraintChanges(rewriter *antlr.TokenStreamRewriter, createStmt *par
 			err := deleteConstraintFromAST(rewriter, ukDef.ASTNode, createStmt)
 			if err != nil {
 				return errors.Wrapf(err, "failed to delete unique key constraint %s", ukDef.Name)
+			}
+		}
+	}
+
+	// Delete EXCLUDE constraints
+	for i := len(currentExcludeDefs) - 1; i >= 0; i-- {
+		excludeDef := currentExcludeDefs[i]
+		if _, exists := currentExcludeConstraints[excludeDef.Name]; !exists {
+			// Constraint was dropped
+			err := deleteConstraintFromAST(rewriter, excludeDef.ASTNode, createStmt)
+			if err != nil {
+				return errors.Wrapf(err, "failed to delete exclude constraint %s", excludeDef.Name)
 			}
 		}
 	}
@@ -2661,6 +666,21 @@ func applyConstraintChanges(rewriter *antlr.TokenStreamRewriter, createStmt *par
 		}
 	}
 
+	// Modify EXCLUDE constraints
+	for _, excludeDef := range currentExcludeDefs {
+		if currentConstraint, exists := currentExcludeConstraints[excludeDef.Name]; exists {
+			if previousConstraint, wasPresent := previousExcludeConstraints[excludeDef.Name]; wasPresent {
+				// Check if constraint was modified
+				if !excludeConstraintsEqual(currentConstraint, previousConstraint) {
+					err := modifyConstraintInAST(rewriter, excludeDef.ASTNode, currentConstraint)
+					if err != nil {
+						return errors.Wrapf(err, "failed to modify exclude constraint %s", excludeDef.Name)
+					}
+				}
+			}
+		}
+	}
+
 	// Phase 3: Handle constraint additions
 	// Add new check constraints
 	for _, currentConstraint := range currentTable.CheckConstraints {
@@ -2706,6 +726,17 @@ func applyConstraintChanges(rewriter *antlr.TokenStreamRewriter, createStmt *par
 				if err != nil {
 					return errors.Wrapf(err, "failed to add unique key constraint %s", currentIndex.Name)
 				}
+			}
+		}
+	}
+
+	// Add new EXCLUDE constraints
+	for _, currentConstraint := range currentTable.ExcludeConstraints {
+		if _, existed := previousExcludeConstraints[currentConstraint.Name]; !existed {
+			// New EXCLUDE constraint
+			err := addConstraintToAST(rewriter, createStmt, currentConstraint)
+			if err != nil {
+				return errors.Wrapf(err, "failed to add exclude constraint %s", currentConstraint.Name)
 			}
 		}
 	}
@@ -2920,7 +951,7 @@ type currentDatabaseSDLChunks struct {
 // buildCurrentDatabaseSDLChunks pre-computes SDL chunks from the current database schema
 // for usability checks. This avoids repeated expensive calls to convertDatabaseSchemaToSDL
 // and ChunkSDLText during diff processing by storing normalized SDL text from current database metadata.
-func buildCurrentDatabaseSDLChunks(currentSchema *model.DatabaseSchema) (*currentDatabaseSDLChunks, error) {
+func buildCurrentDatabaseSDLChunks(currentSchema *model.DatabaseMetadata) (*currentDatabaseSDLChunks, error) {
 	sdlChunks := &currentDatabaseSDLChunks{
 		chunks:      make(map[string]string),
 		comments:    make(map[string][]string),
@@ -2970,6 +1001,14 @@ func buildCurrentDatabaseSDLChunks(currentSchema *model.DatabaseSchema) (*curren
 			sdlChunks.comments[identifier] = []string{commentText}
 		}
 	}
+	for identifier, chunk := range currentSDLChunks.MaterializedViews {
+		sdlChunks.chunks[identifier] = strings.TrimSpace(chunk.GetTextWithoutComments())
+		// Store comment text for usability check
+		commentText := extractCommentTextFromChunk(chunk)
+		if commentText != "" {
+			sdlChunks.comments[identifier] = []string{commentText}
+		}
+	}
 	for identifier, chunk := range currentSDLChunks.Functions {
 		sdlChunks.chunks[identifier] = strings.TrimSpace(chunk.GetTextWithoutComments())
 		// Store comment text for usability check
@@ -2992,6 +1031,30 @@ func buildCurrentDatabaseSDLChunks(currentSchema *model.DatabaseSchema) (*curren
 		commentText := extractCommentTextFromChunk(chunk)
 		if commentText != "" {
 			sdlChunks.comments[identifier] = []string{commentText}
+		}
+	}
+	for identifier, chunk := range currentSDLChunks.EnumTypes {
+		sdlChunks.chunks[identifier] = strings.TrimSpace(chunk.GetTextWithoutComments())
+		// Store comment text for usability check
+		commentText := extractCommentTextFromChunk(chunk)
+		if commentText != "" {
+			sdlChunks.comments[identifier] = []string{commentText}
+		}
+	}
+	for extensionName, chunk := range currentSDLChunks.Extensions {
+		sdlChunks.chunks[extensionName] = strings.TrimSpace(chunk.GetTextWithoutComments())
+		// Store comment text for usability check
+		commentText := extractCommentTextFromChunk(chunk)
+		if commentText != "" {
+			sdlChunks.comments[extensionName] = []string{commentText}
+		}
+	}
+	for eventTriggerName, chunk := range currentSDLChunks.EventTriggers {
+		sdlChunks.chunks[eventTriggerName] = strings.TrimSpace(chunk.GetTextWithoutComments())
+		// Store comment text for usability check
+		commentText := extractCommentTextFromChunk(chunk)
+		if commentText != "" {
+			sdlChunks.comments[eventTriggerName] = []string{commentText}
 		}
 	}
 
@@ -3148,14 +1211,14 @@ func (sdlChunks *currentDatabaseSDLChunks) shouldSkipConstraintDiffForUsability(
 	return normalizedConstraintText == currentDatabaseConstraintSDL
 }
 
-// convertDatabaseSchemaToSDL converts a model.DatabaseSchema to SDL format string
+// convertDatabaseSchemaToSDL converts a model.DatabaseMetadata to SDL format string
 // This is used in initialization scenarios where previousUserSDLText is empty
-func convertDatabaseSchemaToSDL(dbSchema *model.DatabaseSchema) (string, error) {
-	if dbSchema == nil {
+func convertDatabaseSchemaToSDL(dbMetadata *model.DatabaseMetadata) (string, error) {
+	if dbMetadata == nil {
 		return "", nil
 	}
 
-	metadata := dbSchema.GetMetadata()
+	metadata := dbMetadata.GetProto()
 	if metadata == nil {
 		return "", nil
 	}
@@ -3293,6 +1356,8 @@ func modifyConstraintInAST(rewriter *antlr.TokenStreamRewriter, constraintAST pa
 		} else {
 			return errors.New("unsupported index constraint type")
 		}
+	case *storepb.ExcludeConstraintMetadata:
+		newConstraintSDL = generateExcludeConstraintSDL(constraint)
 	default:
 		return errors.New("unsupported constraint type")
 	}
@@ -3324,6 +1389,8 @@ func addConstraintToAST(rewriter *antlr.TokenStreamRewriter, createStmt *parser.
 		} else {
 			return errors.New("unsupported index constraint type")
 		}
+	case *storepb.ExcludeConstraintMetadata:
+		newConstraintSDL = generateExcludeConstraintSDL(constraint)
 	default:
 		return errors.New("unsupported constraint type")
 	}
@@ -3396,6 +1463,23 @@ func generateForeignKeyConstraintSDL(constraint *storepb.ForeignKeyMetadata) str
 	return buf.String()
 }
 
+// generateExcludeConstraintSDL generates SDL text for an EXCLUDE constraint using the existing writeExcludeConstraintSDL function
+func generateExcludeConstraintSDL(constraint *storepb.ExcludeConstraintMetadata) string {
+	if constraint == nil {
+		return ""
+	}
+
+	var buf strings.Builder
+	err := writeExcludeConstraintSDL(&buf, constraint)
+	if err != nil {
+		// If there's an error writing to the buffer, return empty string
+		// This should rarely happen since we're writing to a strings.Builder
+		return ""
+	}
+
+	return buf.String()
+}
+
 // constraintsEqual compares two check constraint metadata objects for equality
 func constraintsEqual(a, b *storepb.CheckConstraintMetadata) bool {
 	if a == nil || b == nil {
@@ -3451,6 +1535,12 @@ func extractCheckConstraintDefinitionsWithAST(createStmt *parser.CreatestmtConte
 // Note: This is a wrapper around the existing function with a different name for clarity
 func extractForeignKeyDefinitionsWithAST(createStmt *parser.CreatestmtContext) []*ForeignKeyDefWithAST {
 	return extractForeignKeyDefinitionsInOrder(createStmt)
+}
+
+// extractExcludeConstraintDefinitionsWithAST extracts EXCLUDE constraint definitions with their AST nodes
+// Note: This is a wrapper around the existing function with a different name for clarity
+func extractExcludeConstraintDefinitionsWithAST(createStmt *parser.CreatestmtContext) []*ExcludeConstraintDefWithAST {
+	return extractExcludeConstraintDefinitionsInOrder(createStmt)
 }
 
 // PrimaryKeyDefWithAST represents a primary key constraint definition with its AST node
@@ -3623,6 +1713,15 @@ func ukConstraintsEqual(a, b *storepb.IndexMetadata) bool {
 	return true
 }
 
+// excludeConstraintsEqual compares two EXCLUDE constraint metadata objects for equality
+func excludeConstraintsEqual(a, b *storepb.ExcludeConstraintMetadata) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+
+	return a.Name == b.Name && a.Expression == b.Expression
+}
+
 // generatePrimaryKeyConstraintSDL generates SDL text for a primary key constraint
 func generatePrimaryKeyConstraintSDL(constraint *storepb.IndexMetadata) string {
 	if constraint == nil || !constraint.Primary {
@@ -3655,19 +1754,20 @@ func generateUniqueKeyConstraintSDL(constraint *storepb.IndexMetadata) string {
 type extendedIndexMetadata struct {
 	*storepb.IndexMetadata
 	SchemaName string
-	TableName  string
+	TableName  string // Table name or MaterializedView name
+	TargetType string // "table" or "materialized_view"
 }
 
 // applyStandaloneIndexChangesToChunks applies minimal changes to standalone CREATE INDEX chunks
 // This handles creation, modification, and deletion of independent index statements
-func applyStandaloneIndexChangesToChunks(previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseSchema) error {
+func applyStandaloneIndexChangesToChunks(previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseMetadata) error {
 	if currentSchema == nil || previousSchema == nil || previousChunks == nil {
 		return nil
 	}
 
 	// Get index differences by comparing schema metadata
-	currentMetadata := currentSchema.GetMetadata()
-	previousMetadata := previousSchema.GetMetadata()
+	currentMetadata := currentSchema.GetProto()
+	previousMetadata := previousSchema.GetProto()
 	if currentMetadata == nil || previousMetadata == nil {
 		return nil
 	}
@@ -3678,6 +1778,7 @@ func applyStandaloneIndexChangesToChunks(previousChunks *schema.SDLChunks, curre
 
 	// Collect all standalone indexes from current schema (only non-constraint indexes)
 	for _, schema := range currentMetadata.Schemas {
+		// Collect indexes from tables
 		for _, table := range schema.Tables {
 			for _, index := range table.Indexes {
 				// Only include standalone indexes (not constraints like PRIMARY KEY, UNIQUE CONSTRAINT)
@@ -3688,6 +1789,25 @@ func applyStandaloneIndexChangesToChunks(previousChunks *schema.SDLChunks, curre
 						IndexMetadata: index,
 						SchemaName:    schema.Name,
 						TableName:     table.Name,
+						TargetType:    "table",
+					}
+					currentIndexes[indexKey] = extendedIndex
+				}
+			}
+		}
+
+		// Collect indexes from materialized views
+		for _, mv := range schema.MaterializedViews {
+			for _, index := range mv.Indexes {
+				// Only include standalone indexes (not constraints)
+				if !index.IsConstraint && !index.Primary {
+					indexKey := formatIndexKey(schema.Name, index.Name)
+					// Store extended index metadata with materialized view/schema context
+					extendedIndex := &extendedIndexMetadata{
+						IndexMetadata: index,
+						SchemaName:    schema.Name,
+						TableName:     mv.Name,
+						TargetType:    "materialized_view",
 					}
 					currentIndexes[indexKey] = extendedIndex
 				}
@@ -3697,6 +1817,7 @@ func applyStandaloneIndexChangesToChunks(previousChunks *schema.SDLChunks, curre
 
 	// Collect all standalone indexes from previous schema
 	for _, schema := range previousMetadata.Schemas {
+		// Collect indexes from tables
 		for _, table := range schema.Tables {
 			for _, index := range table.Indexes {
 				// Only include standalone indexes (not constraints)
@@ -3706,6 +1827,24 @@ func applyStandaloneIndexChangesToChunks(previousChunks *schema.SDLChunks, curre
 						IndexMetadata: index,
 						SchemaName:    schema.Name,
 						TableName:     table.Name,
+						TargetType:    "table",
+					}
+					previousIndexes[indexKey] = extendedIndex
+				}
+			}
+		}
+
+		// Collect indexes from materialized views
+		for _, mv := range schema.MaterializedViews {
+			for _, index := range mv.Indexes {
+				// Only include standalone indexes (not constraints)
+				if !index.IsConstraint && !index.Primary {
+					indexKey := formatIndexKey(schema.Name, index.Name)
+					extendedIndex := &extendedIndexMetadata{
+						IndexMetadata: index,
+						SchemaName:    schema.Name,
+						TableName:     mv.Name,
+						TargetType:    "materialized_view",
 					}
 					previousIndexes[indexKey] = extendedIndex
 				}
@@ -3773,10 +1912,16 @@ func createIndexChunk(chunks *schema.SDLChunks, extIndex *extendedIndexMetadata,
 	}
 
 	// Parse the SDL to get AST node
-	parseResult, err := pgparser.ParsePostgreSQL(indexSDL)
+	parseResults, err := pgparser.ParsePostgreSQL(indexSDL)
 	if err != nil {
 		return errors.Wrapf(err, "failed to parse generated index SDL: %s", indexSDL)
 	}
+
+	// Expect single statement
+	if len(parseResults) != 1 {
+		return errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+	}
+	parseResult := parseResults[0]
 
 	// Extract the CREATE INDEX AST node
 	var indexASTNode *parser.IndexstmtContext
@@ -3836,10 +1981,16 @@ func updateIndexChunkIfNeeded(chunks *schema.SDLChunks, currentIndex, previousIn
 		}
 
 		// Parse the SDL to get AST node
-		parseResult, err := pgparser.ParsePostgreSQL(indexSDL)
+		parseResults, err := pgparser.ParsePostgreSQL(indexSDL)
 		if err != nil {
 			return errors.Wrapf(err, "failed to parse generated index SDL: %s", indexSDL)
 		}
+
+		// Expect single statement
+		if len(parseResults) != 1 {
+			return errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+		}
+		parseResult := parseResults[0]
 
 		// Extract the CREATE INDEX AST node
 		var indexASTNode *parser.IndexstmtContext
@@ -3957,14 +2108,14 @@ func (e *indexExtractor) EnterIndexstmt(ctx *parser.IndexstmtContext) {
 
 // applyFunctionChangesToChunks applies minimal changes to CREATE FUNCTION chunks
 // This handles creation, modification, and deletion of function statements
-func applyFunctionChangesToChunks(previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseSchema) error {
+func applyFunctionChangesToChunks(previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseMetadata) error {
 	if currentSchema == nil || previousSchema == nil || previousChunks == nil {
 		return nil
 	}
 
 	// Get function differences by comparing schema metadata
-	currentMetadata := currentSchema.GetMetadata()
-	previousMetadata := previousSchema.GetMetadata()
+	currentMetadata := currentSchema.GetProto()
+	previousMetadata := previousSchema.GetProto()
 	if currentMetadata == nil || previousMetadata == nil {
 		return nil
 	}
@@ -4051,10 +2202,16 @@ func extractFunctionSignatureFromDefinition(function *storepb.FunctionMetadata) 
 	}
 
 	// Parse the function definition to extract signature
-	parseResult, err := pgparser.ParsePostgreSQL(function.Definition)
+	parseResults, err := pgparser.ParsePostgreSQL(function.Definition)
 	if err != nil {
 		return ""
 	}
+
+	// Expect single statement
+	if len(parseResults) != 1 {
+		return ""
+	}
+	parseResult := parseResults[0]
 
 	tree := parseResult.Tree
 
@@ -4296,10 +2453,16 @@ func extractFunctionASTFromSDL(sdl string) (antlr.ParserRuleContext, error) {
 	}
 
 	// Parse the SDL to get AST
-	parseResult, err := pgparser.ParsePostgreSQL(sdl)
+	parseResults, err := pgparser.ParsePostgreSQL(sdl)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse function SDL")
 	}
+
+	// Expect single statement
+	if len(parseResults) != 1 {
+		return nil, errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+	}
+	parseResult := parseResults[0]
 
 	tree := parseResult.Tree
 
@@ -4329,14 +2492,14 @@ func (e *functionExtractor) EnterCreatefunctionstmt(ctx *parser.Createfunctionst
 
 // applySequenceChangesToChunks applies minimal changes to CREATE SEQUENCE chunks
 // This handles creation, modification, and deletion of sequence statements
-func applySequenceChangesToChunks(previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseSchema) error {
+func applySequenceChangesToChunks(previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseMetadata) error {
 	if currentSchema == nil || previousSchema == nil || previousChunks == nil {
 		return nil
 	}
 
 	// Get sequence differences by comparing schema metadata
-	currentMetadata := currentSchema.GetMetadata()
-	previousMetadata := previousSchema.GetMetadata()
+	currentMetadata := currentSchema.GetProto()
+	previousMetadata := previousSchema.GetProto()
 	if currentMetadata == nil || previousMetadata == nil {
 		return nil
 	}
@@ -4602,10 +2765,16 @@ func extractAlterSequenceASTFromSDL(sdl string) (antlr.ParserRuleContext, error)
 		return nil, errors.New("empty ALTER SEQUENCE SDL provided")
 	}
 
-	parseResult, err := pgparser.ParsePostgreSQL(sdl)
+	parseResults, err := pgparser.ParsePostgreSQL(sdl)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse ALTER SEQUENCE SDL")
 	}
+
+	// Expect single statement
+	if len(parseResults) != 1 {
+		return nil, errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+	}
+	parseResult := parseResults[0]
 
 	tree := parseResult.Tree
 	if tree == nil {
@@ -4630,10 +2799,16 @@ func extractCommentASTFromSDL(sdl string) (antlr.ParserRuleContext, error) {
 		return nil, errors.New("empty COMMENT SDL provided")
 	}
 
-	parseResult, err := pgparser.ParsePostgreSQL(sdl)
+	parseResults, err := pgparser.ParsePostgreSQL(sdl)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse COMMENT SDL")
 	}
+
+	// Expect single statement
+	if len(parseResults) != 1 {
+		return nil, errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+	}
+	parseResult := parseResults[0]
 
 	tree := parseResult.Tree
 	if tree == nil {
@@ -4758,10 +2933,16 @@ func extractSequenceASTFromSDL(sdl string) (antlr.ParserRuleContext, error) {
 	}
 
 	// Parse the SDL to get AST
-	parseResult, err := pgparser.ParsePostgreSQL(sdl)
+	parseResults, err := pgparser.ParsePostgreSQL(sdl)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse sequence SDL")
 	}
+
+	// Expect single statement
+	if len(parseResults) != 1 {
+		return nil, errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+	}
+	parseResult := parseResults[0]
 
 	tree := parseResult.Tree
 
@@ -4813,391 +2994,132 @@ func (e *sequenceExtractor) EnterCreateseqstmt(ctx *parser.CreateseqstmtContext)
 // processCommentChanges processes comment changes for all database objects
 // It must be called after all object changes have been processed to determine
 // which objects were created or dropped (those should not generate comment diffs)
-func processCommentChanges(currentChunks, previousChunks *schema.SDLChunks, currentDBSDLChunks *currentDatabaseSDLChunks, diff *schema.MetadataDiff) {
-	// Build sets of created and dropped objects to avoid generating comment diffs for them
-	createdObjects := buildCreatedObjectsSet(diff)
-	droppedObjects := buildDroppedObjectsSet(diff)
-
-	// Process object-level comments
-	processObjectComments(currentChunks.Tables, previousChunks.Tables, schema.CommentObjectTypeTable, createdObjects, droppedObjects, currentDBSDLChunks, diff)
-	processObjectComments(currentChunks.Views, previousChunks.Views, schema.CommentObjectTypeView, createdObjects, droppedObjects, currentDBSDLChunks, diff)
-	processObjectComments(currentChunks.Functions, previousChunks.Functions, schema.CommentObjectTypeFunction, createdObjects, droppedObjects, currentDBSDLChunks, diff)
-	processObjectComments(currentChunks.Sequences, previousChunks.Sequences, schema.CommentObjectTypeSequence, createdObjects, droppedObjects, currentDBSDLChunks, diff)
-	processObjectComments(currentChunks.Indexes, previousChunks.Indexes, schema.CommentObjectTypeIndex, createdObjects, droppedObjects, currentDBSDLChunks, diff)
-	processObjectComments(currentChunks.Schemas, previousChunks.Schemas, schema.CommentObjectTypeSchema, createdObjects, droppedObjects, currentDBSDLChunks, diff)
-
-	// Process column comments
-	processColumnComments(currentChunks, previousChunks, createdObjects, droppedObjects, diff)
-}
-
-// buildCreatedObjectsSet builds a set of object identifiers that were created
-func buildCreatedObjectsSet(diff *schema.MetadataDiff) map[string]bool {
-	created := make(map[string]bool)
-
-	for _, tableDiff := range diff.TableChanges {
-		if tableDiff.Action == schema.MetadataDiffActionCreate {
-			identifier := tableDiff.SchemaName + "." + tableDiff.TableName
-			created[identifier] = true
-		}
-	}
-
-	for _, viewDiff := range diff.ViewChanges {
-		if viewDiff.Action == schema.MetadataDiffActionCreate {
-			identifier := viewDiff.SchemaName + "." + viewDiff.ViewName
-			created[identifier] = true
-		}
-	}
-
-	for _, funcDiff := range diff.FunctionChanges {
-		if funcDiff.Action == schema.MetadataDiffActionCreate {
-			identifier := funcDiff.SchemaName + "." + funcDiff.FunctionName
-			created[identifier] = true
-		}
-	}
-
-	for _, seqDiff := range diff.SequenceChanges {
-		if seqDiff.Action == schema.MetadataDiffActionCreate {
-			identifier := seqDiff.SchemaName + "." + seqDiff.SequenceName
-			created[identifier] = true
-		}
-	}
-
-	return created
-}
-
-// buildDroppedObjectsSet builds a set of object identifiers that were dropped
-func buildDroppedObjectsSet(diff *schema.MetadataDiff) map[string]bool {
-	dropped := make(map[string]bool)
-
-	for _, tableDiff := range diff.TableChanges {
-		if tableDiff.Action == schema.MetadataDiffActionDrop {
-			identifier := tableDiff.SchemaName + "." + tableDiff.TableName
-			dropped[identifier] = true
-		}
-	}
-
-	for _, viewDiff := range diff.ViewChanges {
-		if viewDiff.Action == schema.MetadataDiffActionDrop {
-			identifier := viewDiff.SchemaName + "." + viewDiff.ViewName
-			dropped[identifier] = true
-		}
-	}
-
-	for _, funcDiff := range diff.FunctionChanges {
-		if funcDiff.Action == schema.MetadataDiffActionDrop {
-			identifier := funcDiff.SchemaName + "." + funcDiff.FunctionName
-			dropped[identifier] = true
-		}
-	}
-
-	for _, seqDiff := range diff.SequenceChanges {
-		if seqDiff.Action == schema.MetadataDiffActionDrop {
-			identifier := seqDiff.SchemaName + "." + seqDiff.SequenceName
-			dropped[identifier] = true
-		}
-	}
-
-	return dropped
-}
-
-// processObjectComments processes comment changes for a specific object type
-// droppedObjects is intentionally unused because we only process objects in currentMap,
-// and dropped objects won't appear there.
-func processObjectComments(currentMap, previousMap map[string]*schema.SDLChunk, objectType schema.CommentObjectType, createdObjects, _ map[string]bool, currentDBSDLChunks *currentDatabaseSDLChunks, diff *schema.MetadataDiff) {
-	// Process all objects in current chunks
-	for identifier, currentChunk := range currentMap {
-		// Skip if object was created (comment will be in CREATE statement)
-		if createdObjects[identifier] {
-			continue
-		}
-
-		previousChunk := previousMap[identifier]
-		if previousChunk == nil {
-			// Object doesn't exist in previous - this shouldn't happen as it should be in createdObjects
-			continue
-		}
-
-		// Extract comment text from both chunks
-		currentCommentText := extractCommentTextFromChunk(currentChunk)
-		previousCommentText := extractCommentTextFromChunk(previousChunk)
-
-		// If comments are different, check usability before generating a CommentDiff
-		if currentCommentText != previousCommentText {
-			// Apply usability check: skip comment diff if current comment matches database metadata
-			if currentDBSDLChunks != nil && shouldSkipCommentDiff(currentCommentText, identifier, currentDBSDLChunks) {
-				continue
-			}
-			var schemaName, objectName string
-
-			// For SCHEMA objects, identifier is just the schema name
-			// For other objects, identifier is "schema.object"
-			if objectType == schema.CommentObjectTypeSchema {
-				schemaName = identifier
-				objectName = identifier // For schemas, objectName is also the schema name
-			} else {
-				schemaName, objectName = parseIdentifier(identifier)
-			}
-
-			action := schema.MetadataDiffActionAlter
-			if previousCommentText == "" {
-				action = schema.MetadataDiffActionCreate
-			}
-
-			diff.CommentChanges = append(diff.CommentChanges, &schema.CommentDiff{
-				Action:     action,
-				ObjectType: objectType,
-				SchemaName: schemaName,
-				ObjectName: objectName,
-				OldComment: previousCommentText,
-				NewComment: currentCommentText,
-				OldASTNode: getFirstCommentNode(previousChunk.CommentStatements),
-				NewASTNode: getFirstCommentNode(currentChunk.CommentStatements),
-			})
-		}
-	}
-}
-
-// processColumnComments processes column comment changes
-func processColumnComments(currentChunks, previousChunks *schema.SDLChunks, createdObjects, droppedObjects map[string]bool, diff *schema.MetadataDiff) {
-	// Process all tables in current chunks
-	allTableIdentifiers := make(map[string]bool)
-	for identifier := range currentChunks.ColumnComments {
-		allTableIdentifiers[identifier] = true
-	}
-	for identifier := range previousChunks.ColumnComments {
-		allTableIdentifiers[identifier] = true
-	}
-
-	for tableIdentifier := range allTableIdentifiers {
-		// Skip if table was created or dropped
-		if createdObjects[tableIdentifier] || droppedObjects[tableIdentifier] {
-			continue
-		}
-
-		currentColumns := currentChunks.ColumnComments[tableIdentifier]
-		previousColumns := previousChunks.ColumnComments[tableIdentifier]
-
-		// Find all column names
-		allColumnNames := make(map[string]bool)
-		for columnName := range currentColumns {
-			allColumnNames[columnName] = true
-		}
-		for columnName := range previousColumns {
-			allColumnNames[columnName] = true
-		}
-
-		// Compare each column's comment
-		for columnName := range allColumnNames {
-			currentNode := currentColumns[columnName]
-			previousNode := previousColumns[columnName]
-
-			currentCommentText := extractCommentTextFromNode(currentNode)
-			previousCommentText := extractCommentTextFromNode(previousNode)
-
-			if currentCommentText != previousCommentText {
-				schemaName, tableName := parseIdentifier(tableIdentifier)
-				action := schema.MetadataDiffActionAlter
-				if previousCommentText == "" {
-					action = schema.MetadataDiffActionCreate
-				}
-
-				diff.CommentChanges = append(diff.CommentChanges, &schema.CommentDiff{
-					Action:     action,
-					ObjectType: schema.CommentObjectTypeColumn,
-					SchemaName: schemaName,
-					ObjectName: tableName,
-					ColumnName: columnName,
-					OldComment: previousCommentText,
-					NewComment: currentCommentText,
-					OldASTNode: previousNode,
-					NewASTNode: currentNode,
-				})
-			}
-		}
-	}
-}
-
-// extractCommentTextFromChunk extracts the comment text from a chunk's comment statements
-func extractCommentTextFromChunk(chunk *schema.SDLChunk) string {
-	if chunk == nil || len(chunk.CommentStatements) == 0 {
-		return ""
-	}
-
-	// Get the first comment statement (there should typically only be one)
-	return extractCommentTextFromNode(chunk.CommentStatements[0])
-}
-
-// extractCommentTextFromNode extracts comment text from a COMMENT ON statement AST node
-func extractCommentTextFromNode(node antlr.ParserRuleContext) string {
-	if node == nil {
-		return ""
-	}
-
-	// Try to cast to CommentstmtContext
-	commentStmt, ok := node.(*parser.CommentstmtContext)
-	if !ok {
-		return ""
-	}
-
-	// Get the comment_text
-	if commentStmt.Comment_text() == nil {
-		return ""
-	}
-
-	commentTextCtx := commentStmt.Comment_text()
-
-	// Check if it's NULL_P
-	if commentTextCtx.NULL_P() != nil {
-		return "" // NULL comment means no comment
-	}
-
-	// Get the sconst (string constant)
-	if commentTextCtx.Sconst() != nil {
-		text := commentTextCtx.Sconst().GetText()
-		// Remove surrounding quotes
-		if len(text) >= 2 && text[0] == '\'' && text[len(text)-1] == '\'' {
-			return text[1 : len(text)-1]
-		}
-		return text
-	}
-
-	return ""
-}
-
-// getFirstCommentNode returns the first comment AST node from a list, or nil if empty
-func getFirstCommentNode(nodes []antlr.ParserRuleContext) antlr.ParserRuleContext {
-	if len(nodes) == 0 {
-		return nil
-	}
-	return nodes[0]
-}
 
 // applyViewChangesToChunks applies minimal changes to CREATE VIEW chunks
 // This handles creation, modification, and deletion of view statements
-func applyViewChangesToChunks(previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseSchema) error {
+
+// applyMaterializedViewChangesToChunks applies minimal changes to materialized view chunks based on schema metadata
+func applyMaterializedViewChangesToChunks(previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseMetadata) error {
 	if currentSchema == nil || previousSchema == nil || previousChunks == nil {
 		return nil
 	}
 
-	// Get view differences by comparing schema metadata
-	currentMetadata := currentSchema.GetMetadata()
-	previousMetadata := previousSchema.GetMetadata()
+	// Get materialized view differences by comparing schema metadata
+	currentMetadata := currentSchema.GetProto()
+	previousMetadata := previousSchema.GetProto()
 	if currentMetadata == nil || previousMetadata == nil {
 		return nil
 	}
 
-	// Build view maps for current and previous schemas
-	currentViews := make(map[string]*storepb.ViewMetadata)
-	previousViews := make(map[string]*storepb.ViewMetadata)
+	// Build materialized view maps for current and previous schemas
+	currentMaterializedViews := make(map[string]*storepb.MaterializedViewMetadata)
+	previousMaterializedViews := make(map[string]*storepb.MaterializedViewMetadata)
 
-	// Collect all views from current schema
+	// Collect all materialized views from current schema
 	for _, schema := range currentMetadata.Schemas {
-		for _, view := range schema.Views {
-			viewKey := formatViewKey(schema.Name, view.Name)
-			currentViews[viewKey] = view
+		for _, mv := range schema.MaterializedViews {
+			mvKey := formatViewKey(schema.Name, mv.Name)
+			currentMaterializedViews[mvKey] = mv
 		}
 	}
 
-	// Collect all views from previous schema
+	// Collect all materialized views from previous schema
 	for _, schema := range previousMetadata.Schemas {
-		for _, view := range schema.Views {
-			viewKey := formatViewKey(schema.Name, view.Name)
-			previousViews[viewKey] = view
+		for _, mv := range schema.MaterializedViews {
+			mvKey := formatViewKey(schema.Name, mv.Name)
+			previousMaterializedViews[mvKey] = mv
 		}
 	}
 
-	// Process view additions: create new view chunks
-	for viewKey, currentView := range currentViews {
-		if _, exists := previousViews[viewKey]; !exists {
-			// New view - create a chunk for it
-			err := createViewChunk(previousChunks, currentView, viewKey)
+	// Process materialized view additions: create new materialized view chunks
+	for mvKey, currentMV := range currentMaterializedViews {
+		if _, exists := previousMaterializedViews[mvKey]; !exists {
+			// New materialized view - create a chunk for it
+			err := createMaterializedViewChunk(previousChunks, currentMV, mvKey)
 			if err != nil {
-				return errors.Wrapf(err, "failed to create view chunk for %s", viewKey)
+				return errors.Wrapf(err, "failed to create materialized view chunk for %s", mvKey)
 			}
 		}
 	}
 
-	// Process view modifications: update existing chunks
-	for viewKey, currentView := range currentViews {
-		if previousView, exists := previousViews[viewKey]; exists {
-			// View exists in both metadata
+	// Process materialized view modifications: update existing chunks
+	for mvKey, currentMV := range currentMaterializedViews {
+		if previousMV, exists := previousMaterializedViews[mvKey]; exists {
+			// Materialized view exists in both metadata
 			// Only update if chunk exists in SDL (user explicitly defined it)
-			// If chunk doesn't exist, skip - we don't force-add database objects that user didn't define
-			if _, chunkExists := previousChunks.Views[viewKey]; chunkExists {
+			if _, chunkExists := previousChunks.MaterializedViews[mvKey]; chunkExists {
 				// Chunk exists - update if needed
-				err := updateViewChunkIfNeeded(previousChunks, currentView, previousView, viewKey)
+				err := updateMaterializedViewChunkIfNeeded(previousChunks, currentMV, previousMV, mvKey)
 				if err != nil {
-					return errors.Wrapf(err, "failed to update view chunk for %s", viewKey)
+					return errors.Wrapf(err, "failed to update materialized view chunk for %s", mvKey)
 				}
 			}
-			// If chunk doesn't exist, skip - user didn't define this view in SDL
+			// If chunk doesn't exist, skip - user didn't define this materialized view in SDL
 		}
 	}
 
-	// Process view deletions: remove dropped view chunks
-	for viewKey := range previousViews {
-		if _, exists := currentViews[viewKey]; !exists {
-			// View was dropped - remove it from chunks
-			deleteViewChunk(previousChunks, viewKey)
+	// Process materialized view deletions: remove dropped materialized view chunks
+	for mvKey := range previousMaterializedViews {
+		if _, exists := currentMaterializedViews[mvKey]; !exists {
+			// Materialized view was dropped - remove it from chunks
+			deleteMaterializedViewChunk(previousChunks, mvKey)
 		}
 	}
 
 	return nil
 }
 
-// formatViewKey creates a consistent key for view identification
-func formatViewKey(schemaName, viewName string) string {
-	if schemaName == "" {
-		schemaName = "public"
-	}
-	return schemaName + "." + viewName
-}
-
-// createViewChunk creates a new CREATE VIEW chunk and adds it to the chunks
-func createViewChunk(chunks *schema.SDLChunks, view *storepb.ViewMetadata, viewKey string) error {
-	if view == nil || chunks == nil {
+// createMaterializedViewChunk creates a new CREATE MATERIALIZED VIEW chunk and adds it to the chunks
+func createMaterializedViewChunk(chunks *schema.SDLChunks, mv *storepb.MaterializedViewMetadata, mvKey string) error {
+	if mv == nil || chunks == nil {
 		return nil
 	}
 
-	// Generate SDL text for the view
-	schemaName, _ := parseIdentifier(viewKey)
-	viewSDL := generateCreateViewSDL(schemaName, view)
-	if viewSDL == "" {
-		return errors.New("failed to generate SDL for view")
+	// Generate SDL text for the materialized view
+	schemaName, _ := parseIdentifier(mvKey)
+	mvSDL := generateCreateMaterializedViewSDL(schemaName, mv)
+	if mvSDL == "" {
+		return errors.New("failed to generate SDL for materialized view")
 	}
 
 	// Parse the SDL to get AST node
-	parseResult, err := pgparser.ParsePostgreSQL(viewSDL)
+	parseResults, err := pgparser.ParsePostgreSQL(mvSDL)
 	if err != nil {
-		return errors.Wrapf(err, "failed to parse generated view SDL: %s", viewSDL)
+		return errors.Wrapf(err, "failed to parse generated materialized view SDL: %s", mvSDL)
 	}
 
-	// Extract the CREATE VIEW AST node
-	var viewASTNode *parser.ViewstmtContext
-	antlr.ParseTreeWalkerDefault.Walk(&viewExtractor{
-		result: &viewASTNode,
+	// Expect single statement
+	if len(parseResults) != 1 {
+		return errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+	}
+	parseResult := parseResults[0]
+
+	// Extract the CREATE MATERIALIZED VIEW AST node
+	var mvASTNode *parser.CreatematviewstmtContext
+	antlr.ParseTreeWalkerDefault.Walk(&materializedViewExtractor{
+		result: &mvASTNode,
 	}, parseResult.Tree)
 
-	if viewASTNode == nil {
-		return errors.New("failed to extract CREATE VIEW AST node")
+	if mvASTNode == nil {
+		return errors.New("failed to extract CREATE MATERIALIZED VIEW AST node")
 	}
 
 	// Create and add the chunk
 	chunk := &schema.SDLChunk{
-		Identifier: viewKey,
-		ASTNode:    viewASTNode,
+		Identifier: mvKey,
+		ASTNode:    mvASTNode,
 	}
 
-	// Add comment if the view has one
-	if view.Comment != "" {
-		commentSQL := generateCommentOnViewSQL(schemaName, view.Name, view.Comment)
+	// Add comment if the materialized view has one
+	if mv.Comment != "" {
+		commentSQL := generateCommentOnMaterializedViewSQL(schemaName, mv.Name, mv.Comment)
 		commentParseResult, err := pgparser.ParsePostgreSQL(commentSQL)
-		if err == nil && commentParseResult.Tree != nil {
-			// Extract COMMENT ON VIEW AST node
+		if err == nil && len(commentParseResult) > 0 && commentParseResult[0].Tree != nil {
+			// Extract COMMENT ON MATERIALIZED VIEW AST node
 			var commentASTNode *parser.CommentstmtContext
 			antlr.ParseTreeWalkerDefault.Walk(&commentExtractor{
 				result: &commentASTNode,
-			}, commentParseResult.Tree)
+			}, commentParseResult[0].Tree)
 
 			if commentASTNode != nil {
 				chunk.CommentStatements = []antlr.ParserRuleContext{commentASTNode}
@@ -5205,121 +3127,387 @@ func createViewChunk(chunks *schema.SDLChunks, view *storepb.ViewMetadata, viewK
 		}
 	}
 
-	if chunks.Views == nil {
-		chunks.Views = make(map[string]*schema.SDLChunk)
+	if chunks.MaterializedViews == nil {
+		chunks.MaterializedViews = make(map[string]*schema.SDLChunk)
 	}
-	chunks.Views[viewKey] = chunk
+	chunks.MaterializedViews[mvKey] = chunk
 
 	return nil
 }
 
-// updateViewChunkIfNeeded updates an existing view chunk if the view definition has changed
-func updateViewChunkIfNeeded(chunks *schema.SDLChunks, currentView, previousView *storepb.ViewMetadata, viewKey string) error {
-	if currentView == nil || previousView == nil || chunks == nil {
+// updateMaterializedViewChunkIfNeeded updates an existing materialized view chunk if the definition has changed
+func updateMaterializedViewChunkIfNeeded(chunks *schema.SDLChunks, currentMV, previousMV *storepb.MaterializedViewMetadata, mvKey string) error {
+	if currentMV == nil || previousMV == nil || chunks == nil {
 		return nil
 	}
 
 	// Get the existing chunk
-	chunk, exists := chunks.Views[viewKey]
+	chunk, exists := chunks.MaterializedViews[mvKey]
 	if !exists {
-		return errors.Errorf("view chunk not found for key %s", viewKey)
+		return errors.Errorf("materialized view chunk not found for key %s", mvKey)
 	}
 
-	// Check if the CREATE VIEW definition has changed (excluding comment)
-	definitionChanged := !viewDefinitionsEqualExcludingComment(currentView, previousView)
-
-	if definitionChanged {
-		// View definition has changed - regenerate the CREATE VIEW chunk
-		schemaName, _ := parseIdentifier(viewKey)
-		viewSDL := generateCreateViewSDL(schemaName, currentView)
-		if viewSDL == "" {
-			return errors.New("failed to generate SDL for view")
+	// Check if the materialized view definition has changed
+	if currentMV.Definition != previousMV.Definition {
+		// Materialized view definition changed - regenerate the chunk
+		schemaName, _ := parseIdentifier(mvKey)
+		mvSDL := generateCreateMaterializedViewSDL(schemaName, currentMV)
+		if mvSDL == "" {
+			return errors.New("failed to generate SDL for materialized view")
 		}
 
-		// Parse the SDL to get AST node
-		parseResult, err := pgparser.ParsePostgreSQL(viewSDL)
+		// Parse the new SDL to get a fresh AST node
+		parseResults, err := pgparser.ParsePostgreSQL(mvSDL)
 		if err != nil {
-			return errors.Wrapf(err, "failed to parse generated view SDL: %s", viewSDL)
+			return errors.Wrapf(err, "failed to parse generated materialized view SDL: %s", mvSDL)
 		}
 
-		// Extract the CREATE VIEW AST node
-		var viewASTNode *parser.ViewstmtContext
-		antlr.ParseTreeWalkerDefault.Walk(&viewExtractor{
-			result: &viewASTNode,
+		// Expect single statement
+		if len(parseResults) != 1 {
+			return errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+		}
+		parseResult := parseResults[0]
+
+		// Extract the CREATE MATERIALIZED VIEW AST node
+		var mvASTNode *parser.CreatematviewstmtContext
+		antlr.ParseTreeWalkerDefault.Walk(&materializedViewExtractor{
+			result: &mvASTNode,
 		}, parseResult.Tree)
 
-		if viewASTNode == nil {
-			return errors.New("failed to extract CREATE VIEW AST node")
+		if mvASTNode == nil {
+			return errors.New("failed to extract CREATE MATERIALIZED VIEW AST node")
 		}
 
-		// Update the CREATE VIEW AST node
-		chunk.ASTNode = viewASTNode
+		// Update the chunk's AST node
+		chunk.ASTNode = mvASTNode
 	}
 
-	// Synchronize COMMENT ON VIEW statements only if comment has changed
-	if currentView.Comment != previousView.Comment {
-		schemaName, _ := parseIdentifier(viewKey)
-		if err := syncObjectCommentStatements(chunk, currentView.Comment, "VIEW", schemaName, currentView.Name); err != nil {
-			return errors.Wrapf(err, "failed to sync COMMENT statements for view %s", viewKey)
+	// Handle comment changes independently of definition changes
+	if currentMV.Comment != previousMV.Comment {
+		schemaName, _ := parseIdentifier(mvKey)
+		if currentMV.Comment != "" {
+			// New or updated comment
+			commentSQL := generateCommentOnMaterializedViewSQL(schemaName, currentMV.Name, currentMV.Comment)
+			commentParseResult, err := pgparser.ParsePostgreSQL(commentSQL)
+			if err == nil && len(commentParseResult) > 0 && commentParseResult[0].Tree != nil {
+				// Extract COMMENT ON MATERIALIZED VIEW AST node
+				var commentASTNode *parser.CommentstmtContext
+				antlr.ParseTreeWalkerDefault.Walk(&commentExtractor{
+					result: &commentASTNode,
+				}, commentParseResult[0].Tree)
+
+				if commentASTNode != nil {
+					chunk.CommentStatements = []antlr.ParserRuleContext{commentASTNode}
+				}
+			}
+		} else {
+			// Comment was removed
+			chunk.CommentStatements = nil
 		}
 	}
 
 	return nil
 }
 
-// deleteViewChunk removes a view chunk from the chunks
-func deleteViewChunk(chunks *schema.SDLChunks, viewKey string) {
-	if chunks != nil && chunks.Views != nil {
-		delete(chunks.Views, viewKey)
+// deleteMaterializedViewChunk removes a materialized view chunk from the chunks
+func deleteMaterializedViewChunk(chunks *schema.SDLChunks, mvKey string) {
+	if chunks != nil && chunks.MaterializedViews != nil {
+		delete(chunks.MaterializedViews, mvKey)
 	}
 }
 
-// viewDefinitionsEqualExcludingComment compares two view definitions excluding comments
-func viewDefinitionsEqualExcludingComment(view1, view2 *storepb.ViewMetadata) bool {
-	if view1 == nil || view2 == nil {
-		return false
-	}
-
-	// Compare name and definition (excluding comment)
-	if view1.Name != view2.Name ||
-		view1.Definition != view2.Definition {
-		return false
-	}
-
-	return true
-}
-
-// generateCreateViewSDL generates SDL text for a CREATE VIEW statement
-func generateCreateViewSDL(schemaName string, view *storepb.ViewMetadata) string {
-	if view == nil {
+// generateCreateMaterializedViewSDL generates the SDL text for a CREATE MATERIALIZED VIEW statement
+func generateCreateMaterializedViewSDL(schemaName string, mv *storepb.MaterializedViewMetadata) string {
+	if mv == nil {
 		return ""
 	}
 
 	var buf strings.Builder
-	if err := writeViewSDL(&buf, schemaName, view); err != nil {
+	if err := writeMaterializedViewSDL(&buf, schemaName, mv); err != nil {
 		return ""
 	}
 
 	return buf.String()
 }
 
-// generateCommentOnViewSQL generates a COMMENT ON VIEW statement
-func generateCommentOnViewSQL(schemaName, viewName, comment string) string {
+// generateCommentOnMaterializedViewSQL generates a COMMENT ON MATERIALIZED VIEW statement
+func generateCommentOnMaterializedViewSQL(schemaName, mvName, comment string) string {
 	if schemaName == "" {
 		schemaName = "public"
 	}
 	// Escape single quotes in comment
 	escapedComment := strings.ReplaceAll(comment, "'", "''")
-	return fmt.Sprintf("COMMENT ON VIEW \"%s\".\"%s\" IS '%s';", schemaName, viewName, escapedComment)
+	return fmt.Sprintf("COMMENT ON MATERIALIZED VIEW \"%s\".\"%s\" IS '%s';", schemaName, mvName, escapedComment)
 }
 
-// viewExtractor is a walker to extract CREATE VIEW AST nodes
-type viewExtractor struct {
+// applyEnumTypeChangesToChunks applies minimal changes to enum type chunks based on schema metadata
+func applyEnumTypeChangesToChunks(previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseMetadata) error {
+	if currentSchema == nil || previousSchema == nil || previousChunks == nil {
+		return nil
+	}
+
+	// Get enum type differences by comparing schema metadata
+	currentMetadata := currentSchema.GetProto()
+	previousMetadata := previousSchema.GetProto()
+	if currentMetadata == nil || previousMetadata == nil {
+		return nil
+	}
+
+	// Build enum type maps for current and previous schemas
+	currentEnumTypes := make(map[string]*storepb.EnumTypeMetadata)
+	previousEnumTypes := make(map[string]*storepb.EnumTypeMetadata)
+
+	// Collect all enum types from current schema
+	for _, schema := range currentMetadata.Schemas {
+		for _, enumType := range schema.EnumTypes {
+			enumKey := schema.Name + "." + enumType.Name
+			currentEnumTypes[enumKey] = enumType
+		}
+	}
+
+	// Collect all enum types from previous schema
+	for _, schema := range previousMetadata.Schemas {
+		for _, enumType := range schema.EnumTypes {
+			enumKey := schema.Name + "." + enumType.Name
+			previousEnumTypes[enumKey] = enumType
+		}
+	}
+
+	// Process enum type additions: create new enum type chunks
+	for enumKey, currentEnum := range currentEnumTypes {
+		if _, exists := previousEnumTypes[enumKey]; !exists {
+			// New enum type - create a chunk for it
+			err := createEnumTypeChunk(previousChunks, currentEnum, enumKey)
+			if err != nil {
+				return errors.Wrapf(err, "failed to create enum type chunk for %s", enumKey)
+			}
+		}
+	}
+
+	// Process enum type modifications: update existing chunks
+	for enumKey, currentEnum := range currentEnumTypes {
+		if previousEnum, exists := previousEnumTypes[enumKey]; exists {
+			// Enum type exists in both metadata
+			// Only update if chunk exists in SDL (user explicitly defined it)
+			if _, chunkExists := previousChunks.EnumTypes[enumKey]; chunkExists {
+				// Chunk exists - update if needed
+				err := updateEnumTypeChunkIfNeeded(previousChunks, currentEnum, previousEnum, enumKey)
+				if err != nil {
+					return errors.Wrapf(err, "failed to update enum type chunk for %s", enumKey)
+				}
+			}
+			// If chunk doesn't exist, skip - user didn't define this enum type in SDL
+		}
+	}
+
+	// Process enum type deletions: remove dropped enum type chunks
+	for enumKey := range previousEnumTypes {
+		if _, exists := currentEnumTypes[enumKey]; !exists {
+			// Enum type was dropped - remove it from chunks
+			deleteEnumTypeChunk(previousChunks, enumKey)
+		}
+	}
+
+	return nil
+}
+
+// createEnumTypeChunk creates a new CREATE TYPE AS ENUM chunk and adds it to the chunks
+func createEnumTypeChunk(chunks *schema.SDLChunks, enumType *storepb.EnumTypeMetadata, enumKey string) error {
+	if enumType == nil || chunks == nil {
+		return nil
+	}
+
+	// Generate SDL text for the enum type
+	schemaName, _ := parseIdentifier(enumKey)
+	enumSDL := generateCreateEnumTypeSDL(schemaName, enumType)
+	if enumSDL == "" {
+		return errors.New("failed to generate SDL for enum type")
+	}
+
+	// Parse the SDL to get AST node
+	parseResults, err := pgparser.ParsePostgreSQL(enumSDL)
+	if err != nil {
+		return errors.Wrapf(err, "failed to parse generated enum type SDL: %s", enumSDL)
+	}
+
+	// Expect single statement
+	if len(parseResults) != 1 {
+		return errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+	}
+	parseResult := parseResults[0]
+
+	// Extract the CREATE TYPE AS ENUM AST node
+	var enumASTNode *parser.DefinestmtContext
+	antlr.ParseTreeWalkerDefault.Walk(&enumTypeExtractor{
+		result: &enumASTNode,
+	}, parseResult.Tree)
+
+	if enumASTNode == nil {
+		return errors.New("failed to extract CREATE TYPE AS ENUM AST node")
+	}
+
+	// Create and add the chunk
+	chunk := &schema.SDLChunk{
+		Identifier: enumKey,
+		ASTNode:    enumASTNode,
+	}
+
+	// Handle comment if present
+	if len(enumType.Comment) > 0 {
+		commentSQL := generateCommentOnTypeSQL(schemaName, enumType.Name, enumType.Comment)
+		commentParseResult, err := pgparser.ParsePostgreSQL(commentSQL)
+		if err == nil {
+			var commentNode *parser.CommentstmtContext
+			antlr.ParseTreeWalkerDefault.Walk(&commentExtractor{
+				result: &commentNode,
+			}, commentParseResult[0].Tree)
+			if commentNode != nil {
+				chunk.CommentStatements = []antlr.ParserRuleContext{commentNode}
+			}
+		}
+	}
+
+	chunks.EnumTypes[enumKey] = chunk
+	return nil
+}
+
+// updateEnumTypeChunkIfNeeded updates an enum type chunk if the definition or comment changed
+func updateEnumTypeChunkIfNeeded(chunks *schema.SDLChunks, currentEnum, previousEnum *storepb.EnumTypeMetadata, enumKey string) error {
+	if currentEnum == nil || previousEnum == nil {
+		return nil
+	}
+
+	chunk, exists := chunks.EnumTypes[enumKey]
+	if !exists {
+		return errors.Errorf("enum type chunk not found for key %s", enumKey)
+	}
+
+	// Check if the enum definition has changed (values changed)
+	definitionChanged := !enumTypesEqual(currentEnum, previousEnum)
+
+	if definitionChanged {
+		// Enum definition has changed - regenerate the CREATE TYPE chunk
+		schemaName, _ := parseIdentifier(enumKey)
+		enumSDL := generateCreateEnumTypeSDL(schemaName, currentEnum)
+		if enumSDL == "" {
+			return errors.New("failed to generate SDL for enum type")
+		}
+
+		// Parse the SDL to get AST node
+		parseResults, err := pgparser.ParsePostgreSQL(enumSDL)
+		if err != nil {
+			return errors.Wrapf(err, "failed to parse generated enum type SDL: %s", enumSDL)
+		}
+
+		// Expect single statement
+		if len(parseResults) != 1 {
+			return errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+		}
+		parseResult := parseResults[0]
+
+		// Extract the CREATE TYPE AS ENUM AST node
+		var enumASTNode *parser.DefinestmtContext
+		antlr.ParseTreeWalkerDefault.Walk(&enumTypeExtractor{
+			result: &enumASTNode,
+		}, parseResult.Tree)
+
+		if enumASTNode == nil {
+			return errors.New("failed to extract CREATE TYPE AS ENUM AST node")
+		}
+
+		// Update the CREATE TYPE AST node
+		chunk.ASTNode = enumASTNode
+	}
+
+	// Synchronize COMMENT ON TYPE statements only if comment has changed
+	if currentEnum.Comment != previousEnum.Comment {
+		schemaName, _ := parseIdentifier(enumKey)
+		if err := syncObjectCommentStatements(chunk, currentEnum.Comment, "TYPE", schemaName, currentEnum.Name); err != nil {
+			return errors.Wrapf(err, "failed to sync COMMENT statements for enum type %s", enumKey)
+		}
+	}
+
+	return nil
+}
+
+// deleteEnumTypeChunk removes an enum type chunk from the chunks
+func deleteEnumTypeChunk(chunks *schema.SDLChunks, enumKey string) {
+	if chunks != nil && chunks.EnumTypes != nil {
+		delete(chunks.EnumTypes, enumKey)
+	}
+}
+
+// enumTypesEqual compares two enum type definitions excluding comments
+func enumTypesEqual(enum1, enum2 *storepb.EnumTypeMetadata) bool {
+	if enum1 == nil || enum2 == nil {
+		return false
+	}
+
+	// Compare name
+	if enum1.Name != enum2.Name {
+		return false
+	}
+
+	// Compare values
+	if len(enum1.Values) != len(enum2.Values) {
+		return false
+	}
+	for i, v1 := range enum1.Values {
+		if v1 != enum2.Values[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// generateCreateEnumTypeSDL generates the SDL text for a CREATE TYPE AS ENUM statement
+func generateCreateEnumTypeSDL(schemaName string, enumType *storepb.EnumTypeMetadata) string {
+	if enumType == nil {
+		return ""
+	}
+
+	var buf strings.Builder
+	if err := writeEnum(&buf, schemaName, enumType); err != nil {
+		return ""
+	}
+	buf.WriteString(";")
+
+	return buf.String()
+}
+
+// generateCommentOnTypeSQL generates a COMMENT ON TYPE statement
+func generateCommentOnTypeSQL(schemaName, typeName, comment string) string {
+	if schemaName == "" {
+		schemaName = "public"
+	}
+	// Escape single quotes in comment
+	escapedComment := strings.ReplaceAll(comment, "'", "''")
+	return fmt.Sprintf("COMMENT ON TYPE \"%s\".\"%s\" IS '%s';", schemaName, typeName, escapedComment)
+}
+
+// enumTypeExtractor is a walker to extract CREATE TYPE AS ENUM AST nodes
+type enumTypeExtractor struct {
 	parser.BasePostgreSQLParserListener
-	result **parser.ViewstmtContext
+	result **parser.DefinestmtContext
 }
 
-func (e *viewExtractor) EnterViewstmt(ctx *parser.ViewstmtContext) {
+func (e *enumTypeExtractor) EnterDefinestmt(ctx *parser.DefinestmtContext) {
+	// Only extract CREATE TYPE AS ENUM statements
+	if ctx.CREATE() != nil && ctx.TYPE_P() != nil && ctx.AS() != nil && ctx.ENUM_P() != nil {
+		if e.result != nil && *e.result == nil {
+			*e.result = ctx
+		}
+	}
+}
+
+// materializedViewExtractor is a walker to extract CREATE MATERIALIZED VIEW AST nodes
+type materializedViewExtractor struct {
+	parser.BasePostgreSQLParserListener
+	result **parser.CreatematviewstmtContext
+}
+
+func (e *materializedViewExtractor) EnterCreatematviewstmt(ctx *parser.CreatematviewstmtContext) {
 	if e.result != nil && *e.result == nil {
 		*e.result = ctx
 	}
@@ -5327,14 +3515,14 @@ func (e *viewExtractor) EnterViewstmt(ctx *parser.ViewstmtContext) {
 
 // applyColumnCommentChanges applies minimal changes to column comments based on schema metadata
 // This function only updates COMMENT ON COLUMN statements without modifying CREATE TABLE statements
-func applyColumnCommentChanges(previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseSchema) error {
+func applyColumnCommentChanges(previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseMetadata) error {
 	if currentSchema == nil || previousSchema == nil || previousChunks == nil {
 		return nil
 	}
 
 	// Get table metadata from schemas
-	currentMetadata := currentSchema.GetMetadata()
-	previousMetadata := previousSchema.GetMetadata()
+	currentMetadata := currentSchema.GetProto()
+	previousMetadata := previousSchema.GetProto()
 	if currentMetadata == nil || previousMetadata == nil {
 		return nil
 	}
@@ -5468,4 +3656,603 @@ func syncColumnComment(chunks *schema.SDLChunks, tableKey, columnName, comment s
 	chunks.ColumnComments[tableKey][columnName] = commentNode
 
 	return nil
+}
+
+// processEnumTypeChanges analyzes enum type changes between current and previous chunks
+// Enum types use DROP + CREATE pattern for modifications (PostgreSQL doesn't support ALTER TYPE ... RENAME VALUE)
+
+// processExtensionChanges processes extension changes between current and previous chunks
+
+// processEventTriggerChanges processes event trigger changes between current and previous chunks
+
+// processSchemaChanges processes explicit CREATE SCHEMA statements in the SDL
+
+// applyExtensionChangesToChunks applies minimal changes to extension chunks based on schema differences
+// Extensions are database-level objects (not schema-scoped)
+func applyExtensionChangesToChunks(previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseMetadata) error {
+	if currentSchema == nil || previousSchema == nil || previousChunks == nil {
+		return nil
+	}
+
+	// Get extension differences by comparing schema metadata
+	currentMetadata := currentSchema.GetProto()
+	previousMetadata := previousSchema.GetProto()
+	if currentMetadata == nil || previousMetadata == nil {
+		return nil
+	}
+
+	// Build extension maps for current and previous schemas
+	// Extensions are database-level, stored directly in DatabaseSchemaMetadata
+	currentExtensions := make(map[string]*storepb.ExtensionMetadata)
+	previousExtensions := make(map[string]*storepb.ExtensionMetadata)
+
+	// Collect all extensions from current schema
+	for _, extension := range currentMetadata.Extensions {
+		// Extension key is just the name (database-level, no schema prefix)
+		currentExtensions[extension.Name] = extension
+	}
+
+	// Collect all extensions from previous schema
+	for _, extension := range previousMetadata.Extensions {
+		previousExtensions[extension.Name] = extension
+	}
+
+	// Process extension additions: create new extension chunks
+	for extensionName, currentExtension := range currentExtensions {
+		if _, exists := previousExtensions[extensionName]; !exists {
+			// New extension - create a chunk for it
+			err := createExtensionChunk(previousChunks, currentExtension)
+			if err != nil {
+				return errors.Wrapf(err, "failed to create extension chunk for %s", extensionName)
+			}
+		}
+	}
+
+	// Process extension modifications: update existing chunks
+	for extensionName, currentExtension := range currentExtensions {
+		if previousExtension, exists := previousExtensions[extensionName]; exists {
+			// Extension exists in both metadata
+			// Only update if chunk exists in SDL (user explicitly defined it)
+			if _, chunkExists := previousChunks.Extensions[extensionName]; chunkExists {
+				// Chunk exists - update if needed
+				err := updateExtensionChunkIfNeeded(previousChunks, currentExtension, previousExtension)
+				if err != nil {
+					return errors.Wrapf(err, "failed to update extension chunk for %s", extensionName)
+				}
+			}
+			// If chunk doesn't exist, skip - user didn't define this extension in SDL
+		}
+	}
+
+	// Process extension deletions: remove dropped extension chunks
+	for extensionName := range previousExtensions {
+		if _, exists := currentExtensions[extensionName]; !exists {
+			// Extension was dropped - remove it from chunks
+			deleteExtensionChunk(previousChunks, extensionName)
+		}
+	}
+
+	return nil
+}
+
+// createExtensionChunk creates a new CREATE EXTENSION chunk and adds it to the chunks
+func createExtensionChunk(chunks *schema.SDLChunks, extension *storepb.ExtensionMetadata) error {
+	if extension == nil || chunks == nil {
+		return nil
+	}
+
+	// Generate SDL text for the extension
+	extensionSDL := generateCreateExtensionSQL(extension)
+	if extensionSDL == "" {
+		return errors.New("failed to generate SDL for extension")
+	}
+
+	// Parse the SDL to get AST node
+	parseResults, err := pgparser.ParsePostgreSQL(extensionSDL)
+	if err != nil {
+		return errors.Wrapf(err, "failed to parse generated extension SDL: %s", extensionSDL)
+	}
+
+	// Expect single statement
+	if len(parseResults) != 1 {
+		return errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+	}
+	parseResult := parseResults[0]
+
+	// Extract the CREATE EXTENSION AST node
+	var extensionASTNode *parser.CreateextensionstmtContext
+	antlr.ParseTreeWalkerDefault.Walk(&extensionExtractor{
+		result: &extensionASTNode,
+	}, parseResult.Tree)
+
+	if extensionASTNode == nil {
+		return errors.New("failed to extract CREATE EXTENSION AST node")
+	}
+
+	// Create and add the chunk
+	chunk := &schema.SDLChunk{
+		Identifier: extension.Name, // Extensions are database-level, no schema prefix
+		ASTNode:    extensionASTNode,
+	}
+
+	// Handle comment if present (description field is the comment)
+	if len(extension.Description) > 0 {
+		commentSQL := generateCommentOnExtensionSQL(extension.Name, extension.Description)
+		commentParseResult, err := pgparser.ParsePostgreSQL(commentSQL)
+		if err == nil {
+			var commentNode *parser.CommentstmtContext
+			antlr.ParseTreeWalkerDefault.Walk(&commentExtractor{
+				result: &commentNode,
+			}, commentParseResult[0].Tree)
+			if commentNode != nil {
+				chunk.CommentStatements = []antlr.ParserRuleContext{commentNode}
+			}
+		}
+	}
+
+	chunks.Extensions[extension.Name] = chunk
+	return nil
+}
+
+// updateExtensionChunkIfNeeded updates an extension chunk if the definition or comment changed
+func updateExtensionChunkIfNeeded(chunks *schema.SDLChunks, currentExtension, previousExtension *storepb.ExtensionMetadata) error {
+	if currentExtension == nil || previousExtension == nil {
+		return nil
+	}
+
+	chunk, exists := chunks.Extensions[currentExtension.Name]
+	if !exists {
+		return errors.Errorf("extension chunk not found for %s", currentExtension.Name)
+	}
+
+	// Check if the extension definition has changed (schema, version, or description)
+	definitionChanged := !extensionsEqual(currentExtension, previousExtension)
+
+	if definitionChanged {
+		// Extension definition has changed - regenerate the CREATE EXTENSION chunk
+		extensionSDL := generateCreateExtensionSQL(currentExtension)
+		if extensionSDL == "" {
+			return errors.New("failed to generate SDL for extension")
+		}
+
+		// Parse the SDL to get AST node
+		parseResults, err := pgparser.ParsePostgreSQL(extensionSDL)
+		if err != nil {
+			return errors.Wrapf(err, "failed to parse generated extension SDL: %s", extensionSDL)
+		}
+
+		// Expect single statement
+		if len(parseResults) != 1 {
+			return errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+		}
+		parseResult := parseResults[0]
+
+		// Extract the CREATE EXTENSION AST node
+		var extensionASTNode *parser.CreateextensionstmtContext
+		antlr.ParseTreeWalkerDefault.Walk(&extensionExtractor{
+			result: &extensionASTNode,
+		}, parseResult.Tree)
+
+		if extensionASTNode == nil {
+			return errors.New("failed to extract CREATE EXTENSION AST node")
+		}
+
+		// Update the AST node in the chunk
+		chunk.ASTNode = extensionASTNode
+	}
+
+	// Handle comment changes (description field)
+	commentChanged := currentExtension.Description != previousExtension.Description
+
+	if commentChanged {
+		// Remove old comment statements
+		chunk.CommentStatements = nil
+
+		// Add new comment if present
+		if len(currentExtension.Description) > 0 {
+			commentSQL := generateCommentOnExtensionSQL(currentExtension.Name, currentExtension.Description)
+			commentParseResult, err := pgparser.ParsePostgreSQL(commentSQL)
+			if err == nil {
+				var commentNode *parser.CommentstmtContext
+				antlr.ParseTreeWalkerDefault.Walk(&commentExtractor{
+					result: &commentNode,
+				}, commentParseResult[0].Tree)
+				if commentNode != nil {
+					chunk.CommentStatements = []antlr.ParserRuleContext{commentNode}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// deleteExtensionChunk removes an extension chunk from the chunks map
+func deleteExtensionChunk(chunks *schema.SDLChunks, extensionName string) {
+	if chunks == nil {
+		return
+	}
+	delete(chunks.Extensions, extensionName)
+}
+
+// generateCreateExtensionSQL generates a CREATE EXTENSION IF NOT EXISTS statement
+func generateCreateExtensionSQL(extension *storepb.ExtensionMetadata) string {
+	if extension == nil {
+		return ""
+	}
+
+	var buf strings.Builder
+	buf.WriteString(`CREATE EXTENSION IF NOT EXISTS "`)
+	buf.WriteString(extension.Name)
+	buf.WriteString(`"`)
+
+	// Add WITH SCHEMA clause if schema is specified
+	if extension.Schema != "" {
+		buf.WriteString(` WITH SCHEMA "`)
+		buf.WriteString(extension.Schema)
+		buf.WriteString(`"`)
+	}
+
+	// Add VERSION clause if version is specified
+	if extension.Version != "" {
+		buf.WriteString(` VERSION '`)
+		buf.WriteString(extension.Version)
+		buf.WriteString(`'`)
+	}
+
+	buf.WriteString(`;`)
+
+	return buf.String()
+}
+
+// generateCommentOnExtensionSQL generates a COMMENT ON EXTENSION statement
+func generateCommentOnExtensionSQL(extensionName, comment string) string {
+	// Escape single quotes in comment
+	escapedComment := strings.ReplaceAll(comment, "'", "''")
+	return fmt.Sprintf("COMMENT ON EXTENSION \"%s\" IS '%s';", extensionName, escapedComment)
+}
+
+// extensionExtractor is a walker to extract CREATE EXTENSION AST nodes
+type extensionExtractor struct {
+	parser.BasePostgreSQLParserListener
+	result **parser.CreateextensionstmtContext
+}
+
+func (e *extensionExtractor) EnterCreateextensionstmt(ctx *parser.CreateextensionstmtContext) {
+	if e.result != nil {
+		*e.result = ctx
+	}
+}
+
+// extensionsEqual compares two extension metadata for equality (excluding comments)
+func extensionsEqual(a, b *storepb.ExtensionMetadata) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+
+	return a.Name == b.Name &&
+		a.Schema == b.Schema &&
+		a.Version == b.Version &&
+		a.Description == b.Description
+}
+
+// extractTableNameFromTrigger extracts the fully qualified table name from CREATE TRIGGER ... ON table
+// Returns schema.table format, defaulting to public schema if not specified
+func extractTableNameFromTrigger(ctx *parser.CreatetrigstmtContext) string {
+	if ctx == nil {
+		return ""
+	}
+
+	// Find ON clause - the table name comes after ON keyword
+	// In PostgreSQL grammar: CREATE TRIGGER name ... ON qualified_name
+	if ctx.Qualified_name() == nil {
+		return ""
+	}
+
+	// Extract table name
+	qualifiedNameParts := pgparser.NormalizePostgreSQLQualifiedName(ctx.Qualified_name())
+	if len(qualifiedNameParts) == 0 {
+		return ""
+	}
+
+	// Return fully qualified name (schema.table)
+	if len(qualifiedNameParts) == 1 {
+		// No schema specified, default to public
+		return "public." + qualifiedNameParts[0]
+	}
+	// Schema is specified
+	return strings.Join(qualifiedNameParts, ".")
+}
+
+// applyTriggerChangesToChunks applies minimal changes to trigger chunks based on schema metadata
+func applyTriggerChangesToChunks(previousChunks *schema.SDLChunks, currentSchema, previousSchema *model.DatabaseMetadata) error {
+	if currentSchema == nil || previousSchema == nil || previousChunks == nil {
+		return nil
+	}
+
+	// Get trigger differences by comparing schema metadata
+	currentMetadata := currentSchema.GetProto()
+	previousMetadata := previousSchema.GetProto()
+	if currentMetadata == nil || previousMetadata == nil {
+		return nil
+	}
+
+	// Build trigger maps for current and previous schemas
+	// Key format: schema.table.trigger_name (table-scoped)
+	currentTriggers := make(map[string]*triggerWithContext)
+	previousTriggers := make(map[string]*triggerWithContext)
+
+	// Collect all triggers from current schema
+	for _, schemaObj := range currentMetadata.Schemas {
+		schemaName := schemaObj.Name
+		if schemaName == "" {
+			schemaName = "public"
+		}
+		for _, table := range schemaObj.Tables {
+			for _, trigger := range table.Triggers {
+				// Use table-scoped identifier: schema.table.trigger_name
+				triggerKey := schemaName + "." + table.Name + "." + trigger.Name
+				currentTriggers[triggerKey] = &triggerWithContext{
+					trigger:    trigger,
+					schemaName: schemaName,
+					tableName:  table.Name,
+				}
+			}
+		}
+	}
+
+	// Collect all triggers from previous schema
+	for _, schemaObj := range previousMetadata.Schemas {
+		schemaName := schemaObj.Name
+		if schemaName == "" {
+			schemaName = "public"
+		}
+		for _, table := range schemaObj.Tables {
+			for _, trigger := range table.Triggers {
+				// Use table-scoped identifier: schema.table.trigger_name
+				triggerKey := schemaName + "." + table.Name + "." + trigger.Name
+				previousTriggers[triggerKey] = &triggerWithContext{
+					trigger:    trigger,
+					schemaName: schemaName,
+					tableName:  table.Name,
+				}
+			}
+		}
+	}
+
+	// Process trigger additions: create new trigger chunks
+	for triggerKey, currentTrigger := range currentTriggers {
+		if _, exists := previousTriggers[triggerKey]; !exists {
+			// New trigger - create a chunk for it
+			err := createTriggerChunk(previousChunks, currentTrigger, triggerKey)
+			if err != nil {
+				return errors.Wrapf(err, "failed to create trigger chunk for %s", triggerKey)
+			}
+		}
+	}
+
+	// Process trigger modifications: update existing chunks
+	for triggerKey, currentTrigger := range currentTriggers {
+		if previousTrigger, exists := previousTriggers[triggerKey]; exists {
+			// Trigger exists in both metadata
+			// Only update if chunk exists in SDL (user explicitly defined it)
+			// If chunk doesn't exist, skip - we don't force-add database objects that user didn't define
+			if _, chunkExists := previousChunks.Triggers[triggerKey]; chunkExists {
+				// Chunk exists - update if needed
+				err := updateTriggerChunkIfNeeded(previousChunks, currentTrigger, previousTrigger, triggerKey)
+				if err != nil {
+					return errors.Wrapf(err, "failed to update trigger chunk for %s", triggerKey)
+				}
+			}
+			// If chunk doesn't exist, skip - user didn't define this trigger in SDL
+		}
+	}
+
+	// Process trigger deletions: remove dropped trigger chunks
+	for triggerKey := range previousTriggers {
+		if _, exists := currentTriggers[triggerKey]; !exists {
+			// Trigger was dropped - remove it from chunks
+			deleteTriggerChunk(previousChunks, triggerKey)
+		}
+	}
+
+	return nil
+}
+
+// triggerWithContext holds trigger metadata with its schema and table context
+type triggerWithContext struct {
+	trigger    *storepb.TriggerMetadata
+	schemaName string
+	tableName  string
+}
+
+// createTriggerChunk creates a new CREATE TRIGGER chunk and adds it to the chunks
+func createTriggerChunk(chunks *schema.SDLChunks, triggerCtx *triggerWithContext, triggerKey string) error {
+	if triggerCtx == nil || triggerCtx.trigger == nil || chunks == nil {
+		return nil
+	}
+
+	trigger := triggerCtx.trigger
+	schemaName := triggerCtx.schemaName
+	tableName := triggerCtx.tableName
+
+	// Generate SDL text for the trigger
+	triggerSDL := generateCreateTriggerSDL(schemaName, tableName, trigger)
+	if triggerSDL == "" {
+		return errors.New("failed to generate SDL for trigger")
+	}
+
+	// Parse the SDL to get AST node
+	parseResults, err := pgparser.ParsePostgreSQL(triggerSDL)
+	if err != nil {
+		return errors.Wrapf(err, "failed to parse generated trigger SDL: %s", triggerSDL)
+	}
+	if len(parseResults) != 1 {
+		return errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+	}
+	parseResult := parseResults[0]
+
+	// Extract the CREATE TRIGGER AST node
+	var triggerASTNode *parser.CreatetrigstmtContext
+	antlr.ParseTreeWalkerDefault.Walk(&triggerExtractor{
+		result: &triggerASTNode,
+	}, parseResult.Tree)
+
+	if triggerASTNode == nil {
+		return errors.New("failed to extract CREATE TRIGGER AST node")
+	}
+
+	// Create and add the chunk
+	chunk := &schema.SDLChunk{
+		Identifier: triggerKey,
+		ASTNode:    triggerASTNode,
+	}
+
+	// Add comment if the trigger has one
+	if trigger.Comment != "" {
+		commentSQL := generateCommentOnTriggerSQL(schemaName, tableName, trigger.Name, trigger.Comment)
+		commentParseResults, err := pgparser.ParsePostgreSQL(commentSQL)
+		if err == nil && len(commentParseResults) > 0 && commentParseResults[0].Tree != nil {
+			commentParseResult := commentParseResults[0]
+			// Extract COMMENT ON TRIGGER AST node
+			var commentASTNode *parser.CommentstmtContext
+			antlr.ParseTreeWalkerDefault.Walk(&commentExtractor{
+				result: &commentASTNode,
+			}, commentParseResult.Tree)
+
+			if commentASTNode != nil {
+				chunk.CommentStatements = []antlr.ParserRuleContext{commentASTNode}
+			}
+		}
+	}
+
+	if chunks.Triggers == nil {
+		chunks.Triggers = make(map[string]*schema.SDLChunk)
+	}
+	chunks.Triggers[triggerKey] = chunk
+
+	return nil
+}
+
+// updateTriggerChunkIfNeeded updates an existing trigger chunk if the definition has changed
+func updateTriggerChunkIfNeeded(chunks *schema.SDLChunks, currentTriggerCtx, previousTriggerCtx *triggerWithContext, triggerKey string) error {
+	if currentTriggerCtx == nil || previousTriggerCtx == nil || chunks == nil {
+		return nil
+	}
+
+	currentTrigger := currentTriggerCtx.trigger
+	previousTrigger := previousTriggerCtx.trigger
+	schemaName := currentTriggerCtx.schemaName
+	tableName := currentTriggerCtx.tableName
+
+	// Get the existing chunk
+	chunk, exists := chunks.Triggers[triggerKey]
+	if !exists {
+		return errors.Errorf("trigger chunk not found for key %s", triggerKey)
+	}
+
+	// Check if the trigger definition has changed
+	// Trigger.Body contains the complete CREATE TRIGGER statement
+	if currentTrigger.Body != previousTrigger.Body {
+		// Trigger definition changed - regenerate the chunk
+		triggerSDL := generateCreateTriggerSDL(schemaName, tableName, currentTrigger)
+		if triggerSDL == "" {
+			return errors.New("failed to generate SDL for trigger")
+		}
+
+		// Parse the new SDL to get a fresh AST node
+		parseResults, err := pgparser.ParsePostgreSQL(triggerSDL)
+		if err != nil {
+			return errors.Wrapf(err, "failed to parse generated trigger SDL: %s", triggerSDL)
+		}
+		if len(parseResults) != 1 {
+			return errors.Errorf("expected exactly one statement, got %d", len(parseResults))
+		}
+		parseResult := parseResults[0]
+
+		// Extract the CREATE TRIGGER AST node
+		var triggerASTNode *parser.CreatetrigstmtContext
+		antlr.ParseTreeWalkerDefault.Walk(&triggerExtractor{
+			result: &triggerASTNode,
+		}, parseResult.Tree)
+
+		if triggerASTNode == nil {
+			return errors.New("failed to extract CREATE TRIGGER AST node")
+		}
+
+		// Update the chunk's AST node
+		chunk.ASTNode = triggerASTNode
+	}
+
+	// Handle comment changes independently of definition changes
+	if currentTrigger.Comment != previousTrigger.Comment {
+		if currentTrigger.Comment != "" {
+			// New or updated comment
+			commentSQL := generateCommentOnTriggerSQL(schemaName, tableName, currentTrigger.Name, currentTrigger.Comment)
+			commentParseResults, err := pgparser.ParsePostgreSQL(commentSQL)
+			if err == nil && len(commentParseResults) > 0 && commentParseResults[0].Tree != nil {
+				commentParseResult := commentParseResults[0]
+				// Extract COMMENT ON TRIGGER AST node
+				var commentASTNode *parser.CommentstmtContext
+				antlr.ParseTreeWalkerDefault.Walk(&commentExtractor{
+					result: &commentASTNode,
+				}, commentParseResult.Tree)
+
+				if commentASTNode != nil {
+					chunk.CommentStatements = []antlr.ParserRuleContext{commentASTNode}
+				}
+			}
+		} else {
+			// Comment was removed
+			chunk.CommentStatements = nil
+		}
+	}
+
+	return nil
+}
+
+// deleteTriggerChunk removes a trigger chunk from the chunks
+func deleteTriggerChunk(chunks *schema.SDLChunks, triggerKey string) {
+	if chunks != nil && chunks.Triggers != nil {
+		delete(chunks.Triggers, triggerKey)
+	}
+}
+
+// generateCreateTriggerSDL generates the SDL text for a CREATE TRIGGER statement
+func generateCreateTriggerSDL(schemaName, tableName string, trigger *storepb.TriggerMetadata) string {
+	if trigger == nil {
+		return ""
+	}
+
+	var buf strings.Builder
+	if err := writeTriggerSDL(&buf, schemaName, tableName, trigger); err != nil {
+		return ""
+	}
+
+	return buf.String()
+}
+
+// generateCommentOnTriggerSQL generates a COMMENT ON TRIGGER statement
+func generateCommentOnTriggerSQL(schemaName, tableName, triggerName, comment string) string {
+	if schemaName == "" {
+		schemaName = "public"
+	}
+	// Escape single quotes in comment
+	escapedComment := strings.ReplaceAll(comment, "'", "''")
+	return fmt.Sprintf("COMMENT ON TRIGGER \"%s\" ON \"%s\".\"%s\" IS '%s';", triggerName, schemaName, tableName, escapedComment)
+}
+
+// triggerExtractor extracts CREATE TRIGGER AST nodes
+type triggerExtractor struct {
+	*parser.BasePostgreSQLParserListener
+	result **parser.CreatetrigstmtContext
+}
+
+func (e *triggerExtractor) EnterCreatetrigstmt(ctx *parser.CreatetrigstmtContext) {
+	if e.result != nil && *e.result == nil {
+		*e.result = ctx
+	}
 }

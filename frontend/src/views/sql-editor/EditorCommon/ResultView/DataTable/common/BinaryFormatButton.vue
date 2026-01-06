@@ -6,7 +6,7 @@
         <NButton
           size="tiny"
           circle
-          class="ml-1 dark:!bg-dark-bg"
+          class="ml-1 dark:bg-dark-bg!"
           @click.stop
           :type="hasColumnOverride ? 'primary' : 'default'"
           :secondary="hasColumnOverride"
@@ -50,9 +50,9 @@
 
 <script setup lang="ts">
 import { CodeIcon } from "lucide-vue-next";
-import { NButton, NPopover, NRadioGroup, NRadio } from "naive-ui";
+import { NButton, NPopover, NRadio, NRadioGroup } from "naive-ui";
 import { computed } from "vue";
-import { type BinaryFormat } from "../binary-format-store";
+import { type BinaryFormat } from "../common/binary-format-store";
 
 const emit = defineEmits<{
   (e: "update:format", format: BinaryFormat): void;

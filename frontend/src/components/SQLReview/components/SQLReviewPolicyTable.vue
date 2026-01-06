@@ -11,30 +11,31 @@
     </div>
 
     <div
-      class="flex flex-col lg:hidden border px-2 pb-4 divide-y space-y-4 divide-block-border"
+      class="flex flex-col lg:hidden border px-2 divide-y divide-block-border"
     >
       <div
         v-for="(review, i) in reviewList"
         :key="`${i}-${review.id}`"
-        class="pt-4"
+        class="py-4"
       >
         <div class="text-md">
           {{ review.name }}
         </div>
-        <div class="space-y-2 space-x-2">
-          <BBBadge
+        <div class="flex flex-wrap mt-2 gap-2">
+          <NTag
             v-for="resource in review.resources"
+            size="small"
+            type="primary"
             :key="resource"
-            :can-remove="false"
           >
             <Resource :show-prefix="true" :resource="resource" />
-          </BBBadge>
-          <BBBadge
+          </NTag>
+          <NTag
             v-if="!review.enforce"
-            :text="$t('common.disable')"
-            :can-remove="false"
-            :badge-style="'DISABLED'"
-          />
+            type="warning"
+          >
+            {{ $t('common.disable') }}
+          </NTag>
         </div>
         <div class="flex items-center gap-x-2 mt-4">
           <NButton size="small" @click.prevent="handleClickEdit(review)">
@@ -63,11 +64,11 @@
 </template>
 
 <script setup lang="tsx">
-import { NButton } from "naive-ui";
+import { NButton, NTag } from "naive-ui";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { BBBadge, BBButtonConfirm } from "@/bbkit";
+import { BBButtonConfirm } from "@/bbkit";
 import Resource from "@/components/v2/ResourceOccupiedModal/Resource.vue";
 import { WORKSPACE_ROUTE_SQL_REVIEW_DETAIL } from "@/router/dashboard/workspaceRoutes";
 import { pushNotification, useSQLReviewStore } from "@/store";

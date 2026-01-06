@@ -47,9 +47,8 @@ var (
 				},
 			},
 		},
-		Statement:   "SELECT * FROM tech_book",
-		RowsCount:   3,
-		AllowExport: true,
+		Statement: "SELECT * FROM tech_book",
+		RowsCount: 3,
 	}
 	originData = &v1pb.QueryResult{
 		ColumnNames:     []string{"id", "name", "author"},
@@ -77,9 +76,8 @@ var (
 				},
 			},
 		},
-		Statement:   "SELECT * FROM tech_book",
-		RowsCount:   3,
-		AllowExport: true,
+		Statement: "SELECT * FROM tech_book",
+		RowsCount: 3,
 	}
 )
 
@@ -113,9 +111,9 @@ func TestSensitiveData(t *testing.T) {
 	_, err = ctl.settingServiceClient.UpdateSetting(ctx, connect.NewRequest(&v1pb.UpdateSettingRequest{
 		Setting: &v1pb.Setting{
 			Name: "settings/" + v1pb.Setting_SEMANTIC_TYPES.String(),
-			Value: &v1pb.Value{
-				Value: &v1pb.Value_SemanticTypeSettingValue{
-					SemanticTypeSettingValue: &v1pb.SemanticTypeSetting{
+			Value: &v1pb.SettingValue{
+				Value: &v1pb.SettingValue_SemanticType{
+					SemanticType: &v1pb.SemanticTypeSetting{
 						Types: []*v1pb.SemanticTypeSetting_SemanticType{
 							{
 								Id:    "default",
@@ -164,7 +162,7 @@ func TestSensitiveData(t *testing.T) {
 	a.NoError(err)
 	instance := instanceResp.Msg
 
-	err = ctl.createDatabaseV2(ctx, ctl.project, instance, nil /* environment */, databaseName, "")
+	err = ctl.createDatabase(ctx, ctl.project, instance, nil /* environment */, databaseName, "")
 	a.NoError(err)
 
 	databaseResp, err := ctl.databaseServiceClient.GetDatabase(ctx, connect.NewRequest(&v1pb.GetDatabaseRequest{
@@ -173,28 +171,26 @@ func TestSensitiveData(t *testing.T) {
 	a.NoError(err)
 	database := databaseResp.Msg
 
-	// Validate query syntax error.
-	_, err = ctl.sqlServiceClient.Query(ctx, connect.NewRequest(&v1pb.QueryRequest{
+	// Validate query syntax error - with new ACL system, syntax errors are returned in query results
+	syntaxErrorResp, err := ctl.sqlServiceClient.Query(ctx, connect.NewRequest(&v1pb.QueryRequest{
 		Name:         database.Name,
 		Statement:    "SELECT hello TO world;",
 		DataSourceId: "admin",
 	}))
-	a.Error(err)
-	// TODO(d): deprecate the details with diagonose check. And the error is not reached anyway.
-	/*
-		st := status.Convert(err)
-		a.Len(st.Details(), 1)
-		report, ok := st.Details()[0].(*v1pb.PlanCheckRun_Result_SqlReviewReport)
-		a.True(ok)
-		a.Equal(int32(1), report.Line)
-		a.Equal(int32(13), report.Column)
-		a.Equal("Syntax error at line 1:13 \nrelated text: SELECT hello TO", report.Detail)
-	*/
+	a.NoError(err)
+	a.Equal(1, len(syntaxErrorResp.Msg.Results))
+	a.NotEmpty(syntaxErrorResp.Msg.Results[0].Error)
+	a.Contains(syntaxErrorResp.Msg.Results[0].Error, "Syntax error")
+	// Check the detailed_error field for syntax_error with position
+	syntaxErr := syntaxErrorResp.Msg.Results[0].GetSyntaxError()
+	a.NotNil(syntaxErr)
+	a.NotNil(syntaxErr.StartPosition)
+	a.Equal(int32(1), syntaxErr.StartPosition.Line)
+	a.Equal(int32(14), syntaxErr.StartPosition.Column)
 
 	sheetResp, err := ctl.sheetServiceClient.CreateSheet(ctx, connect.NewRequest(&v1pb.CreateSheetRequest{
 		Parent: ctl.project.Name,
 		Sheet: &v1pb.Sheet{
-			Title:   "createTable",
 			Content: []byte(createTable),
 		},
 	}))
@@ -202,7 +198,7 @@ func TestSensitiveData(t *testing.T) {
 	sheet := sheetResp.Msg
 
 	// Create an issue that updates database schema.
-	err = ctl.changeDatabase(ctx, ctl.project, database, sheet, v1pb.MigrationType_DDL)
+	err = ctl.changeDatabase(ctx, ctl.project, database, sheet, false)
 	a.NoError(err)
 
 	// Create sensitive data in the database config.
@@ -240,7 +236,6 @@ func TestSensitiveData(t *testing.T) {
 	insertDataSheetResp, err := ctl.sheetServiceClient.CreateSheet(ctx, connect.NewRequest(&v1pb.CreateSheetRequest{
 		Parent: ctl.project.Name,
 		Sheet: &v1pb.Sheet{
-			Title:   "insertData",
 			Content: []byte(insertData),
 		},
 	}))
@@ -248,7 +243,7 @@ func TestSensitiveData(t *testing.T) {
 	insertDataSheet := insertDataSheetResp.Msg
 
 	// Insert data into table tech_book.
-	err = ctl.changeDatabase(ctx, ctl.project, database, insertDataSheet, v1pb.MigrationType_DML)
+	err = ctl.changeDatabase(ctx, ctl.project, database, insertDataSheet, false)
 	a.NoError(err)
 
 	// Query masked data.
@@ -283,10 +278,9 @@ func TestSensitiveData(t *testing.T) {
 				SemanticTypeTitle: "Default",
 			},
 		},
-		Rows:        maskedData.Rows,
-		Statement:   "SELECT * FROM tech_book",
-		RowsCount:   3,
-		AllowExport: true,
+		Rows:      maskedData.Rows,
+		Statement: "SELECT * FROM tech_book",
+		RowsCount: 3,
 	}
 
 	diff := cmp.Diff(expectedMaskedData, queryResp.Msg.Results[0], protocmp.Transform(), protocmp.IgnoreMessages(&durationpb.Duration{}))

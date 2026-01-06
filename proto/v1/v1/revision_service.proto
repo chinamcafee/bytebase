@@ -32,17 +32,6 @@ service RevisionService {
     option (bytebase.v1.auth_method) = IAM;
   }
 
-  // Creates a new schema revision.
-  // Permissions required: bb.revisions.create
-  rpc CreateRevision(CreateRevisionRequest) returns (Revision) {
-    option (google.api.http) = {
-      post: "/v1/{parent=instances/*/databases/*}/revisions"
-      body: "revision"
-    };
-    option (bytebase.v1.permission) = "bb.revisions.create";
-    option (bytebase.v1.auth_method) = IAM;
-  }
-
   // Creates multiple schema revisions in a single operation.
   // Permissions required: bb.revisions.create
   rpc BatchCreateRevisions(BatchCreateRevisionsRequest) returns (BatchCreateRevisionsResponse) {
@@ -157,45 +146,35 @@ message Revision {
   // Can be empty.
   string release = 2 [(google.api.resource_reference) = {type: "bytebase.com/Release"}];
 
-  google.protobuf.Timestamp create_time = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
+  google.protobuf.Timestamp create_time = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   // Format: users/hello@world.com
   // Can be empty.
-  string deleter = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
+  string deleter = 4 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   // Can be empty.
-  google.protobuf.Timestamp delete_time = 6 [(google.api.field_behavior) = OUTPUT_ONLY];
+  google.protobuf.Timestamp delete_time = 5 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   // Format: projects/{project}/releases/{release}/files/{id}
   // Can be empty.
-  string file = 7;
+  string file = 6;
 
   // The schema version string for this revision.
-  string version = 8;
+  string version = 7;
 
   // The sheet that holds the content.
   // Format: projects/{project}/sheets/{sheet}
-  string sheet = 9 [(google.api.resource_reference) = {type: "bytebase.com/Sheet"}];
+  string sheet = 8 [(google.api.resource_reference) = {type: "bytebase.com/Sheet"}];
   // The SHA256 hash value of the sheet.
-  string sheet_sha256 = 10 [(google.api.field_behavior) = OUTPUT_ONLY];
-  // The statement is used for preview purpose.
-  string statement = 11 [(google.api.field_behavior) = OUTPUT_ONLY];
-  // The size of the statement in bytes.
-  int64 statement_size = 12 [(google.api.field_behavior) = OUTPUT_ONLY];
-
-  // The issue associated with the revision.
-  // Can be empty.
-  // Format: projects/{project}/issues/{issue}
-  string issue = 13 [(google.api.resource_reference) = {type: "bytebase.com/Issue"}];
+  string sheet_sha256 = 9 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   // The task run associated with the revision.
   // Can be empty.
-  // Format:
-  // projects/{project}/rollouts/{rollout}/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
-  string task_run = 14 [(google.api.resource_reference) = {type: "bytebase.com/TaskRun"}];
+  // Format: projects/{project}/plans/{plan}/rollout/stages/{stage}/tasks/{task}/taskRuns/{taskRun}
+  string task_run = 13 [(google.api.resource_reference) = {type: "bytebase.com/TaskRun"}];
 
   // The type of the revision.
-  Type type = 15;
+  Type type = 14;
 
   // The type of schema revision.
   enum Type {

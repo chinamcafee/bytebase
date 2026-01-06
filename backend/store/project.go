@@ -41,6 +41,7 @@ type FindProjectMessage struct {
 	Limit       *int
 	Offset      *int
 	FilterQ     *qb.Query
+	OrderByKeys []*OrderByKey
 }
 
 // UpdateProjectMessage is the message for updating a project.
@@ -53,8 +54,8 @@ type UpdateProjectMessage struct {
 	Delete                     *bool
 }
 
-// GetProjectV2 gets project by resource ID.
-func (s *Store) GetProjectV2(ctx context.Context, find *FindProjectMessage) (*ProjectMessage, error) {
+// GetProject gets project by resource ID.
+func (s *Store) GetProject(ctx context.Context, find *FindProjectMessage) (*ProjectMessage, error) {
 	if find.ResourceID != nil {
 		if v, ok := s.projectCache.Get(*find.ResourceID); ok && s.enableCache {
 			return v, nil
@@ -70,7 +71,7 @@ func (s *Store) GetProjectV2(ctx context.Context, find *FindProjectMessage) (*Pr
 	}
 	defer tx.Rollback()
 
-	projects, err := s.listProjectImplV2(ctx, tx, find)
+	projects, err := s.ListProjects(ctx, find)
 	if err != nil {
 		return nil, err
 	}
@@ -90,34 +91,98 @@ func (s *Store) GetProjectV2(ctx context.Context, find *FindProjectMessage) (*Pr
 	return projects[0], nil
 }
 
-// ListProjectV2 lists all projects.
-func (s *Store) ListProjectV2(ctx context.Context, find *FindProjectMessage) ([]*ProjectMessage, error) {
+// ListProjects lists all projects.
+func (s *Store) ListProjects(ctx context.Context, find *FindProjectMessage) ([]*ProjectMessage, error) {
 	tx, err := s.GetDB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
-	projects, err := s.listProjectImplV2(ctx, tx, find)
+	q := qb.Q().Space("SELECT resource_id, name, data_classification_config_id, setting, deleted FROM project WHERE TRUE")
+	if filterQ := find.FilterQ; filterQ != nil {
+		q.And("?", filterQ)
+	}
+	if v := find.ResourceID; v != nil {
+		q.And("resource_id = ?", *v)
+	}
+	if !find.ShowDeleted {
+		q.And("deleted = ?", false)
+	}
+
+	if len(find.OrderByKeys) > 0 {
+		orderBy := []string{}
+		for _, v := range find.OrderByKeys {
+			orderBy = append(orderBy, fmt.Sprintf("%s %s", v.Key, v.SortOrder.String()))
+		}
+		q.Space(fmt.Sprintf("ORDER BY %s", strings.Join(orderBy, ", ")))
+	} else {
+		q.Space("ORDER BY project.resource_id")
+	}
+	if v := find.Limit; v != nil {
+		q.Space("LIMIT ?", *v)
+	}
+	if v := find.Offset; v != nil {
+		q.Space("OFFSET ?", *v)
+	}
+
+	sql, args, err := q.ToSQL()
 	if err != nil {
 		return nil, err
+	}
+
+	var projectMessages []*ProjectMessage
+	rows, err := tx.QueryContext(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var projectMessage ProjectMessage
+		var payload []byte
+		if err := rows.Scan(
+			&projectMessage.ResourceID,
+			&projectMessage.Title,
+			&projectMessage.DataClassificationConfigID,
+			&payload,
+			&projectMessage.Deleted,
+		); err != nil {
+			return nil, err
+		}
+		setting := &storepb.Project{}
+		if err := common.ProtojsonUnmarshaler.Unmarshal(payload, setting); err != nil {
+			return nil, err
+		}
+		projectMessage.Setting = setting
+		projectMessages = append(projectMessages, &projectMessage)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for _, project := range projectMessages {
+		projectWebhooks, err := s.ListProjectWebhooks(ctx, &FindProjectWebhookMessage{ProjectID: &project.ResourceID})
+		if err != nil {
+			return nil, err
+		}
+		project.Webhooks = projectWebhooks
 	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
-	for _, project := range projects {
+	for _, project := range projectMessages {
 		s.storeProjectCache(project)
 	}
-	return projects, nil
+	return projectMessages, nil
 }
 
-// CreateProjectV2 creates a project.
-func (s *Store) CreateProjectV2(ctx context.Context, create *ProjectMessage, creatorID int) (*ProjectMessage, error) {
-	user, err := s.GetUserByID(ctx, creatorID)
-	if err != nil {
-		return nil, err
+// CreateProject creates a project.
+func (s *Store) CreateProject(ctx context.Context, create *ProjectMessage, creator *UserMessage) (*ProjectMessage, error) {
+	if creator == nil {
+		return nil, errors.Errorf("creator cannot be nil")
 	}
 	if create.Setting == nil {
 		create.Setting = &storepb.Project{}
@@ -154,7 +219,7 @@ func (s *Store) CreateProjectV2(ctx context.Context, create *ProjectMessage, cre
 			{
 				Role: common.FormatRole(common.ProjectOwner),
 				Members: []string{
-					common.FormatUserUID(user.ID),
+					common.FormatUserEmail(creator.Email),
 				},
 				Condition: &expr.Expr{},
 			},
@@ -164,7 +229,7 @@ func (s *Store) CreateProjectV2(ctx context.Context, create *ProjectMessage, cre
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.CreatePolicyV2(ctx, &PolicyMessage{
+	if _, err := s.CreatePolicy(ctx, &PolicyMessage{
 		ResourceType:      storepb.Policy_PROJECT,
 		Resource:          common.FormatProject(project.ResourceID),
 		Payload:           string(policyPayload),
@@ -184,29 +249,8 @@ func (s *Store) CreateProjectV2(ctx context.Context, create *ProjectMessage, cre
 	return project, nil
 }
 
-// UpdateProjectV2 updates a project.
-func (s *Store) UpdateProjectV2(ctx context.Context, patch *UpdateProjectMessage) (*ProjectMessage, error) {
-	s.removeProjectCache(patch.ResourceID)
-
-	tx, err := s.GetDB().BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
-	if err := updateProjectImplV2(ctx, tx, patch); err != nil {
-		return nil, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-
-	return s.GetProjectV2(ctx, &FindProjectMessage{ResourceID: &patch.ResourceID})
-}
-
-// BatchUpdateProjectsV2 updates multiple projects in a single transaction.
-func (s *Store) BatchUpdateProjectsV2(ctx context.Context, patches []*UpdateProjectMessage) ([]*ProjectMessage, error) {
+// UpdateProjects updates projects in a single transaction.
+func (s *Store) UpdateProjects(ctx context.Context, patches ...*UpdateProjectMessage) ([]*ProjectMessage, error) {
 	if len(patches) == 0 {
 		return nil, nil
 	}
@@ -224,7 +268,7 @@ func (s *Store) BatchUpdateProjectsV2(ctx context.Context, patches []*UpdateProj
 
 	// Update all projects in the transaction
 	for _, patch := range patches {
-		if err := updateProjectImplV2(ctx, tx, patch); err != nil {
+		if err := updateProjectImpl(ctx, tx, patch); err != nil {
 			return nil, err
 		}
 	}
@@ -236,7 +280,7 @@ func (s *Store) BatchUpdateProjectsV2(ctx context.Context, patches []*UpdateProj
 	// Fetch and return all updated projects
 	var updatedProjects []*ProjectMessage
 	for _, patch := range patches {
-		project, err := s.GetProjectV2(ctx, &FindProjectMessage{ResourceID: &patch.ResourceID})
+		project, err := s.GetProject(ctx, &FindProjectMessage{ResourceID: &patch.ResourceID})
 		if err != nil {
 			return nil, err
 		}
@@ -246,7 +290,7 @@ func (s *Store) BatchUpdateProjectsV2(ctx context.Context, patches []*UpdateProj
 	return updatedProjects, nil
 }
 
-func updateProjectImplV2(ctx context.Context, txn *sql.Tx, patch *UpdateProjectMessage) error {
+func updateProjectImpl(ctx context.Context, txn *sql.Tx, patch *UpdateProjectMessage) error {
 	set := qb.Q()
 
 	if v := patch.Title; v != nil {
@@ -281,71 +325,6 @@ func updateProjectImplV2(ctx context.Context, txn *sql.Tx, patch *UpdateProjectM
 		return err
 	}
 	return nil
-}
-
-func (s *Store) listProjectImplV2(ctx context.Context, txn *sql.Tx, find *FindProjectMessage) ([]*ProjectMessage, error) {
-	q := qb.Q().Space("SELECT resource_id, name, data_classification_config_id, setting, deleted FROM project WHERE TRUE")
-	if filterQ := find.FilterQ; filterQ != nil {
-		q.And("?", filterQ)
-	}
-	if v := find.ResourceID; v != nil {
-		q.And("resource_id = ?", *v)
-	}
-	if !find.ShowDeleted {
-		q.And("deleted = ?", false)
-	}
-	q.Space("ORDER BY project.resource_id")
-	if v := find.Limit; v != nil {
-		q.Space("LIMIT ?", *v)
-	}
-	if v := find.Offset; v != nil {
-		q.Space("OFFSET ?", *v)
-	}
-
-	sql, args, err := q.ToSQL()
-	if err != nil {
-		return nil, err
-	}
-
-	var projectMessages []*ProjectMessage
-	rows, err := txn.QueryContext(ctx, sql, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var projectMessage ProjectMessage
-		var payload []byte
-		if err := rows.Scan(
-			&projectMessage.ResourceID,
-			&projectMessage.Title,
-			&projectMessage.DataClassificationConfigID,
-			&payload,
-			&projectMessage.Deleted,
-		); err != nil {
-			return nil, err
-		}
-		setting := &storepb.Project{}
-		if err := common.ProtojsonUnmarshaler.Unmarshal(payload, setting); err != nil {
-			return nil, err
-		}
-		projectMessage.Setting = setting
-		projectMessages = append(projectMessages, &projectMessage)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	for _, project := range projectMessages {
-		projectWebhooks, err := s.findProjectWebhookImplV2(ctx, txn, &FindProjectWebhookMessage{ProjectID: &project.ResourceID})
-		if err != nil {
-			return nil, err
-		}
-		project.Webhooks = projectWebhooks
-	}
-
-	return projectMessages, nil
 }
 
 func (s *Store) storeProjectCache(project *ProjectMessage) {
@@ -441,12 +420,12 @@ func (s *Store) DeleteProject(ctx context.Context, resourceID string) error {
 		return errors.Wrapf(err, "failed to delete plans for project %s", resourceID)
 	}
 
-	// Delete task_run_log entries for tasks in pipelines of this project
+	// Delete task_run_log entries for tasks in plans of this project
 	q = qb.Q().Space("DELETE FROM task_run_log")
 	q.Space("WHERE task_run_id IN (")
 	q.Space("SELECT tr.id FROM task_run tr")
 	q.Space("JOIN task t ON tr.task_id = t.id")
-	q.Space("JOIN pipeline p ON t.pipeline_id = p.id")
+	q.Space("JOIN plan p ON t.plan_id = p.id")
 	q.Space("WHERE p.project = ?)", resourceID)
 	sql, args, err = q.ToSQL()
 	if err != nil {
@@ -456,11 +435,11 @@ func (s *Store) DeleteProject(ctx context.Context, resourceID string) error {
 		return errors.Wrapf(err, "failed to delete task_run_log for project %s", resourceID)
 	}
 
-	// Delete task_run entries for tasks in pipelines of this project
+	// Delete task_run entries for tasks in plans of this project
 	q = qb.Q().Space("DELETE FROM task_run")
 	q.Space("WHERE task_id IN (")
 	q.Space("SELECT t.id FROM task t")
-	q.Space("JOIN pipeline p ON t.pipeline_id = p.id")
+	q.Space("JOIN plan p ON t.plan_id = p.id")
 	q.Space("WHERE p.project = ?)", resourceID)
 	sql, args, err = q.ToSQL()
 	if err != nil {
@@ -470,25 +449,15 @@ func (s *Store) DeleteProject(ctx context.Context, resourceID string) error {
 		return errors.Wrapf(err, "failed to delete task_run for project %s", resourceID)
 	}
 
-	// Delete tasks in pipelines of this project
+	// Delete tasks in plans of this project
 	q = qb.Q().Space("DELETE FROM task")
-	q.Space("WHERE pipeline_id IN (SELECT id FROM pipeline WHERE project = ?)", resourceID)
+	q.Space("WHERE plan_id IN (SELECT id FROM plan WHERE project = ?)", resourceID)
 	sql, args, err = q.ToSQL()
 	if err != nil {
 		return errors.Wrap(err, "failed to build task delete query")
 	}
 	if _, err := tx.ExecContext(ctx, sql, args...); err != nil {
 		return errors.Wrapf(err, "failed to delete tasks for project %s", resourceID)
-	}
-
-	// Delete pipelines associated with this project
-	q = qb.Q().Space("DELETE FROM pipeline WHERE project = ?", resourceID)
-	sql, args, err = q.ToSQL()
-	if err != nil {
-		return errors.Wrap(err, "failed to build pipeline delete query")
-	}
-	if _, err := tx.ExecContext(ctx, sql, args...); err != nil {
-		return errors.Wrapf(err, "failed to delete pipelines for project %s", resourceID)
 	}
 
 	// Delete sheets associated with this project
@@ -509,16 +478,6 @@ func (s *Store) DeleteProject(ctx context.Context, resourceID string) error {
 	}
 	if _, err := tx.ExecContext(ctx, sql, args...); err != nil {
 		return errors.Wrapf(err, "failed to delete releases for project %s", resourceID)
-	}
-
-	// Delete changelists associated with this project
-	q = qb.Q().Space("DELETE FROM changelist WHERE project = ?", resourceID)
-	sql, args, err = q.ToSQL()
-	if err != nil {
-		return errors.Wrap(err, "failed to build changelist delete query")
-	}
-	if _, err := tx.ExecContext(ctx, sql, args...); err != nil {
-		return errors.Wrapf(err, "failed to delete changelists for project %s", resourceID)
 	}
 
 	// Delete db_groups associated with this project
@@ -613,9 +572,7 @@ func GetListProjectFilter(filter string) (*qb.Query, error) {
 				}
 				labelValueList[i] = str
 			}
-			placeholders := strings.Repeat("?,", len(labelValueList))
-			placeholders = placeholders[:len(placeholders)-1]
-			return qb.Q().Space(fmt.Sprintf("%s->'labels'->>'%s' IN (%s)", resource, key, placeholders), labelValueList...), nil
+			return qb.Q().Space(fmt.Sprintf("%s->'labels'->>'%s' = ANY(?)", resource, key), labelValueList), nil
 		default:
 			return nil, errors.Errorf("empty value %v for label filter", value)
 		}
@@ -728,4 +685,25 @@ func GetListProjectFilter(filter string) (*qb.Query, error) {
 		return nil, err
 	}
 	return qb.Q().Space("(?)", q), nil
+}
+
+func GetProjectOrders(orderBy string) ([]*OrderByKey, error) {
+	keys, err := parseOrderBy(orderBy)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	if len(keys) > 1 || keys[0].Key != "title" {
+		return nil, errors.Errorf(`only support order by "title"`)
+	}
+
+	return []*OrderByKey{
+		{
+			Key:       "name",
+			SortOrder: keys[0].SortOrder,
+		},
+	}, nil
 }

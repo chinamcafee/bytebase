@@ -1,159 +1,131 @@
 <template>
-  <BBModal
-    v-if="state.pendingEdit"
-    :title="$t('sql-editor.save-sheet')"
-    @close="close"
-  >
-    <SaveSheetForm
-      :tab="state.pendingEdit.tab"
-      :mask="state.pendingEdit.mask"
-      @close="close"
-      @confirm="doSaveSheet"
-    />
+  <BBModal v-if="showModal" :title="$t('sql-editor.save-sheet')" @close="close">
+    <div
+      class="save-sheet-modal flex flex-col gap-y-3 w-lg max-w-[calc(100vw-8rem)]"
+    >
+      <div class="flex flex-col gap-y-1">
+        <p>
+          {{ $t("common.title") }}
+          <RequiredStar />
+        </p>
+        <NInput
+          ref="sheetTitleInputRef"
+          v-model:value="pendingEdit.title"
+          :placeholder="$t('sql-editor.save-sheet-input-placeholder')"
+          :maxlength="200"
+        />
+      </div>
+      <FolderForm ref="folderFormRef" :folder="pendingEdit.folder" />
+      <div class="flex justify-end gap-x-2 mt-4">
+        <NButton @click="close">{{ $t("common.close") }}</NButton>
+        <NButton
+          :disabled="!pendingEdit.title"
+          type="primary"
+          @click="doSaveSheet"
+        >
+          {{ $t("common.save") }}
+        </NButton>
+      </div>
+    </div>
   </BBModal>
 </template>
 
-<script lang="ts" setup>
-import { create } from "@bufbuild/protobuf";
-import { reactive } from "vue";
+<script lang="tsx" setup>
+import { NButton, NInput } from "naive-ui";
+import { ref } from "vue";
 import { BBModal } from "@/bbkit";
+import RequiredStar from "@/components/RequiredStar.vue";
 import { useEmitteryEventListener } from "@/composables/useEmitteryEventListener";
-import {
-  useDatabaseV1Store,
-  useWorkSheetStore,
-  useSQLEditorTabStore,
-} from "@/store";
+import { useWorkSheetStore } from "@/store";
 import type { SQLEditorTab } from "@/types";
 import { UNKNOWN_ID } from "@/types";
-import type { Worksheet } from "@/types/proto-es/v1/worksheet_service_pb";
-import {
-  WorksheetSchema,
-  Worksheet_Visibility,
-} from "@/types/proto-es/v1/worksheet_service_pb";
 import { extractWorksheetUID } from "@/utils";
-import { useSheetContext } from "../Sheet";
+import FolderForm from "@/views/sql-editor/AsidePanel/WorksheetPane/SheetList/FolderForm.vue";
+import { useSheetContextByView } from "@/views/sql-editor/Sheet";
 import { useSQLEditorContext } from "../context";
-import SaveSheetForm from "./SaveSheetForm.vue";
 
-type LocalState = {
-  pendingEdit?: {
-    tab: SQLEditorTab;
-    mask?: Array<keyof Worksheet>;
-  };
-};
-
-const tabStore = useSQLEditorTabStore();
-const databaseStore = useDatabaseV1Store();
 const worksheetV1Store = useWorkSheetStore();
-const { events: sheetEvents } = useSheetContext();
-const { events: editorEvents } = useSQLEditorContext();
+const editorContext = useSQLEditorContext();
+const { getPwdForWorksheet } = useSheetContextByView("my");
+const folderFormRef = ref<InstanceType<typeof FolderForm>>();
 
-const state = reactive<LocalState>({});
+const pendingEdit = ref<{
+  title: string;
+  folder: string;
+  rawTab?: SQLEditorTab;
+}>({
+  title: "",
+  folder: "",
+});
+const showModal = ref(false);
 
-const doSaveSheet = async (
-  tab: SQLEditorTab,
-  mask?: Array<keyof Worksheet>
-) => {
-  const { title, statement, worksheet } = tab;
-
-  if (title === "") {
+const doSaveSheet = async () => {
+  if (!pendingEdit.value.rawTab) {
+    return close();
+  }
+  if (pendingEdit.value.title === "") {
     return;
   }
+
+  const {
+    worksheet,
+    connection,
+    statement,
+    id: tabId,
+  } = pendingEdit.value.rawTab;
+  const folders = folderFormRef.value?.folders ?? [];
 
   const sheetId = Number(extractWorksheetUID(worksheet ?? ""));
-
   if (sheetId !== UNKNOWN_ID) {
-    const currentSheet = worksheetV1Store.getWorksheetByName(worksheet);
-    if (!currentSheet) return;
-
-    const updatedSheet = await worksheetV1Store.patchWorksheet(
-      {
-        ...currentSheet,
-        title: title,
-        database: tab.connection.database,
-        content: new TextEncoder().encode(statement),
-      },
-      mask ?? ["title", "content", "database"]
-    );
-    if (updatedSheet) {
-      const tab = tabStore.tabList.find(
-        (t) => t.worksheet === updatedSheet.name
-      );
-      if (tab) {
-        tabStore.updateTab(tab.id, {
-          title,
-          status: "CLEAN",
-        });
-      }
-    }
+    await editorContext.maybeUpdateWorksheet({
+      tabId,
+      worksheet,
+      title: pendingEdit.value.title,
+      database: connection.database,
+      statement,
+      folders,
+    });
   } else {
-    if (!tab.connection.database) {
-      return false;
-    }
-    const database = await databaseStore.getOrFetchDatabaseByName(
-      tab.connection.database,
-      true /* silent */
-    );
-    const createdSheet = await worksheetV1Store.createWorksheet(
-      create(WorksheetSchema, {
-        title,
-        project: database.project,
-        content: new TextEncoder().encode(statement),
-        database: database.name,
-        visibility: Worksheet_Visibility.PRIVATE,
-      })
-    );
-    if (tabStore.currentTabId === tab.id) {
-      tabStore.updateCurrentTab({
-        worksheet: createdSheet.name,
-        title,
-        status: "CLEAN",
-      });
-    }
+    await editorContext.createWorksheet({
+      tabId,
+      title: pendingEdit.value.title,
+      statement: pendingEdit.value.rawTab.statement,
+      database: connection.database,
+      folders,
+    });
   }
 
-  // Refresh "my" sheet list.
-  sheetEvents.emit("refresh", { views: ["my"] });
-  state.pendingEdit = undefined;
+  showModal.value = false;
 };
 
-const needSheetTitle = (tab: SQLEditorTab) => {
-  if (tab.worksheet) {
-    // If the sheet is saved, we don't need to show the name popup.
-    return false;
-  }
-  return true;
-};
-
-const trySaveSheet = (
-  tab: SQLEditorTab,
-  editTitle?: boolean,
-  mask?: Array<keyof Worksheet>
-) => {
-  if (!tab.connection.database) {
-    return;
-  }
-  if (needSheetTitle(tab) || editTitle) {
-    state.pendingEdit = {
-      tab,
-      mask,
-    };
-    return;
-  }
-  state.pendingEdit = undefined;
-
-  doSaveSheet(tab, mask);
+const needShowModal = (tab: SQLEditorTab) => {
+  // If the sheet is saved, we don't need to show the name popup.
+  return !tab.worksheet;
 };
 
 const close = () => {
-  state.pendingEdit = undefined;
+  showModal.value = false;
 };
 
 useEmitteryEventListener(
-  editorEvents,
+  editorContext.events,
   "save-sheet",
-  ({ tab, editTitle, mask }) => {
-    trySaveSheet(tab, editTitle, mask);
+  ({ tab, editTitle }) => {
+    pendingEdit.value = {
+      title: tab.title,
+      folder: "",
+      rawTab: tab,
+    };
+
+    if (needShowModal(tab) || editTitle) {
+      const worksheet = worksheetV1Store.getWorksheetByName(tab.worksheet);
+      if (worksheet) {
+        pendingEdit.value.folder = getPwdForWorksheet(worksheet);
+      }
+      showModal.value = true;
+      return;
+    }
+    doSaveSheet();
   }
 );
 </script>

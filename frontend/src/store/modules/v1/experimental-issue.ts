@@ -1,50 +1,52 @@
 import { create } from "@bufbuild/protobuf";
-import { orderBy } from "lodash-es";
 import {
   issueServiceClientConnect,
   planServiceClientConnect,
   rolloutServiceClientConnect,
-} from "@/grpcweb";
+} from "@/connect";
 import { useProjectV1Store } from "@/store";
 import {
+  type ComposedIssue,
+  EMPTY_ID,
   emptyIssue,
   emptyRollout,
-  EMPTY_ID,
-  unknownIssue,
   UNKNOWN_ID,
-  type ComposedIssue,
+  unknownIssue,
 } from "@/types";
+import type { Issue } from "@/types/proto-es/v1/issue_service_pb";
 import {
   CreateIssueRequestSchema,
   GetIssueRequestSchema,
 } from "@/types/proto-es/v1/issue_service_pb";
-import type { Issue } from "@/types/proto-es/v1/issue_service_pb";
-import {
-  GetPlanRequestSchema,
-  ListPlanCheckRunsRequestSchema,
-  CreatePlanRequestSchema,
-} from "@/types/proto-es/v1/plan_service_pb";
 import type { Plan } from "@/types/proto-es/v1/plan_service_pb";
+import {
+  CreatePlanRequestSchema,
+  GetPlanCheckRunRequestSchema,
+  GetPlanRequestSchema,
+} from "@/types/proto-es/v1/plan_service_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import {
+  CreateRolloutRequestSchema,
   GetRolloutRequestSchema,
   ListTaskRunsRequestSchema,
-  CreateRolloutRequestSchema,
 } from "@/types/proto-es/v1/rollout_service_pb";
-import { extractProjectResourceName, hasProjectPermissionV2 } from "@/utils";
+import {
+  extractProjectResourceName,
+  getRolloutFromPlan,
+  hasProjectPermissionV2,
+} from "@/utils";
 
 export interface ComposeIssueConfig {
   withPlan?: boolean;
   withRollout?: boolean;
 }
 
-export const composeIssue = async (
+const composeIssue = async (
   rawIssue: Issue,
   config: ComposeIssueConfig = { withPlan: true, withRollout: true }
 ): Promise<ComposedIssue> => {
   const project = `projects/${extractProjectResourceName(rawIssue.name)}`;
-  const projectEntity =
-    await useProjectV1Store().getOrFetchProjectByName(project);
+  const projectEntity = useProjectV1Store().getProjectByName(project);
 
   const issue: ComposedIssue = {
     ...rawIssue,
@@ -64,34 +66,48 @@ export const composeIssue = async (
       issue.planEntity = response;
     }
 
-    if (hasProjectPermissionV2(projectEntity, "bb.planCheckRuns.list")) {
-      // Only show the latest plan check runs.
-      const request = create(ListPlanCheckRunsRequestSchema, {
-        parent: issue.plan,
-        latestOnly: true,
+    if (hasProjectPermissionV2(projectEntity, "bb.planCheckRuns.get")) {
+      const request = create(GetPlanCheckRunRequestSchema, {
+        name: `${issue.plan}/planCheckRun`,
       });
-      const response =
-        await planServiceClientConnect.listPlanCheckRuns(request);
-      const planCheckRuns = response.planCheckRuns;
-      issue.planCheckRunList = orderBy(planCheckRuns, "name", "desc");
+      try {
+        const response =
+          await planServiceClientConnect.getPlanCheckRun(request);
+        issue.planCheckRunList = [response];
+      } catch {
+        // Plan check run might not exist yet
+        issue.planCheckRunList = [];
+      }
     }
   }
-  if (config.withRollout && issue.rollout) {
+  if (config.withRollout && issue.plan) {
+    const rolloutName = getRolloutFromPlan(issue.plan);
     if (hasProjectPermissionV2(projectEntity, "bb.rollouts.get")) {
       const request = create(GetRolloutRequestSchema, {
-        name: issue.rollout,
+        name: rolloutName,
       });
-      const response = await rolloutServiceClientConnect.getRollout(request);
-      issue.rolloutEntity = response;
+      try {
+        const response = await rolloutServiceClientConnect.getRollout(request);
+        issue.rolloutEntity = response;
+      } catch (e) {
+        // Rollout might not exist yet
+        console.error(e);
+      }
     }
 
     if (hasProjectPermissionV2(projectEntity, "bb.taskRuns.list")) {
       const request = create(ListTaskRunsRequestSchema, {
-        parent: `${issue.rollout}/stages/-/tasks/-`,
+        parent: `${rolloutName}/stages/-/tasks/-`,
       });
-      const response = await rolloutServiceClientConnect.listTaskRuns(request);
-      const taskRuns = response.taskRuns;
-      issue.rolloutTaskRunList = taskRuns;
+      try {
+        const response =
+          await rolloutServiceClientConnect.listTaskRuns(request);
+        const taskRuns = response.taskRuns;
+        issue.rolloutTaskRunList = taskRuns;
+      } catch (e) {
+        // Rollout might not exist yet
+        console.error(e);
+      }
     }
   }
 
@@ -129,10 +145,15 @@ export const experimentalFetchIssueByUID = async (
   return composeIssue(rawIssue);
 };
 
+export interface CreateIssueByPlanOptions {
+  skipRollout?: boolean;
+}
+
 export const experimentalCreateIssueByPlan = async (
   project: Project,
   issueCreate: Issue,
-  planCreate: Plan
+  planCreate: Plan,
+  options?: CreateIssueByPlanOptions
 ) => {
   const newPlan = planCreate;
   const request = create(CreatePlanRequestSchema, {
@@ -150,16 +171,18 @@ export const experimentalCreateIssueByPlan = async (
   const newCreatedIssue =
     await issueServiceClientConnect.createIssue(issueRequest);
   const createdIssue = newCreatedIssue;
+
+  // Skip rollout creation for plans that create rollout on-demand (e.g., database creation)
+  if (options?.skipRollout) {
+    return { createdPlan, createdIssue, createdRollout: undefined };
+  }
+
   const rolloutRequest = create(CreateRolloutRequestSchema, {
-    parent: project.name,
-    rollout: {
-      plan: createdPlan.name,
-    },
+    parent: createdPlan.name,
   });
   const rolloutResponse =
     await rolloutServiceClientConnect.createRollout(rolloutRequest);
   const createdRollout = rolloutResponse;
-  createdIssue.rollout = createdRollout.name;
 
   return { createdPlan, createdIssue, createdRollout };
 };

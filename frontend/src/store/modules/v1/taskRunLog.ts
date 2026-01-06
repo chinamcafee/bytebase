@@ -1,12 +1,12 @@
 import { create } from "@bufbuild/protobuf";
 import { defineStore } from "pinia";
 import { reactive } from "vue";
-import { rolloutServiceClientConnect } from "@/grpcweb";
+import { rolloutServiceClientConnect } from "@/connect";
+import type { TaskRunLog } from "@/types/proto-es/v1/rollout_service_pb";
 import {
   GetTaskRunLogRequestSchema,
   TaskRunLogSchema,
 } from "@/types/proto-es/v1/rollout_service_pb";
-import type { TaskRunLog } from "@/types/proto-es/v1/rollout_service_pb";
 
 export const useTaskRunLogStore = defineStore("taskRunLog", () => {
   // Map from taskRun name to TaskRunLog
@@ -20,14 +20,18 @@ export const useTaskRunLogStore = defineStore("taskRunLog", () => {
 
     // Return empty log if not found
     const emptyLog = create(TaskRunLogSchema, {});
-    taskRunLogByName.set(taskRunName, emptyLog);
     return emptyLog;
   };
 
-  const fetchTaskRunLog = async (taskRunName: string): Promise<TaskRunLog> => {
-    const existing = taskRunLogByName.get(taskRunName);
-    if (existing) {
-      return existing;
+  const fetchTaskRunLog = async (
+    taskRunName: string,
+    options?: { skipCache?: boolean }
+  ): Promise<TaskRunLog> => {
+    if (!options?.skipCache) {
+      const existing = taskRunLogByName.get(taskRunName);
+      if (existing) {
+        return existing;
+      }
     }
 
     try {

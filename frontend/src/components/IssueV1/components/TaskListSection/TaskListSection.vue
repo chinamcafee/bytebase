@@ -62,21 +62,20 @@
 <script lang="ts" setup>
 import { useDebounceFn } from "@vueuse/core";
 import { NButton } from "naive-ui";
-import { computed, ref, reactive, watch } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { BBSpin } from "@/bbkit";
 import { usePlanSQLCheckContext } from "@/components/Plan/components/SQLCheckSection/context";
 import { useVerticalScrollState } from "@/composables/useScrollState";
-import { batchGetOrFetchDatabases, useCurrentProjectV1 } from "@/store";
+import { useCurrentProjectV1, useDatabaseV1Store } from "@/store";
 import { DEBOUNCE_SEARCH_DELAY } from "@/types";
 import type { Task_Status } from "@/types/proto-es/v1/rollout_service_pb";
 import type { Advice_Level } from "@/types/proto-es/v1/sql_service_pb";
-import { databaseForTask } from "@/utils";
-import { isDev } from "@/utils";
+import { databaseForTask, isDev } from "@/utils";
 import { useIssueContext } from "../../logic";
 import CurrentTaskSection from "./CurrentTaskSection.vue";
+import { filterTask } from "./filter";
 import TaskCard from "./TaskCard.vue";
 import TaskFilter from "./TaskFilter.vue";
-import { filterTask } from "./filter";
 
 interface StageState {
   // Index is the current number of tasks to show.
@@ -107,6 +106,7 @@ const { project } = useCurrentProjectV1();
 const { resultMap } = usePlanSQLCheckContext();
 const taskBar = ref<HTMLDivElement>();
 const taskBarScrollState = useVerticalScrollState(taskBar, MAX_LIST_HEIGHT);
+const dbStore = useDatabaseV1Store();
 
 const taskList = computed(() => {
   return selectedStage.value.tasks;
@@ -174,7 +174,7 @@ const loadMore = useDebounceFn(async () => {
     .map((task) => databaseForTask(project.value, task).name);
 
   try {
-    await batchGetOrFetchDatabases(databaseNames);
+    await dbStore.batchGetOrFetchDatabases(databaseNames);
   } catch {
     // Ignore errors
     // If the issue type is create database,
@@ -234,12 +234,30 @@ watch(
 
 <style scoped lang="postcss">
 .task-list::before {
-  @apply absolute top-0 h-4 w-full -ml-4 z-10 pointer-events-none transition-shadow;
+  position: absolute;
+  top: 0;
+  height: 1rem;
+  width: 100%;
+  margin-left: -1rem;
+  z-index: 10;
+  pointer-events: none;
+  transition-property: box-shadow;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
   content: "";
   box-shadow: none;
 }
 .task-list::after {
-  @apply absolute bottom-0 h-4 w-full -ml-4 z-10 pointer-events-none transition-shadow;
+  position: absolute;
+  bottom: 0;
+  height: 1rem;
+  width: 100%;
+  margin-left: -1rem;
+  z-index: 10;
+  pointer-events: none;
+  transition-property: box-shadow;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
   content: "";
   box-shadow: none;
 }

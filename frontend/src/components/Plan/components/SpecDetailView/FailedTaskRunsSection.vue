@@ -1,5 +1,5 @@
 <template>
-  <div v-if="shouldShowSection" class="w-full space-y-2 pt-3">
+  <div v-if="shouldShowSection" class="w-full flex flex-col gap-y-2 py-3">
     <div class="text-sm text-control">
       {{ $t("task-run.failed-runs") }}
     </div>
@@ -51,30 +51,31 @@
 
 <script lang="tsx" setup>
 import { ExternalLinkIcon } from "lucide-vue-next";
-import { NButton, type DataTableColumn, NDataTable } from "naive-ui";
+import { type DataTableColumn, NButton, NDataTable } from "naive-ui";
 import { computed, reactive, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import TaskRunDetail from "@/components/IssueV1/components/TaskRunSection/TaskRunDetail.vue";
 import TaskRunStatusIcon from "@/components/IssueV1/components/TaskRunSection/TaskRunStatusIcon.vue";
 import HumanizeDate from "@/components/misc/HumanizeDate.vue";
+import TaskRunComment from "@/components/RolloutV1/components/TaskRunComment.vue";
 import { Drawer, DrawerContent } from "@/components/v2";
-import { PROJECT_V1_ROUTE_ROLLOUT_DETAIL_TASK_DETAIL } from "@/router/dashboard/projectV1";
+import { PROJECT_V1_ROUTE_PLAN_ROLLOUT_TASK } from "@/router/dashboard/projectV1";
 import { useCurrentProjectV1, useDatabaseV1Store } from "@/store";
 import { useTaskRunLogStore } from "@/store/modules/v1/taskRunLog";
 import { getDateForPbTimestampProtoEs } from "@/types";
 import {
-  TaskRun_Status,
   Task_Status,
   type TaskRun,
+  TaskRun_Status,
 } from "@/types/proto-es/v1/rollout_service_pb";
 import {
+  extractPlanUIDFromRolloutName,
+  extractProjectResourceName,
   extractTaskUID,
   flattenTaskV1List,
-  extractProjectResourceName,
 } from "@/utils";
 import { usePlanContextWithRollout } from "../../logic";
-import TaskRunComment from "../RolloutView/TaskRunComment.vue";
 import DatabaseDisplay from "../common/DatabaseDisplay.vue";
 import { useSelectedSpec } from "./context";
 
@@ -84,7 +85,7 @@ const { t } = useI18n();
 const router = useRouter();
 const { project } = useCurrentProjectV1();
 const { rollout, taskRuns } = usePlanContextWithRollout();
-const selectedSpec = useSelectedSpec();
+const { selectedSpec } = useSelectedSpec();
 const databaseStore = useDatabaseV1Store();
 const taskRunLogStore = useTaskRunLogStore();
 
@@ -266,10 +267,14 @@ const getTaskRouteParams = (taskRun: TaskRun) => {
   const task = getTaskForTaskRun(taskRun);
   if (!task) return null;
 
-  // Extract IDs from task name (format: projects/xxx/rollouts/yyy/stages/zzz/tasks/aaa)
+  // Extract IDs from task name (format: projects/xxx/plans/yyy/rollout/stages/zzz/tasks/aaa)
+
   const taskParts = task.name.split("/");
-  const rolloutId = rollout.value.name.split("/").pop();
+
+  const planId = extractPlanUIDFromRolloutName(rollout.value.name);
+
   const stageIndex = taskParts.indexOf("stages");
+
   const taskIndex = taskParts.indexOf("tasks");
 
   if (stageIndex === -1 || taskIndex === -1) return null;
@@ -277,7 +282,7 @@ const getTaskRouteParams = (taskRun: TaskRun) => {
   const stageId = taskParts[stageIndex + 1];
   const taskId = taskParts[taskIndex + 1];
 
-  return { rolloutId, stageId, taskId };
+  return { planId, stageId, taskId };
 };
 
 // Get database for selected task run
@@ -293,10 +298,10 @@ const navigateToTaskDetail = (taskRun: TaskRun) => {
   const params = getTaskRouteParams(taskRun);
   if (params) {
     router.push({
-      name: PROJECT_V1_ROUTE_ROLLOUT_DETAIL_TASK_DETAIL,
+      name: PROJECT_V1_ROUTE_PLAN_ROLLOUT_TASK,
       params: {
         projectId: extractProjectResourceName(project.value.name),
-        rolloutId: params.rolloutId,
+        planId: params.planId,
         stageId: params.stageId || "_", // Use placeholder for empty stageId
         taskId: params.taskId,
       },

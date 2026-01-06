@@ -3,13 +3,13 @@ import { createContextValues } from "@connectrpc/connect";
 import { orderBy } from "lodash-es";
 import { defineStore } from "pinia";
 import { computed } from "vue";
-import { settingServiceClientConnect } from "@/grpcweb";
-import { silentContextKey } from "@/grpcweb/context-key";
+import { settingServiceClientConnect } from "@/connect";
+import { silentContextKey } from "@/connect/context-key";
 import type { ResourceId } from "@/types";
 import {
-  unknownEnvironment,
-  nullEnvironment,
   NULL_ENVIRONMENT_NAME,
+  nullEnvironment,
+  unknownEnvironment,
 } from "@/types";
 import type {
   EnvironmentSetting,
@@ -19,9 +19,9 @@ import {
   EnvironmentSetting_EnvironmentSchema,
   EnvironmentSettingSchema,
   GetSettingRequestSchema,
-  UpdateSettingRequestSchema,
-  SettingSchema,
   Setting_SettingName,
+  SettingSchema,
+  UpdateSettingRequestSchema,
 } from "@/types/proto-es/v1/setting_service_pb";
 import type { Environment } from "@/types/v1/environment";
 import { environmentNamePrefix } from "./common";
@@ -83,7 +83,7 @@ const getEnvironmentSetting = async (
     contextValues: createContextValues().set(silentContextKey, silent),
   });
   // Extract environments from proto-es format
-  if (response.value?.value?.case === "environmentSetting") {
+  if (response.value?.value?.case === "environment") {
     const settingEnvironments = response.value.value.value.environments ?? [];
     return convertToEnvironments(settingEnvironments);
   }
@@ -97,7 +97,7 @@ const updateEnvironmentSetting = async (
     name: `settings/${Setting_SettingName[Setting_SettingName.ENVIRONMENT]}`,
     value: {
       value: {
-        case: "environmentSetting",
+        case: "environment",
         value: environment,
       },
     },
@@ -110,7 +110,7 @@ const updateEnvironmentSetting = async (
   const response = await settingServiceClientConnect.updateSetting(request);
 
   // Extract environments from proto-es response
-  if (response.value?.value?.case === "environmentSetting") {
+  if (response.value?.value?.case === "environment") {
     const settingEnvironments = response.value.value.value.environments ?? [];
     return convertToEnvironments(settingEnvironments);
   }

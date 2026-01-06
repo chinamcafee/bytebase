@@ -12,18 +12,15 @@ import (
 
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
+	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/dbfactory"
-	"github.com/bytebase/bytebase/backend/component/iam"
+
 	"github.com/bytebase/bytebase/backend/component/sampleinstance"
-	"github.com/bytebase/bytebase/backend/component/state"
 	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
-	metricapi "github.com/bytebase/bytebase/backend/metric"
 	"github.com/bytebase/bytebase/backend/plugin/db"
-	"github.com/bytebase/bytebase/backend/plugin/metric"
-	"github.com/bytebase/bytebase/backend/runner/metricreport"
 	"github.com/bytebase/bytebase/backend/runner/schemasync"
 	"github.com/bytebase/bytebase/backend/store"
 )
@@ -32,25 +29,21 @@ import (
 type InstanceService struct {
 	v1connect.UnimplementedInstanceServiceHandler
 	store                 *store.Store
+	profile               *config.Profile
 	licenseService        *enterprise.LicenseService
-	metricReporter        *metricreport.Reporter
-	stateCfg              *state.State
 	dbFactory             *dbfactory.DBFactory
 	schemaSyncer          *schemasync.Syncer
-	iamManager            *iam.Manager
 	sampleInstanceManager *sampleinstance.Manager
 }
 
 // NewInstanceService creates a new InstanceService.
-func NewInstanceService(store *store.Store, licenseService *enterprise.LicenseService, metricReporter *metricreport.Reporter, stateCfg *state.State, dbFactory *dbfactory.DBFactory, schemaSyncer *schemasync.Syncer, iamManager *iam.Manager, sampleInstanceManager *sampleinstance.Manager) *InstanceService {
+func NewInstanceService(store *store.Store, profile *config.Profile, licenseService *enterprise.LicenseService, dbFactory *dbfactory.DBFactory, schemaSyncer *schemasync.Syncer, sampleInstanceManager *sampleinstance.Manager) *InstanceService {
 	return &InstanceService{
 		store:                 store,
+		profile:               profile,
 		licenseService:        licenseService,
-		metricReporter:        metricReporter,
-		stateCfg:              stateCfg,
 		dbFactory:             dbFactory,
 		schemaSyncer:          schemaSyncer,
-		iamManager:            iamManager,
 		sampleInstanceManager: sampleInstanceManager,
 	}
 }
@@ -87,7 +80,14 @@ func (s *InstanceService) ListInstances(ctx context.Context, req *connect.Reques
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	find.FilterQ = filterQ
-	instances, err := s.store.ListInstancesV2(ctx, find)
+
+	orderByKeys, err := store.GetInstanceOrders(req.Msg.OrderBy)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	find.OrderByKeys = orderByKeys
+
+	instances, err := s.store.ListInstances(ctx, find)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -208,7 +208,7 @@ func (s *InstanceService) CreateInstance(ctx context.Context, req *connect.Reque
 		return nil, err
 	}
 
-	instance, err := s.store.CreateInstanceV2(ctx, instanceMessage)
+	instance, err := s.store.CreateInstance(ctx, instanceMessage)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -227,14 +227,6 @@ func (s *InstanceService) CreateInstance(ctx context.Context, req *connect.Reque
 		// Sync all databases in the instance asynchronously.
 		s.schemaSyncer.SyncAllDatabases(ctx, instance)
 	}
-
-	s.metricReporter.Report(ctx, &metric.Metric{
-		Name:  metricapi.InstanceCreateMetricName,
-		Value: 1,
-		Labels: map[string]any{
-			"engine": instance.Metadata.GetEngine(),
-		},
-	})
 
 	result := convertInstanceMessage(instance)
 	return connect.NewResponse(result), nil
@@ -262,6 +254,11 @@ func (s *InstanceService) checkDataSource(instance *store.InstanceMessage, dataS
 		return connect.NewError(connect.CodeInvalidArgument, errors.New("data source id is required"))
 	}
 
+	// Validate IAM credential restrictions in SaaS mode
+	if err := s.validateIAMCredentialForSaaS(dataSource); err != nil {
+		return err
+	}
+
 	if err := s.licenseService.IsFeatureEnabledForInstance(v1pb.PlanFeature_FEATURE_EXTERNAL_SECRET_MANAGER, instance); err != nil {
 		missingFeatureError := connect.NewError(connect.CodePermissionDenied, err)
 		if dataSource.GetExternalSecret() != nil {
@@ -273,6 +270,33 @@ func (s *InstanceService) checkDataSource(instance *store.InstanceMessage, dataS
 	// Validate extra connection parameters for MySQL-based engines
 	if err := validateExtraConnectionParameters(instance.Metadata.GetEngine(), dataSource.GetExtraConnectionParameters()); err != nil {
 		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
+
+	return nil
+}
+
+func (s *InstanceService) validateIAMCredentialForSaaS(dataSource *storepb.DataSource) error {
+	if !s.profile.SaaS {
+		return nil
+	}
+
+	// Check if using IAM authentication
+	iamAuthTypes := map[storepb.DataSource_AuthenticationType]bool{
+		storepb.DataSource_GOOGLE_CLOUD_SQL_IAM: true,
+		storepb.DataSource_AWS_RDS_IAM:          true,
+		storepb.DataSource_AZURE_IAM:            true,
+	}
+
+	if !iamAuthTypes[dataSource.GetAuthenticationType()] {
+		return nil
+	}
+
+	// Check if using default credentials (iam_extension is not set)
+	if dataSource.GetIamExtension() == nil {
+		return connect.NewError(
+			connect.CodeInvalidArgument,
+			errors.New("default credentials are not allowed in SaaS mode for security. Please provide specific credentials"),
+		)
 	}
 
 	return nil
@@ -291,23 +315,11 @@ func (s *InstanceService) UpdateInstance(ctx context.Context, req *connect.Reque
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") && req.Msg.AllowMissing {
 			// When allow_missing is true and instance doesn't exist, create a new one
-			user, ok := GetUserFromContext(ctx)
-			if !ok {
-				return nil, connect.NewError(connect.CodeInternal, errors.New("user not found"))
-			}
-
 			instanceID, ierr := common.GetInstanceID(req.Msg.Instance.Name)
 			if ierr != nil {
 				return nil, connect.NewError(connect.CodeInvalidArgument, ierr)
 			}
 
-			ok, err = s.iamManager.CheckPermission(ctx, iam.PermissionInstancesCreate, user)
-			if err != nil {
-				return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to check permission"))
-			}
-			if !ok {
-				return nil, connect.NewError(connect.CodePermissionDenied, errors.Errorf("user does not have permission %q", iam.PermissionInstancesCreate))
-			}
 			return s.CreateInstance(ctx, connect.NewRequest(&v1pb.CreateInstanceRequest{
 				InstanceId: instanceID,
 				Instance:   req.Msg.Instance,
@@ -369,11 +381,6 @@ func (s *InstanceService) UpdateInstance(ctx context.Context, req *connect.Reque
 				return nil, connect.NewError(connect.CodePermissionDenied, err)
 			}
 			patch.Metadata.SyncInterval = req.Msg.Instance.SyncInterval
-		case "maximum_connections":
-			if err := s.licenseService.IsFeatureEnabledForInstance(v1pb.PlanFeature_FEATURE_CUSTOM_INSTANCE_CONNECTION_LIMIT, instance); err != nil {
-				return nil, connect.NewError(connect.CodePermissionDenied, err)
-			}
-			patch.Metadata.MaximumConnections = req.Msg.Instance.MaximumConnections
 		case "sync_databases":
 			patch.Metadata.SyncDatabases = req.Msg.Instance.SyncDatabases
 		case "labels":
@@ -397,7 +404,7 @@ func (s *InstanceService) UpdateInstance(ctx context.Context, req *connect.Reque
 		}
 	}
 
-	ins, err := s.store.UpdateInstanceV2(ctx, patch)
+	ins, err := s.store.UpdateInstance(ctx, patch)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -457,7 +464,7 @@ func (s *InstanceService) DeleteInstance(ctx context.Context, req *connect.Reque
 
 	metadata := proto.CloneOf(instance.Metadata)
 	metadata.Activation = false
-	if _, err := s.store.UpdateInstanceV2(ctx, &store.UpdateInstanceMessage{
+	if _, err := s.store.UpdateInstance(ctx, &store.UpdateInstanceMessage{
 		ResourceID: &instance.ResourceID,
 		Deleted:    &deletePatch,
 		Metadata:   metadata,
@@ -486,7 +493,7 @@ func (s *InstanceService) UndeleteInstance(ctx context.Context, req *connect.Req
 		return nil, err
 	}
 
-	ins, err := s.store.UpdateInstanceV2(ctx, &store.UpdateInstanceMessage{
+	ins, err := s.store.UpdateInstance(ctx, &store.UpdateInstanceMessage{
 		ResourceID: &instance.ResourceID,
 		Deleted:    &undeletePatch,
 	})
@@ -635,7 +642,7 @@ func (s *InstanceService) AddDataSource(ctx context.Context, req *connect.Reques
 
 	metadata := proto.CloneOf(instance.Metadata)
 	metadata.DataSources = append(metadata.DataSources, dataSource)
-	instance, err = s.store.UpdateInstanceV2(ctx, &store.UpdateInstanceMessage{
+	instance, err = s.store.UpdateInstance(ctx, &store.UpdateInstanceMessage{
 		ResourceID: &instance.ResourceID,
 		Metadata:   metadata,
 	})
@@ -656,11 +663,6 @@ func (s *InstanceService) UpdateDataSource(ctx context.Context, req *connect.Req
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("update_mask must be set"))
 	}
 
-	user, ok := GetUserFromContext(ctx)
-	if !ok {
-		return nil, connect.NewError(connect.CodeInternal, errors.New("user not found"))
-	}
-
 	instance, err := getInstanceMessage(ctx, s.store, req.Msg.Name)
 	if err != nil {
 		return nil, err
@@ -678,13 +680,6 @@ func (s *InstanceService) UpdateDataSource(ctx context.Context, req *connect.Req
 	}
 	if dataSource == nil {
 		if req.Msg.AllowMissing {
-			ok, err := s.iamManager.CheckPermission(ctx, iam.PermissionInstancesCreate, user)
-			if err != nil {
-				return nil, connect.NewError(connect.CodeInternal, errors.Wrap(err, "failed to check permission"))
-			}
-			if !ok {
-				return nil, connect.NewError(connect.CodePermissionDenied, errors.Errorf("user does not have permission %q", iam.PermissionInstancesCreate))
-			}
 			return s.AddDataSource(ctx, connect.NewRequest(&v1pb.AddDataSourceRequest{
 				Name:       req.Msg.Name,
 				DataSource: req.Msg.DataSource,
@@ -737,6 +732,8 @@ func (s *InstanceService) UpdateDataSource(ctx context.Context, req *connect.Req
 			dataSource.SshPrivateKey = req.Msg.DataSource.SshPrivateKey
 		case "authentication_private_key":
 			dataSource.AuthenticationPrivateKey = req.Msg.DataSource.AuthenticationPrivateKey
+		case "authentication_private_key_passphrase":
+			dataSource.AuthenticationPrivateKeyPassphrase = req.Msg.DataSource.AuthenticationPrivateKeyPassphrase
 		case "external_secret":
 			externalSecret, err := convertV1DataSourceExternalSecret(req.Msg.DataSource.ExternalSecret)
 			if err != nil {
@@ -792,6 +789,8 @@ func (s *InstanceService) UpdateDataSource(ctx context.Context, req *connect.Req
 							AccessKeyId:     awsCredential.AccessKeyId,
 							SecretAccessKey: awsCredential.SecretAccessKey,
 							SessionToken:    awsCredential.SessionToken,
+							RoleArn:         awsCredential.RoleArn,
+							ExternalId:      awsCredential.ExternalId,
 						},
 					}
 				} else {
@@ -841,7 +840,7 @@ func (s *InstanceService) UpdateDataSource(ctx context.Context, req *connect.Req
 		return connect.NewResponse(result), nil
 	}
 
-	instance, err = s.store.UpdateInstanceV2(ctx, &store.UpdateInstanceMessage{
+	instance, err = s.store.UpdateInstance(ctx, &store.UpdateInstanceMessage{
 		ResourceID: &instance.ResourceID,
 		Metadata:   metadata,
 	})
@@ -886,16 +885,9 @@ func (s *InstanceService) RemoveDataSource(ctx context.Context, req *connect.Req
 	}
 
 	metadata.DataSources = updatedDataSources
-	instance, err = s.store.UpdateInstanceV2(ctx, &store.UpdateInstanceMessage{
+	instance, err = s.store.UpdateInstance(ctx, &store.UpdateInstanceMessage{
 		ResourceID: &instance.ResourceID,
 		Metadata:   metadata,
-	})
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-
-	instance, err = s.store.GetInstanceV2(ctx, &store.FindInstanceMessage{
-		ResourceID: &instance.ResourceID,
 	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -914,7 +906,7 @@ func getInstanceMessage(ctx context.Context, stores *store.Store, name string) (
 	find := &store.FindInstanceMessage{
 		ResourceID: &instanceID,
 	}
-	instance, err := stores.GetInstanceV2(ctx, find)
+	instance, err := stores.GetInstance(ctx, find)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -950,7 +942,7 @@ func buildEnvironmentName(environmentID *string) *string {
 func (s *InstanceService) instanceCountGuard(ctx context.Context) error {
 	instanceLimit := s.licenseService.GetInstanceLimit(ctx)
 
-	count, err := s.store.CountInstance(ctx, &store.CountInstanceMessage{})
+	count, err := s.store.CountActiveInstances(ctx)
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, err)
 	}

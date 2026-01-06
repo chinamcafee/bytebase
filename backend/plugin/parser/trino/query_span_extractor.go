@@ -5,11 +5,11 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/trino-parser"
+	parser "github.com/bytebase/parser/trino"
 	"github.com/pkg/errors"
 
+	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
-	parsererror "github.com/bytebase/bytebase/backend/plugin/parser/errors"
 	"github.com/bytebase/bytebase/backend/store/model"
 )
 
@@ -65,10 +65,17 @@ func (q *querySpanExtractor) getQuerySpan(ctx context.Context, statement string)
 	q.ctes = []*base.PseudoTable{}
 
 	// Parse the statement
-	result, err := ParseTrino(statement)
+	parseResults, err := ParseTrino(statement)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to parse Trino statement")
 	}
+
+	// Query span extraction expects exactly one statement
+	if len(parseResults) != 1 {
+		return nil, errors.Errorf("expected exactly 1 statement, got %d", len(parseResults))
+	}
+
+	result := parseResults[0]
 
 	if result.Tree == nil {
 		return nil, errors.New("failed to parse Trino statement, no parse tree found")
@@ -101,7 +108,7 @@ func (q *querySpanExtractor) getQuerySpan(ctx context.Context, statement string)
 	antlr.ParseTreeWalkerDefault.Walk(listener, result.Tree)
 
 	if listener.err != nil {
-		var resourceNotFound *parsererror.ResourceNotFoundError
+		var resourceNotFound *base.ResourceNotFoundError
 		if errors.As(listener.err, &resourceNotFound) {
 			return &base.QuerySpan{
 				Type:          queryType,
@@ -205,7 +212,7 @@ func (q *querySpanExtractor) expandTableReferencesToColumns(accessTables base.So
 			tableMeta, err := q.findTableSchema(db, schema, table)
 			if err == nil && tableMeta != nil {
 				// Add each column from the table as a source column with full path
-				for _, col := range tableMeta.GetColumns() {
+				for _, col := range tableMeta.GetProto().GetColumns() {
 					colResource := base.ColumnResource{
 						Database: db,
 						Schema:   schema,
@@ -249,13 +256,13 @@ func (q *querySpanExtractor) getDatabaseMetadata(database string) (*model.Databa
 
 	// Skip if metadata function not provided (for testing)
 	if q.gCtx.GetDatabaseMetadataFunc == nil {
-		return nil, &parsererror.ResourceNotFoundError{Database: &database}
+		return nil, &base.ResourceNotFoundError{Database: &database}
 	}
 
 	// Fetch metadata using the provided function
 	_, meta, err := q.gCtx.GetDatabaseMetadataFunc(q.ctx, q.gCtx.InstanceID, database)
 	if err != nil {
-		var resourceNotFound *parsererror.ResourceNotFoundError
+		var resourceNotFound *base.ResourceNotFoundError
 		if errors.As(err, &resourceNotFound) {
 			return nil, err
 		}
@@ -288,9 +295,9 @@ func (q *querySpanExtractor) findTableSchema(db, schema, name string) (*model.Ta
 	}
 
 	// Get schema metadata
-	schemaMeta := metadata.GetSchema(schema)
+	schemaMeta := metadata.GetSchemaMetadata(schema)
 	if schemaMeta == nil {
-		return nil, &parsererror.ResourceNotFoundError{
+		return nil, &base.ResourceNotFoundError{
 			Database: &db,
 			Schema:   &schema,
 		}
@@ -314,7 +321,7 @@ func (q *querySpanExtractor) findTableSchema(db, schema, name string) (*model.Ta
 	}
 
 	// Look for view
-	var viewMeta *model.ViewMetadata
+	var viewMeta *storepb.ViewMetadata
 	if q.ignoreCaseSensitive {
 		for _, viewName := range schemaMeta.ListViewNames() {
 			if strings.EqualFold(viewName, name) {
@@ -334,7 +341,7 @@ func (q *querySpanExtractor) findTableSchema(db, schema, name string) (*model.Ta
 	}
 
 	// Not found
-	return nil, &parsererror.ResourceNotFoundError{
+	return nil, &base.ResourceNotFoundError{
 		Database: &db,
 		Schema:   &schema,
 		Table:    &name,

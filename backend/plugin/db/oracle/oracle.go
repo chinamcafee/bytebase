@@ -108,34 +108,33 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 	}
 
 	// Parse transaction mode from the script
-	transactionMode, cleanedStatement := base.ParseTransactionMode(statement)
+	config, cleanedStatement := base.ParseTransactionConfig(statement)
 	statement = cleanedStatement
+	transactionMode := config.Mode
 
 	// Apply default when transaction mode is not specified
 	if transactionMode == common.TransactionModeUnspecified {
 		transactionMode = common.GetDefaultTransactionMode()
 	}
 
-	var commands []base.SingleSQL
-	var originalIndex []int32
+	var commands []base.Statement
 	if len(statement) <= common.MaxSheetCheckSize {
 		// Use Oracle sql parser.
 		singleSQLs, err := plsqlparser.SplitSQL(statement)
 		if err != nil {
 			return 0, errors.Wrapf(err, "failed to split sql")
 		}
-		singleSQLs, originalIndex = base.FilterEmptySQLWithIndexes(singleSQLs)
+		singleSQLs = base.FilterEmptyStatements(singleSQLs)
 		if len(singleSQLs) == 0 {
 			return 0, nil
 		}
 		commands = singleSQLs
 	} else {
-		commands = []base.SingleSQL{
+		commands = []base.Statement{
 			{
 				Text: statement,
 			},
 		}
-		originalIndex = []int32{0}
 	}
 
 	conn, err := d.db.Conn(ctx)
@@ -146,13 +145,13 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 
 	// Execute based on transaction mode
 	if transactionMode == common.TransactionModeOff {
-		return d.executeInAutoCommitMode(ctx, conn, commands, originalIndex, opts)
+		return d.executeInAutoCommitMode(ctx, conn, commands, opts)
 	}
-	return d.executeInTransactionMode(ctx, conn, commands, originalIndex, opts)
+	return d.executeInTransactionMode(ctx, conn, commands, opts)
 }
 
 // executeInTransactionMode executes statements within a single transaction
-func (*Driver) executeInTransactionMode(ctx context.Context, conn *sql.Conn, commands []base.SingleSQL, originalIndex []int32, opts db.ExecuteOptions) (int64, error) {
+func (*Driver) executeInTransactionMode(ctx context.Context, conn *sql.Conn, commands []base.Statement, opts db.ExecuteOptions) (int64, error) {
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		opts.LogTransactionControl(storepb.TaskRunLog_TransactionControl_BEGIN, err.Error())
@@ -174,18 +173,13 @@ func (*Driver) executeInTransactionMode(ctx context.Context, conn *sql.Conn, com
 	}()
 
 	totalRowsAffected := int64(0)
-	for i, command := range commands {
-		indexes := []int32{originalIndex[i]}
-		opts.LogCommandExecute(indexes, command.Text)
+	for _, command := range commands {
+		opts.LogCommandExecute(command.Range, command.Text)
 
 		sqlResult, err := tx.ExecContext(ctx, command.Text)
 		if err != nil {
 			opts.LogCommandResponse(0, nil, err.Error())
-			return 0, &db.ErrorWithPosition{
-				Err:   errors.Wrapf(err, "failed to execute context in a transaction"),
-				Start: command.Start,
-				End:   command.End,
-			}
+			return 0, err
 		}
 		rowsAffected, err := sqlResult.RowsAffected()
 		if err != nil {
@@ -207,22 +201,17 @@ func (*Driver) executeInTransactionMode(ctx context.Context, conn *sql.Conn, com
 }
 
 // executeInAutoCommitMode executes statements sequentially in auto-commit mode
-func (*Driver) executeInAutoCommitMode(ctx context.Context, conn *sql.Conn, commands []base.SingleSQL, originalIndex []int32, opts db.ExecuteOptions) (int64, error) {
+func (*Driver) executeInAutoCommitMode(ctx context.Context, conn *sql.Conn, commands []base.Statement, opts db.ExecuteOptions) (int64, error) {
 	totalRowsAffected := int64(0)
-	for i, command := range commands {
-		indexes := []int32{originalIndex[i]}
-		opts.LogCommandExecute(indexes, command.Text)
+	for _, command := range commands {
+		opts.LogCommandExecute(command.Range, command.Text)
 
 		sqlResult, err := conn.ExecContext(ctx, command.Text)
 		if err != nil {
 			opts.LogCommandResponse(0, nil, err.Error())
 			// In auto-commit mode, we stop at the first error
 			// The database is left in a partially migrated state
-			return totalRowsAffected, &db.ErrorWithPosition{
-				Err:   errors.Wrapf(err, "failed to execute statement %d in auto-commit mode", i+1),
-				Start: command.Start,
-				End:   command.End,
-			}
+			return totalRowsAffected, err
 		}
 		rowsAffected, err := sqlResult.RowsAffected()
 		if err != nil {
@@ -242,7 +231,7 @@ func (d *Driver) QueryConn(ctx context.Context, conn *sql.Conn, statement string
 	if err != nil {
 		return nil, err
 	}
-	singleSQLs = base.FilterEmptySQL(singleSQLs)
+	singleSQLs = base.FilterEmptyStatements(singleSQLs)
 	if len(singleSQLs) == 0 {
 		return nil, nil
 	}

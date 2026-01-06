@@ -12,7 +12,7 @@
           url="https://docs.bytebase.com/change-database/drift-detection/?source=console"
         />
       </div>
-      <div class="flex justify-end items-center gap-2">
+      <div class="flex justify-end items-center gap-x-2">
         <NButton size="small" @click="state.showSchemaDiffModal = true">
           {{ $t("database.drifted.view-diff") }}
         </NButton>
@@ -31,8 +31,8 @@
   <BBModal
     v-if="state.showSchemaDiffModal"
     :title="$t('database.drifted.view-diff')"
-    header-class="!border-0"
-    container-class="!pt-0"
+    header-class="border-0!"
+    container-class="pt-0!"
     @close="state.showSchemaDiffModal = false"
   >
     <div
@@ -60,11 +60,11 @@ import LearnMoreLink from "@/components/LearnMoreLink.vue";
 import { DiffEditor } from "@/components/MonacoEditor";
 import {
   pushNotification,
-  useDatabaseV1Store,
   useChangelogStore,
+  useDatabaseV1Store,
 } from "@/store";
-import { DEFAULT_PROJECT_NAME } from "@/types";
 import type { ComposedDatabase } from "@/types";
+import { DEFAULT_PROJECT_NAME } from "@/types";
 import {
   ChangelogView,
   DatabaseSchema$,

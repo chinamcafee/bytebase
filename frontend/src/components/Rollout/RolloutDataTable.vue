@@ -17,17 +17,22 @@ import { NDataTable, NPerformantEllipsis, NTooltip } from "naive-ui";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
+import Timestamp from "@/components/misc/Timestamp.vue";
 import { TASK_STATUS_FILTERS } from "@/components/Plan/constants/task";
 import TaskStatus from "@/components/Rollout/kits/TaskStatus.vue";
-import Timestamp from "@/components/misc/Timestamp.vue";
 import { EnvironmentV1Name } from "@/components/v2";
+import { PROJECT_V1_ROUTE_PLAN_ROLLOUT } from "@/router/dashboard/projectV1";
 import { useEnvironmentV1Store } from "@/store";
-import type { Rollout } from "@/types/proto-es/v1/rollout_service_pb";
-import type { Task_Status } from "@/types/proto-es/v1/rollout_service_pb";
+import type {
+  Rollout,
+  Stage,
+  Task_Status,
+} from "@/types/proto-es/v1/rollout_service_pb";
 import {
-  stringifyTaskStatus,
+  extractPlanUIDFromRolloutName,
+  extractProjectResourceName,
   getStageStatus,
-  extractRolloutUID,
+  stringifyTaskStatus,
 } from "@/utils";
 
 withDefaults(
@@ -48,8 +53,8 @@ const { t } = useI18n();
 const router = useRouter();
 const environmentStore = useEnvironmentV1Store();
 
-const getStageTaskCount = (stage: any, status: Task_Status) => {
-  return stage.tasks.filter((task: any) => task.status === status).length;
+const getStageTaskCount = (stage: Stage, status: Task_Status) => {
+  return stage.tasks.filter((task) => task.status === status).length;
 };
 
 const columnList = computed(
@@ -62,16 +67,16 @@ const columnList = computed(
         ellipsis: true,
         render: (rollout) => {
           return (
-            <div class={`flex items-center overflow-hidden space-x-2`}>
+            <div class={`flex items-center overflow-hidden gap-x-2`}>
               <div class="whitespace-nowrap text-control opacity-60">
-                {extractRolloutUID(rollout.name)}
+                {extractPlanUIDFromRolloutName(rollout.name)}
               </div>
               {rollout.title ? (
                 <NPerformantEllipsis class="truncate">
                   {{
                     default: () => <span>{rollout.title}</span>,
                     tooltip: () => (
-                      <div class="whitespace-pre-wrap break-words break-all">
+                      <div class="whitespace-pre-wrap wrap-break-word break-all">
                         {rollout.title}
                       </div>
                     ),
@@ -184,11 +189,18 @@ const rowProps = (rollout: Rollout) => {
   return {
     style: "cursor: pointer;",
     onClick: (e: MouseEvent) => {
-      const url = `/${rollout.name}`;
+      const routeParams = {
+        name: PROJECT_V1_ROUTE_PLAN_ROLLOUT,
+        params: {
+          projectId: extractProjectResourceName(rollout.name),
+          planId: extractPlanUIDFromRolloutName(rollout.name),
+        },
+      };
       if (e.ctrlKey || e.metaKey) {
-        window.open(url, "_blank");
+        const routeData = router.resolve(routeParams);
+        window.open(routeData.href, "_blank");
       } else {
-        router.push(url);
+        router.push(routeParams);
       }
     },
   };

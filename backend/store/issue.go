@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -33,25 +32,19 @@ func init() {
 
 // IssueMessage is the mssage for issues.
 type IssueMessage struct {
-	Project         *ProjectMessage
-	Title           string
-	Status          storepb.Issue_Status
-	Type            storepb.Issue_Type
-	Description     string
-	Payload         *storepb.Issue
-	PipelineUID     *int // Computed from plan.pipeline_id
-	PlanUID         *int64
-	TaskStatusCount map[string]int32
+	ProjectID    string
+	CreatorEmail string
+	Title        string
+	Status       storepb.Issue_Status
+	Type         storepb.Issue_Type
+	Description  string
+	Payload      *storepb.Issue
+	PlanUID      *int64
 
 	// The following fields are output only and not used for create().
 	UID       int
-	Creator   *UserMessage
 	CreatedAt time.Time
 	UpdatedAt time.Time
-
-	// Internal fields.
-	projectID  string
-	creatorUID int
 }
 
 // UpdateIssueMessage is the message for updating an issue.
@@ -66,28 +59,16 @@ type UpdateIssueMessage struct {
 
 // FindIssueMessage is the message to find issues.
 type FindIssueMessage struct {
-	UID        *int
-	ProjectID  *string
-	ProjectIDs *[]string
-	PlanUID    *int64
-	PipelineID *int // Filter by pipeline_id (computed from plan)
-	// To support pagination, we add into creator.
-	// Only principleID or one of the following three fields can be set.
-	CreatorID       *int
+	UID             *int
+	ProjectID       *string
+	ProjectIDs      *[]string
+	PlanUID         *int64
+	CreatorID       *string
 	CreatedAtBefore *time.Time
 	CreatedAtAfter  *time.Time
 	Types           *[]storepb.Issue_Type
 
-	StatusList   []storepb.Issue_Status
-	TaskTypes    *[]storepb.Task_Type
-	MigrateTypes *[]storepb.MigrationType
-	// Any of the task in the issue changes the instance with InstanceResourceID.
-	InstanceResourceID *string
-	// Any of the task in the issue changes the database with InstanceID and DatabaseName.
-	InstanceID   *string
-	DatabaseName *string
-	// Should match the task environment.
-	EnvironmentID *string
+	StatusList []storepb.Issue_Status
 	// If specified, then it will only fetch "Limit" most recently updated issues
 	Limit  *int
 	Offset *int
@@ -95,24 +76,11 @@ type FindIssueMessage struct {
 	Query *string
 
 	LabelList []string
-
-	NoPipeline bool
 }
 
-// GetIssueV2 gets issue by issue UID.
-func (s *Store) GetIssueV2(ctx context.Context, find *FindIssueMessage) (*IssueMessage, error) {
-	if find.UID != nil {
-		if v, ok := s.issueCache.Get(*find.UID); ok && s.enableCache {
-			return v, nil
-		}
-	}
-	if find.PipelineID != nil {
-		if v, ok := s.issueByPipelineCache.Get(*find.PipelineID); ok && s.enableCache {
-			return v, nil
-		}
-	}
-
-	issues, err := s.ListIssueV2(ctx, find)
+// GetIssue gets issue by issue UID.
+func (s *Store) GetIssue(ctx context.Context, find *FindIssueMessage) (*IssueMessage, error) {
+	issues, err := s.ListIssues(ctx, find)
 	if err != nil {
 		return nil, err
 	}
@@ -122,17 +90,11 @@ func (s *Store) GetIssueV2(ctx context.Context, find *FindIssueMessage) (*IssueM
 	if len(issues) > 1 {
 		return nil, &common.Error{Code: common.Conflict, Err: errors.Errorf("found %d issues with find %#v, expect 1", len(issues), find)}
 	}
-	issue := issues[0]
-
-	s.issueCache.Add(issue.UID, issue)
-	if issue.PipelineUID != nil {
-		s.issueByPipelineCache.Add(*issue.PipelineUID, issue)
-	}
-	return issue, nil
+	return issues[0], nil
 }
 
-// CreateIssueV2 creates a new issue.
-func (s *Store) CreateIssueV2(ctx context.Context, create *IssueMessage, creatorID int) (*IssueMessage, error) {
+// CreateIssue creates a new issue.
+func (s *Store) CreateIssue(ctx context.Context, create *IssueMessage) (*IssueMessage, error) {
 	create.Status = storepb.Issue_OPEN
 	payload, err := protojson.Marshal(create.Payload)
 	if err != nil {
@@ -142,7 +104,7 @@ func (s *Store) CreateIssueV2(ctx context.Context, create *IssueMessage, creator
 
 	q := qb.Q().Space(`
 		INSERT INTO issue (
-			creator_id,
+			creator,
 			project,
 			plan_id,
 			name,
@@ -154,8 +116,8 @@ func (s *Store) CreateIssueV2(ctx context.Context, create *IssueMessage, creator
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id`,
-		creatorID,
-		create.Project.ResourceID,
+		create.CreatorEmail,
+		create.ProjectID,
 		create.PlanUID,
 		create.Title,
 		create.Status.String(),
@@ -186,12 +148,12 @@ func (s *Store) CreateIssueV2(ctx context.Context, create *IssueMessage, creator
 		return nil, err
 	}
 
-	return s.GetIssueV2(ctx, &FindIssueMessage{UID: &create.UID})
+	return s.GetIssue(ctx, &FindIssueMessage{UID: &create.UID})
 }
 
-// UpdateIssueV2 updates an issue.
-func (s *Store) UpdateIssueV2(ctx context.Context, uid int, patch *UpdateIssueMessage) (*IssueMessage, error) {
-	oldIssue, err := s.GetIssueV2(ctx, &FindIssueMessage{UID: &uid})
+// UpdateIssue updates an issue.
+func (s *Store) UpdateIssue(ctx context.Context, uid int, patch *UpdateIssueMessage) (*IssueMessage, error) {
+	oldIssue, err := s.GetIssue(ctx, &FindIssueMessage{UID: &uid})
 	if err != nil {
 		return nil, err
 	}
@@ -253,25 +215,17 @@ func (s *Store) UpdateIssueV2(ctx context.Context, uid int, patch *UpdateIssueMe
 		return nil, err
 	}
 
-	// Invalid the cache and read the value again.
-	s.issueCache.Remove(uid)
-	if oldIssue.PipelineUID != nil {
-		s.issueByPipelineCache.Remove(*oldIssue.PipelineUID)
-	}
-	return s.GetIssueV2(ctx, &FindIssueMessage{UID: &uid})
+	return s.GetIssue(ctx, &FindIssueMessage{UID: &uid})
 }
 
-// ListIssueV2 returns the list of issues by find query.
-func (s *Store) ListIssueV2(ctx context.Context, find *FindIssueMessage) ([]*IssueMessage, error) {
+// ListIssues returns the list of issues by find query.
+func (s *Store) ListIssues(ctx context.Context, find *FindIssueMessage) ([]*IssueMessage, error) {
 	orderByClause := "ORDER BY issue.id DESC"
 	from := qb.Q().Space("issue")
 	where := qb.Q()
 
 	if v := find.UID; v != nil {
 		where.And("issue.id = ?", *v)
-	}
-	if v := find.PipelineID; v != nil {
-		where.And("plan.pipeline_id = ?", *v)
 	}
 	if v := find.PlanUID; v != nil {
 		where.And("issue.plan_id = ?", *v)
@@ -282,14 +236,8 @@ func (s *Store) ListIssueV2(ctx context.Context, find *FindIssueMessage) ([]*Iss
 	if v := find.ProjectIDs; v != nil {
 		where.And("issue.project = ANY(?)", *v)
 	}
-	if v := find.InstanceResourceID; v != nil {
-		where.And("EXISTS (SELECT 1 FROM task WHERE task.pipeline_id = plan.pipeline_id AND task.instance = ?)", *v)
-	}
-	if find.InstanceID != nil && find.DatabaseName != nil {
-		where.And("EXISTS (SELECT 1 FROM task WHERE task.pipeline_id = plan.pipeline_id AND task.instance = ? AND task.db_name = ?)", *find.InstanceID, *find.DatabaseName)
-	}
 	if v := find.CreatorID; v != nil {
-		where.And("issue.creator_id = ?", *v)
+		where.And("issue.creator = ?", *v)
 	}
 	if v := find.CreatedAtBefore; v != nil {
 		where.And("issue.created_at < ?", *v)
@@ -305,11 +253,14 @@ func (s *Store) ListIssueV2(ctx context.Context, find *FindIssueMessage) ([]*Iss
 		where.And("issue.type = ANY(?)", typeStrings)
 	}
 	if v := find.Query; v != nil && *v != "" {
+		searchCondition := qb.Q()
 		if tsQuery := getTSQuery(*v); tsQuery != "" {
 			from.Space("LEFT JOIN CAST(? AS tsquery) AS query ON TRUE", tsQuery)
-			where.And("issue.ts_vector @@ query")
+			searchCondition.Or("issue.ts_vector @@ query")
 			orderByClause = "ORDER BY ts_rank(issue.ts_vector, query) DESC, issue.id DESC"
 		}
+		searchCondition.Or("issue.name ILIKE ?", "%"+*v+"%")
+		where.And("(?)", searchCondition)
 	}
 	if len(find.StatusList) != 0 {
 		statusStrings := make([]string, 0, len(find.StatusList))
@@ -318,74 +269,28 @@ func (s *Store) ListIssueV2(ctx context.Context, find *FindIssueMessage) ([]*Iss
 		}
 		where.And("issue.status = ANY(?)", statusStrings)
 	}
-	if v := find.TaskTypes; v != nil {
-		taskTypeStrings := make([]string, 0, len(*v))
-		for _, t := range *v {
-			taskTypeStrings = append(taskTypeStrings, t.String())
-		}
-		if find.MigrateTypes != nil && len(*find.MigrateTypes) > 0 {
-			migrateTypeStrings := make([]string, 0, len(*find.MigrateTypes))
-			for _, mt := range *find.MigrateTypes {
-				migrateTypeStrings = append(migrateTypeStrings, mt.String())
-			}
-			where.And("EXISTS (SELECT 1 FROM task WHERE task.pipeline_id = plan.pipeline_id AND task.type = ANY(?) AND task.payload->>'migrateType' = ANY(?))", taskTypeStrings, migrateTypeStrings)
-		} else {
-			where.And("EXISTS (SELECT 1 FROM task WHERE task.pipeline_id = plan.pipeline_id AND task.type = ANY(?))", taskTypeStrings)
-		}
-	}
-	if v := find.EnvironmentID; v != nil {
-		where.And("EXISTS (SELECT 1 FROM task WHERE task.pipeline_id = plan.pipeline_id AND task.environment = ?)", *v)
-	}
 	if len(find.LabelList) != 0 {
 		where.And("payload->'labels' ??& ?::TEXT[]", find.LabelList)
-	}
-	if find.NoPipeline {
-		where.And("plan.pipeline_id IS NULL")
 	}
 
 	q := qb.Q().Space(`
 		SELECT
 			issue.id,
-			issue.creator_id,
+			issue.creator,
 			issue.created_at,
 			issue.updated_at,
 			issue.project,
-			plan.pipeline_id,
 			issue.plan_id,
-			COALESCE(plan.name, issue.name) AS name,
+			issue.name,
 			issue.status,
 			issue.type,
-			COALESCE(plan.description, issue.description) AS description,
-			issue.payload,
-			COALESCE(task_run_status_count.status_count, '{}'::jsonb)
+			issue.description,
+			issue.payload
 		FROM ?
-		LEFT JOIN plan ON issue.plan_id = plan.id
-		LEFT JOIN LATERAL (
-			SELECT
-				jsonb_object_agg(t.status, t.count) AS status_count
-			FROM (
-				SELECT
-					t.status,
-					count(*) AS count
-				FROM (
-					SELECT
-						CASE COALESCE((task.payload->>'skipped')::BOOLEAN, FALSE)
-							WHEN TRUE THEN 'SKIPPED'
-							ELSE latest_task_run.status
-						END AS status
-					FROM task
-					LEFT JOIN LATERAL(
-						SELECT COALESCE(
-							(SELECT task_run.status FROM task_run WHERE task_run.task_id = task.id ORDER BY task_run.id DESC LIMIT 1), 'NOT_STARTED'
-						) AS status
-					) AS latest_task_run ON TRUE
-					WHERE task.pipeline_id = plan.pipeline_id
-				) AS t
-				GROUP BY t.status
-			) AS t
-		) AS task_run_status_count ON TRUE
-		WHERE ?
-	`, from, where)
+	`, from)
+	if where.Len() > 0 {
+		q.Space("WHERE ?", where)
+	}
 	q.Space(orderByClause)
 
 	if v := find.Limit; v != nil {
@@ -417,23 +322,20 @@ func (s *Store) ListIssueV2(ctx context.Context, find *FindIssueMessage) ([]*Iss
 			Payload: &storepb.Issue{},
 		}
 		var payload []byte
-		var taskRunStatusCount []byte
 		var statusString string
 		var typeString string
 		if err := rows.Scan(
 			&issue.UID,
-			&issue.creatorUID,
+			&issue.CreatorEmail,
 			&issue.CreatedAt,
 			&issue.UpdatedAt,
-			&issue.projectID,
-			&issue.PipelineUID,
+			&issue.ProjectID,
 			&issue.PlanUID,
 			&issue.Title,
 			&statusString,
 			&typeString,
 			&issue.Description,
 			&payload,
-			&taskRunStatusCount,
 		); err != nil {
 			return nil, err
 		}
@@ -450,9 +352,6 @@ func (s *Store) ListIssueV2(ctx context.Context, find *FindIssueMessage) ([]*Iss
 		if err := common.ProtojsonUnmarshaler.Unmarshal(payload, issue.Payload); err != nil {
 			return nil, errors.Wrapf(err, "failed to unmarshal issue payload")
 		}
-		if err := json.Unmarshal(taskRunStatusCount, &issue.TaskStatusCount); err != nil {
-			return nil, errors.Wrapf(err, "failed to unmarshal task run status count")
-		}
 		issues = append(issues, &issue)
 	}
 	if err := rows.Err(); err != nil {
@@ -463,94 +362,75 @@ func (s *Store) ListIssueV2(ctx context.Context, find *FindIssueMessage) ([]*Iss
 		return nil, err
 	}
 
-	// Populate from internal fields.
-	for _, issue := range issues {
-		project, err := s.GetProjectV2(ctx, &FindProjectMessage{ResourceID: &issue.projectID})
-		if err != nil {
-			return nil, err
-		}
-		issue.Project = project
-		creator, err := s.GetUserByID(ctx, issue.creatorUID)
-		if err != nil {
-			return nil, err
-		}
-		issue.Creator = creator
-
-		s.issueCache.Add(issue.UID, issue)
-		if issue.PipelineUID != nil {
-			s.issueByPipelineCache.Add(*issue.PipelineUID, issue)
-		}
-	}
-
 	return issues, nil
 }
 
 // BatchUpdateIssueStatuses updates the status of multiple issues.
-func (s *Store) BatchUpdateIssueStatuses(ctx context.Context, issueUIDs []int, status storepb.Issue_Status) error {
-	// First get the pipeline IDs for cache invalidation
-	selectQuery := qb.Q().Space(`
-		SELECT issue.id, plan.pipeline_id
-		FROM issue
-		LEFT JOIN plan ON issue.plan_id = plan.id
-		WHERE issue.id = ANY(?)
-	`, issueUIDs)
-	selectSQL, selectArgs, err := selectQuery.ToSQL()
-	if err != nil {
-		return errors.Wrapf(err, "failed to build select sql")
-	}
-
-	type issueInfo struct {
-		id          int
-		pipelineUID *int
-	}
-	var infos []issueInfo
-
+// Returns a map of issueUID -> old status for the updated issues.
+func (s *Store) BatchUpdateIssueStatuses(ctx context.Context, projectID string, issueUIDs []int, newStatus storepb.Issue_Status) (map[int]storepb.Issue_Status, error) {
 	tx, err := s.GetDB().BeginTx(ctx, nil)
 	if err != nil {
-		return errors.Wrapf(err, "failed to begin transaction")
+		return nil, errors.Wrapf(err, "failed to begin transaction")
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.QueryContext(ctx, selectSQL, selectArgs...)
+	// Fetch current issues to validate project membership and get old statuses.
+	fetchQuery := qb.Q().Space("SELECT id, status FROM issue WHERE id = ANY(?) AND project = ?", issueUIDs, projectID)
+	fetchSQL, fetchArgs, err := fetchQuery.ToSQL()
 	if err != nil {
-		return errors.Wrapf(err, "failed to query")
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var info issueInfo
-		if err := rows.Scan(&info.id, &info.pipelineUID); err != nil {
-			return errors.Wrapf(err, "failed to scan")
-		}
-		infos = append(infos, info)
-	}
-	if err := rows.Err(); err != nil {
-		return errors.Wrapf(err, "failed to scan issues")
+		return nil, errors.Wrapf(err, "failed to build fetch sql")
 	}
 
-	// Update the statuses
-	updateQuery := qb.Q().Space("UPDATE issue SET status = ? WHERE id = ANY(?)", status.String(), issueUIDs)
+	rows, err := tx.QueryContext(ctx, fetchSQL, fetchArgs...)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to fetch issues")
+	}
+	defer rows.Close()
+
+	oldStatuses := make(map[int]storepb.Issue_Status)
+	for rows.Next() {
+		var issueID int
+		var statusString string
+		if err := rows.Scan(&issueID, &statusString); err != nil {
+			return nil, errors.Wrapf(err, "failed to scan issue")
+		}
+		statusValue, ok := storepb.Issue_Status_value[statusString]
+		if !ok {
+			return nil, errors.Errorf("invalid status string: %s", statusString)
+		}
+		issueStatus := storepb.Issue_Status(statusValue)
+
+		// Prevent changing status from DONE to other statuses.
+		if issueStatus == storepb.Issue_DONE && newStatus != storepb.Issue_DONE {
+			return nil, &common.Error{Code: common.Invalid, Err: errors.Errorf("cannot change status from DONE to %s for issue %d", newStatus.String(), issueID)}
+		}
+
+		oldStatuses[issueID] = issueStatus
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.Wrapf(err, "failed to iterate rows")
+	}
+
+	// Validate that all requested issues were found in the project.
+	if len(oldStatuses) != len(issueUIDs) {
+		return nil, &common.Error{Code: common.Invalid, Err: errors.Errorf("expected %d issues in project %s, found %d", len(issueUIDs), projectID, len(oldStatuses))}
+	}
+
+	// Update the statuses.
+	updateQuery := qb.Q().Space("UPDATE issue SET status = ? WHERE id = ANY(?) AND project = ?", newStatus.String(), issueUIDs, projectID)
 	updateSQL, updateArgs, err := updateQuery.ToSQL()
 	if err != nil {
-		return errors.Wrapf(err, "failed to build update sql")
+		return nil, errors.Wrapf(err, "failed to build update sql")
 	}
 
 	if _, err := tx.ExecContext(ctx, updateSQL, updateArgs...); err != nil {
-		return errors.Wrapf(err, "failed to update")
+		return nil, errors.Wrapf(err, "failed to update")
 	}
 
 	if err := tx.Commit(); err != nil {
-		return errors.Wrapf(err, "failed to commit")
+		return nil, errors.Wrapf(err, "failed to commit")
 	}
-
-	// Invalidate caches
-	for _, info := range infos {
-		s.issueCache.Remove(info.id)
-		if info.pipelineUID != nil {
-			s.issueByPipelineCache.Remove(*info.pipelineUID)
-		}
-	}
-
-	return nil
+	return oldStatuses, nil
 }
 
 func getTSVector(text string) string {
@@ -600,10 +480,9 @@ func (s *Store) BackfillIssueTSVector(ctx context.Context) error {
 		selectQuery := qb.Q().Space(`
 			SELECT
 				issue.id,
-				COALESCE(plan.name, issue.name) AS name,
-				COALESCE(plan.description, issue.description) AS description
+				issue.name,
+				issue.description
 			FROM issue
-			LEFT JOIN plan ON issue.plan_id = plan.id
 			WHERE issue.ts_vector IS NULL
 			ORDER BY issue.id
 			LIMIT ?

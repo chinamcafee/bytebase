@@ -42,9 +42,8 @@ func TestSQLAdminQuery(t *testing.T) {
 							},
 						},
 					},
-					Statement:   "INSERT INTO Test1.tbl (id, name, gender, height) VALUES(1, 'Alice', B'0', B'01111111');",
-					RowsCount:   1,
-					AllowExport: true,
+					Statement: "INSERT INTO Test1.tbl (id, name, gender, height) VALUES(1, 'Alice', B'0', B'01111111');",
+					RowsCount: 1,
 				},
 			},
 			resetResult: []*v1pb.QueryResult{
@@ -58,8 +57,7 @@ func TestSQLAdminQuery(t *testing.T) {
 							},
 						},
 					},
-					RowsCount:   1,
-					AllowExport: true,
+					RowsCount: 1,
 				},
 			},
 		},
@@ -80,8 +78,7 @@ func TestSQLAdminQuery(t *testing.T) {
 							},
 						},
 					},
-					RowsCount:   1,
-					AllowExport: true,
+					RowsCount: 1,
 				},
 			},
 			resetResult: []*v1pb.QueryResult{
@@ -95,8 +92,7 @@ func TestSQLAdminQuery(t *testing.T) {
 							},
 						},
 					},
-					RowsCount:   1,
-					AllowExport: true,
+					RowsCount: 1,
 				},
 			},
 		},
@@ -160,7 +156,7 @@ func TestSQLAdminQuery(t *testing.T) {
 		default:
 			a.FailNow("unsupported db type")
 		}
-		err = ctl.createDatabaseV2(ctx, ctl.project, instance, nil /* environment */, tt.databaseName, databaseOwner)
+		err = ctl.createDatabase(ctx, ctl.project, instance, nil /* environment */, tt.databaseName, databaseOwner)
 		a.NoError(err)
 
 		databaseResp, err := ctl.databaseServiceClient.GetDatabase(ctx, connect.NewRequest(&v1pb.GetDatabaseRequest{
@@ -172,7 +168,6 @@ func TestSQLAdminQuery(t *testing.T) {
 		sheetResp, err := ctl.sheetServiceClient.CreateSheet(ctx, connect.NewRequest(&v1pb.CreateSheetRequest{
 			Parent: ctl.project.Name,
 			Sheet: &v1pb.Sheet{
-				Title:   "prepareStatements",
 				Content: []byte(tt.prepareStatements),
 			},
 		}))
@@ -182,7 +177,7 @@ func TestSQLAdminQuery(t *testing.T) {
 		a.NotNil(database.InstanceResource)
 		a.Equal(1, len(database.InstanceResource.DataSources))
 
-		err = ctl.changeDatabase(ctx, ctl.project, database, sheet, v1pb.MigrationType_DDL)
+		err = ctl.changeDatabase(ctx, ctl.project, database, sheet, false)
 		a.NoError(err)
 
 		statement := tt.query

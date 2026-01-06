@@ -1,10 +1,10 @@
 <template>
   <slot v-if="!isInitializing" />
-  <MaskSpinner v-else class="!bg-white" />
+  <MaskSpinner v-else class="bg-white!" />
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted } from "vue";
+import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import {
   useEnvironmentV1Store,

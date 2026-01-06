@@ -96,6 +96,14 @@ func (x *DatabaseSchemaMetadata) Equal(y *DatabaseSchemaMetadata) bool {
 	if x.SearchPath != y.SearchPath {
 		return false
 	}
+	if len(x.EventTriggers) != len(y.EventTriggers) {
+		return false
+	}
+	for i := 0; i < len(x.EventTriggers); i++ {
+		if !x.EventTriggers[i].Equal(y.EventTriggers[i]) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -543,9 +551,6 @@ func (x *TableMetadata) Equal(y *TableMetadata) bool {
 	if x.Comment != y.Comment {
 		return false
 	}
-	if x.UserComment != y.UserComment {
-		return false
-	}
 	if len(x.ForeignKeys) != len(y.ForeignKeys) {
 		return false
 	}
@@ -606,10 +611,34 @@ func (x *TableMetadata) Equal(y *TableMetadata) bool {
 	if x.PrimaryKeyType != y.PrimaryKeyType {
 		return false
 	}
+	if len(x.ExcludeConstraints) != len(y.ExcludeConstraints) {
+		return false
+	}
+	for i := 0; i < len(x.ExcludeConstraints); i++ {
+		if !x.ExcludeConstraints[i].Equal(y.ExcludeConstraints[i]) {
+			return false
+		}
+	}
 	return true
 }
 
 func (x *CheckConstraintMetadata) Equal(y *CheckConstraintMetadata) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if x.Name != y.Name {
+		return false
+	}
+	if x.Expression != y.Expression {
+		return false
+	}
+	return true
+}
+
+func (x *ExcludeConstraintMetadata) Equal(y *ExcludeConstraintMetadata) bool {
 	if x == y {
 		return true
 	}
@@ -698,6 +727,14 @@ func (x *TablePartitionMetadata) Equal(y *TablePartitionMetadata) bool {
 			return false
 		}
 	}
+	if len(x.ExcludeConstraints) != len(y.ExcludeConstraints) {
+		return false
+	}
+	for i := 0; i < len(x.ExcludeConstraints); i++ {
+		if !x.ExcludeConstraints[i].Equal(y.ExcludeConstraints[i]) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -715,12 +752,6 @@ func (x *ColumnMetadata) Equal(y *ColumnMetadata) bool {
 		return false
 	}
 	if x.Default != y.Default {
-		return false
-	}
-	if x.DefaultNull != y.DefaultNull {
-		return false
-	}
-	if x.DefaultExpression != y.DefaultExpression {
 		return false
 	}
 	if x.DefaultOnNull != y.DefaultOnNull {
@@ -742,9 +773,6 @@ func (x *ColumnMetadata) Equal(y *ColumnMetadata) bool {
 		return false
 	}
 	if x.Comment != y.Comment {
-		return false
-	}
-	if x.UserComment != y.UserComment {
 		return false
 	}
 	if !x.Generation.Equal(y.Generation) {
@@ -1301,6 +1329,48 @@ func (x *ExtensionMetadata) Equal(y *ExtensionMetadata) bool {
 	return true
 }
 
+func (x *EventTriggerMetadata) Equal(y *EventTriggerMetadata) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if x.Name != y.Name {
+		return false
+	}
+	if x.Event != y.Event {
+		return false
+	}
+	if len(x.Tags) != len(y.Tags) {
+		return false
+	}
+	for i := 0; i < len(x.Tags); i++ {
+		if x.Tags[i] != y.Tags[i] {
+			return false
+		}
+	}
+	if x.FunctionSchema != y.FunctionSchema {
+		return false
+	}
+	if x.FunctionName != y.FunctionName {
+		return false
+	}
+	if x.Enabled != y.Enabled {
+		return false
+	}
+	if x.Definition != y.Definition {
+		return false
+	}
+	if x.Comment != y.Comment {
+		return false
+	}
+	if x.SkipDump != y.SkipDump {
+		return false
+	}
+	return true
+}
+
 func (x *ForeignKeyMetadata) Equal(y *ForeignKeyMetadata) bool {
 	if x == y {
 		return true
@@ -1459,15 +1529,6 @@ func (x *ColumnCatalog) Equal(y *ColumnCatalog) bool {
 		return false
 	}
 	if !x.ObjectSchema.Equal(y.ObjectSchema) {
-		return false
-	}
-	if x.MaskingLevel != y.MaskingLevel {
-		return false
-	}
-	if x.FullMaskingAlgorithmId != y.FullMaskingAlgorithmId {
-		return false
-	}
-	if x.PartialMaskingAlgorithmId != y.PartialMaskingAlgorithmId {
 		return false
 	}
 	return true

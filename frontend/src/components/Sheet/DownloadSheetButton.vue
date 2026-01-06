@@ -8,7 +8,7 @@
 import { create } from "@bufbuild/protobuf";
 import { NButton } from "naive-ui";
 import { ref } from "vue";
-import { sheetServiceClientConnect } from "@/grpcweb";
+import { sheetServiceClientConnect } from "@/connect";
 import { GetSheetRequestSchema } from "@/types/proto-es/v1/sheet_service_pb";
 
 const props = defineProps<{
@@ -27,10 +27,9 @@ const downloadSheet = async () => {
     });
     const response = await sheetServiceClientConnect.getSheet(request);
 
-    let filename = response.title;
-    if (!filename.endsWith(".sql")) {
-      filename = `${response.title}.sql`;
-    }
+    // Extract sheet ID from the name to use as filename
+    const sheetId = response.name.split("/").pop() || "sheet";
+    const filename = `${sheetId}.sql`;
     const content = new TextDecoder().decode(response.content);
 
     const blob = new Blob([content], { type: "text/plain" });

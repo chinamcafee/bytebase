@@ -107,18 +107,15 @@ export declare type ListIssuesRequest = Message<"bytebase.v1.ListIssuesRequest">
    * - status: the issue status, support "==" and "in" operator, check the IssueStatus enum for the values.
    * - create_time: issue create time in "2006-01-02T15:04:05Z07:00" format, support ">=" or "<=" operator.
    * - type: the issue type, support "==" and "in" operator, check the Type enum in the Issue message for the values.
-   * - task_type: support "==" operator, the value can be "DDL", "DML" or "DATA_EXPORT"
-   * - instance: the instance full name in the "instances/{id}" format, support "==" operator.
-   * - database: the database full name in the "instances/{id}/databases/{name}" format, support "==" operator.
-   * - environment: the database full name in the "environments/{name}" format, support "==" operator.
    * - labels: the issue labels, support "==" and "in" operator.
+   * - approval_status: issue approval status, support "==" operator.
+   * - current_approver: the issue approver, should in "users/{email} format", support "==" operator.
    *
    * For example:
    * creator == "users/ed@bytebase.com" && status in ["OPEN", "DONE"]
    * status == "CANCELED" && type == "DATABASE_CHANGE"
-   * instance == "instances/sample" && labels in ["label1", "label2"]
+   * labels in ["label1", "label2"]
    * create_time >= "2025-01-02T15:04:05Z07:00"
-   * environment == "environments/test"
    *
    * @generated from field: string filter = 4;
    */
@@ -430,55 +427,55 @@ export declare type Issue = Message<"bytebase.v1.Issue"> & {
   /**
    * The title of the issue.
    *
-   * @generated from field: string title = 3;
+   * @generated from field: string title = 2;
    */
   title: string;
 
   /**
    * The description of the issue.
    *
-   * @generated from field: string description = 4;
+   * @generated from field: string description = 3;
    */
   description: string;
 
   /**
-   * @generated from field: bytebase.v1.Issue.Type type = 5;
+   * @generated from field: bytebase.v1.Issue.Type type = 4;
    */
   type: Issue_Type;
 
   /**
    * The status of the issue.
    *
-   * @generated from field: bytebase.v1.IssueStatus status = 6;
+   * @generated from field: bytebase.v1.IssueStatus status = 5;
    */
   status: IssueStatus;
 
   /**
-   * @generated from field: repeated bytebase.v1.Issue.Approver approvers = 9;
+   * @generated from field: repeated bytebase.v1.Issue.Approver approvers = 6;
    */
   approvers: Issue_Approver[];
 
   /**
    * The approval template for the issue.
    *
-   * @generated from field: bytebase.v1.ApprovalTemplate approval_template = 10;
+   * @generated from field: bytebase.v1.ApprovalTemplate approval_template = 7;
    */
   approvalTemplate?: ApprovalTemplate;
 
   /**
    * Format: users/hello@world.com
    *
-   * @generated from field: string creator = 14;
+   * @generated from field: string creator = 8;
    */
   creator: string;
 
   /**
-   * @generated from field: google.protobuf.Timestamp create_time = 15;
+   * @generated from field: google.protobuf.Timestamp create_time = 9;
    */
   createTime?: Timestamp;
 
   /**
-   * @generated from field: google.protobuf.Timestamp update_time = 16;
+   * @generated from field: google.protobuf.Timestamp update_time = 10;
    */
   updateTime?: Timestamp;
 
@@ -487,80 +484,35 @@ export declare type Issue = Message<"bytebase.v1.Issue"> & {
    * Can be empty.
    * Format: projects/{project}/plans/{plan}
    *
-   * @generated from field: string plan = 17;
+   * @generated from field: string plan = 11;
    */
   plan: string;
 
   /**
-   * The rollout associated with the issue.
-   * Can be empty.
-   * Format: projects/{project}/rollouts/{rollout}
-   *
-   * @generated from field: string rollout = 18;
-   */
-  rollout: string;
-
-  /**
    * Used if the issue type is GRANT_REQUEST.
    *
-   * @generated from field: bytebase.v1.GrantRequest grant_request = 19;
+   * @generated from field: bytebase.v1.GrantRequest grant_request = 13;
    */
   grantRequest?: GrantRequest;
 
   /**
-   * The releasers of the pending stage of the issue rollout, judging
-   * from the rollout policy.
-   * Format:
-   * - roles/workspaceOwner
-   * - roles/workspaceDBA
-   * - roles/projectOwner
-   * - roles/projectReleaser
-   * - users/{email}
-   *
-   * @generated from field: repeated string releasers = 20;
-   */
-  releasers: string[];
-
-  /**
    * The risk level of the issue.
    *
-   * @generated from field: bytebase.v1.RiskLevel risk_level = 21;
+   * @generated from field: bytebase.v1.RiskLevel risk_level = 15;
    */
   riskLevel: RiskLevel;
 
   /**
-   * The status count of the issue.
-   * Keys are the following:
-   * - NOT_STARTED
-   * - SKIPPED
-   * - PENDING
-   * - RUNNING
-   * - DONE
-   * - FAILED
-   * - CANCELED
-   *
-   * @generated from field: map<string, int32> task_status_count = 22;
-   */
-  taskStatusCount: { [key: string]: number };
-
-  /**
    * Labels attached to the issue for categorization and filtering.
    *
-   * @generated from field: repeated string labels = 23;
+   * @generated from field: repeated string labels = 17;
    */
   labels: string[];
 
   /**
-   * @generated from field: bytebase.v1.Issue.ApprovalStatus approval_status = 24;
+   * @generated from field: bytebase.v1.Issue.ApprovalStatus approval_status = 18;
    */
   approvalStatus: Issue_ApprovalStatus;
-
-  /**
-   * Only populated when approval_status == ERROR
-   *
-   * @generated from field: string approval_status_error = 25;
-   */
-  approvalStatusError: string;
 };
 
 /**
@@ -723,13 +675,6 @@ export enum Issue_ApprovalStatus {
    * @generated from enum value: SKIPPED = 5;
    */
   SKIPPED = 5,
-
-  /**
-   * Error occurred during approval evaluation.
-   *
-   * @generated from enum value: ERROR = 6;
-   */
-  ERROR = 6,
 }
 
 /**
@@ -782,15 +727,6 @@ export declare const GrantRequestSchema: GenMessage<GrantRequest>;
  * @generated from message bytebase.v1.ApprovalTemplate
  */
 export declare type ApprovalTemplate = Message<"bytebase.v1.ApprovalTemplate"> & {
-  /**
-   * The unique identifier for the approval template.
-   * For built-in templates, use "bb." prefix (e.g., "bb.project-owner", "bb.workspace-dba").
-   * For custom templates, use a UUID or other unique identifier.
-   *
-   * @generated from field: string id = 4;
-   */
-  id: string;
-
   /**
    * The approval flow definition.
    *
@@ -1009,7 +945,7 @@ export declare type IssueComment = Message<"bytebase.v1.IssueComment"> & {
   /**
    * Format: users/{email}
    *
-   * @generated from field: string creator = 7;
+   * @generated from field: string creator = 6;
    */
   creator: string;
 
@@ -1022,7 +958,7 @@ export declare type IssueComment = Message<"bytebase.v1.IssueComment"> & {
     /**
      * Approval event.
      *
-     * @generated from field: bytebase.v1.IssueComment.Approval approval = 8;
+     * @generated from field: bytebase.v1.IssueComment.Approval approval = 7;
      */
     value: IssueComment_Approval;
     case: "approval";
@@ -1030,34 +966,18 @@ export declare type IssueComment = Message<"bytebase.v1.IssueComment"> & {
     /**
      * Issue update event.
      *
-     * @generated from field: bytebase.v1.IssueComment.IssueUpdate issue_update = 9;
+     * @generated from field: bytebase.v1.IssueComment.IssueUpdate issue_update = 8;
      */
     value: IssueComment_IssueUpdate;
     case: "issueUpdate";
   } | {
     /**
-     * Stage end event.
+     * Plan spec update event.
      *
-     * @generated from field: bytebase.v1.IssueComment.StageEnd stage_end = 10;
+     * @generated from field: bytebase.v1.IssueComment.PlanSpecUpdate plan_spec_update = 12;
      */
-    value: IssueComment_StageEnd;
-    case: "stageEnd";
-  } | {
-    /**
-     * Task update event.
-     *
-     * @generated from field: bytebase.v1.IssueComment.TaskUpdate task_update = 11;
-     */
-    value: IssueComment_TaskUpdate;
-    case: "taskUpdate";
-  } | {
-    /**
-     * Task prior backup event.
-     *
-     * @generated from field: bytebase.v1.IssueComment.TaskPriorBackup task_prior_backup = 12;
-     */
-    value: IssueComment_TaskPriorBackup;
-    case: "taskPriorBackup";
+    value: IssueComment_PlanSpecUpdate;
+    case: "planSpecUpdate";
   } | { case: undefined; value?: undefined };
 };
 
@@ -1164,12 +1084,12 @@ export declare type IssueComment_IssueUpdate = Message<"bytebase.v1.IssueComment
   toStatus?: IssueStatus;
 
   /**
-   * @generated from field: repeated string from_labels = 9;
+   * @generated from field: repeated string from_labels = 7;
    */
   fromLabels: string[];
 
   /**
-   * @generated from field: repeated string to_labels = 10;
+   * @generated from field: repeated string to_labels = 8;
    */
   toLabels: string[];
 };
@@ -1181,39 +1101,21 @@ export declare type IssueComment_IssueUpdate = Message<"bytebase.v1.IssueComment
 export declare const IssueComment_IssueUpdateSchema: GenMessage<IssueComment_IssueUpdate>;
 
 /**
- * Stage end event information.
+ * Plan spec update event information (tracks sheet changes to plan specs).
  *
- * @generated from message bytebase.v1.IssueComment.StageEnd
+ * @generated from message bytebase.v1.IssueComment.PlanSpecUpdate
  */
-export declare type IssueComment_StageEnd = Message<"bytebase.v1.IssueComment.StageEnd"> & {
+export declare type IssueComment_PlanSpecUpdate = Message<"bytebase.v1.IssueComment.PlanSpecUpdate"> & {
   /**
-   * The stage that ended.
+   * The spec that was updated.
+   * Format: projects/{project}/plans/{plan}/specs/{spec}
    *
-   * @generated from field: string stage = 1;
+   * @generated from field: string spec = 1;
    */
-  stage: string;
-};
-
-/**
- * Describes the message bytebase.v1.IssueComment.StageEnd.
- * Use `create(IssueComment_StageEndSchema)` to create a new message.
- */
-export declare const IssueComment_StageEndSchema: GenMessage<IssueComment_StageEnd>;
-
-/**
- * Task update event information.
- *
- * @generated from message bytebase.v1.IssueComment.TaskUpdate
- */
-export declare type IssueComment_TaskUpdate = Message<"bytebase.v1.IssueComment.TaskUpdate"> & {
-  /**
-   * The tasks that were updated.
-   *
-   * @generated from field: repeated string tasks = 1;
-   */
-  tasks: string[];
+  spec: string;
 
   /**
+   * The previous sheet.
    * Format: projects/{project}/sheets/{sheet}
    *
    * @generated from field: optional string from_sheet = 2;
@@ -1221,159 +1123,19 @@ export declare type IssueComment_TaskUpdate = Message<"bytebase.v1.IssueComment.
   fromSheet?: string;
 
   /**
+   * The new sheet.
    * Format: projects/{project}/sheets/{sheet}
    *
    * @generated from field: optional string to_sheet = 3;
    */
   toSheet?: string;
-
-  /**
-   * @generated from field: optional bytebase.v1.IssueComment.TaskUpdate.Status to_status = 6;
-   */
-  toStatus?: IssueComment_TaskUpdate_Status;
 };
 
 /**
- * Describes the message bytebase.v1.IssueComment.TaskUpdate.
- * Use `create(IssueComment_TaskUpdateSchema)` to create a new message.
+ * Describes the message bytebase.v1.IssueComment.PlanSpecUpdate.
+ * Use `create(IssueComment_PlanSpecUpdateSchema)` to create a new message.
  */
-export declare const IssueComment_TaskUpdateSchema: GenMessage<IssueComment_TaskUpdate>;
-
-/**
- * Task status values.
- *
- * @generated from enum bytebase.v1.IssueComment.TaskUpdate.Status
- */
-export enum IssueComment_TaskUpdate_Status {
-  /**
-   * Unspecified status.
-   *
-   * @generated from enum value: STATUS_UNSPECIFIED = 0;
-   */
-  STATUS_UNSPECIFIED = 0,
-
-  /**
-   * Task is pending.
-   *
-   * @generated from enum value: PENDING = 1;
-   */
-  PENDING = 1,
-
-  /**
-   * Task is running.
-   *
-   * @generated from enum value: RUNNING = 2;
-   */
-  RUNNING = 2,
-
-  /**
-   * Task is done.
-   *
-   * @generated from enum value: DONE = 3;
-   */
-  DONE = 3,
-
-  /**
-   * Task failed.
-   *
-   * @generated from enum value: FAILED = 4;
-   */
-  FAILED = 4,
-
-  /**
-   * Task was skipped.
-   *
-   * @generated from enum value: SKIPPED = 5;
-   */
-  SKIPPED = 5,
-
-  /**
-   * Task was canceled.
-   *
-   * @generated from enum value: CANCELED = 6;
-   */
-  CANCELED = 6,
-}
-
-/**
- * Describes the enum bytebase.v1.IssueComment.TaskUpdate.Status.
- */
-export declare const IssueComment_TaskUpdate_StatusSchema: GenEnum<IssueComment_TaskUpdate_Status>;
-
-/**
- * Task prior backup event information.
- *
- * @generated from message bytebase.v1.IssueComment.TaskPriorBackup
- */
-export declare type IssueComment_TaskPriorBackup = Message<"bytebase.v1.IssueComment.TaskPriorBackup"> & {
-  /**
-   * The task for which backup was performed.
-   *
-   * @generated from field: string task = 1;
-   */
-  task: string;
-
-  /**
-   * The tables that were backed up.
-   *
-   * @generated from field: repeated bytebase.v1.IssueComment.TaskPriorBackup.Table tables = 2;
-   */
-  tables: IssueComment_TaskPriorBackup_Table[];
-
-  /**
-   * The original line number in the statement.
-   *
-   * @generated from field: optional int32 original_line = 3;
-   */
-  originalLine?: number;
-
-  /**
-   * The database that was backed up.
-   *
-   * @generated from field: string database = 4;
-   */
-  database: string;
-
-  /**
-   * Error message if backup failed.
-   *
-   * @generated from field: string error = 5;
-   */
-  error: string;
-};
-
-/**
- * Describes the message bytebase.v1.IssueComment.TaskPriorBackup.
- * Use `create(IssueComment_TaskPriorBackupSchema)` to create a new message.
- */
-export declare const IssueComment_TaskPriorBackupSchema: GenMessage<IssueComment_TaskPriorBackup>;
-
-/**
- * Table identification.
- *
- * @generated from message bytebase.v1.IssueComment.TaskPriorBackup.Table
- */
-export declare type IssueComment_TaskPriorBackup_Table = Message<"bytebase.v1.IssueComment.TaskPriorBackup.Table"> & {
-  /**
-   * The schema name.
-   *
-   * @generated from field: string schema = 1;
-   */
-  schema: string;
-
-  /**
-   * The table name.
-   *
-   * @generated from field: string table = 2;
-   */
-  table: string;
-};
-
-/**
- * Describes the message bytebase.v1.IssueComment.TaskPriorBackup.Table.
- * Use `create(IssueComment_TaskPriorBackup_TableSchema)` to create a new message.
- */
-export declare const IssueComment_TaskPriorBackup_TableSchema: GenMessage<IssueComment_TaskPriorBackup_Table>;
+export declare const IssueComment_PlanSpecUpdateSchema: GenMessage<IssueComment_PlanSpecUpdate>;
 
 /**
  * The status of an issue.

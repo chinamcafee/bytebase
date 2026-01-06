@@ -20,7 +20,11 @@
           {{ $t("settings.general.workspace.maximum-role-expiration.days") }}
         </template>
       </NInputNumber>
-      <NCheckbox v-model:checked="state.neverExpire" style="margin-right: 12px">
+      <NCheckbox
+        :disabled="!allowEdit"
+        v-model:checked="state.neverExpire"
+        style="margin-right: 12px"
+      >
         {{
           $t("settings.general.workspace.maximum-role-expiration.never-expires")
         }}
@@ -33,7 +37,7 @@
 import { create } from "@bufbuild/protobuf";
 import { DurationSchema, FieldMaskSchema } from "@bufbuild/protobuf/wkt";
 import { isEqual } from "lodash-es";
-import { NInputNumber, NCheckbox } from "naive-ui";
+import { NCheckbox, NInputNumber } from "naive-ui";
 import { computed, reactive } from "vue";
 import { useSettingV1Store } from "@/store/modules/v1/setting";
 
@@ -83,7 +87,7 @@ const handleSettingChange = async () => {
       }),
     },
     updateMask: create(FieldMaskSchema, {
-      paths: ["value.workspace_profile_setting_value.maximum_role_expiration"],
+      paths: ["value.workspace_profile.maximum_role_expiration"],
     }),
   });
   Object.assign(state, getInitialState());

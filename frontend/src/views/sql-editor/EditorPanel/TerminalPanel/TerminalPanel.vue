@@ -18,7 +18,7 @@
           <Suspense>
             <CompactSQLEditor
               v-model:content="query.statement"
-              class="min-h-[2rem]"
+              class="min-h-8"
               :class="[
                 isEditableQueryItem(query)
                   ? 'active-editor'
@@ -31,7 +31,7 @@
             />
             <template #fallback>
               <div
-                class="w-full min-h-[2rem] flex flex-col items-center justify-center"
+                class="w-full min-h-8 flex flex-col items-center justify-center"
               >
                 <BBSpin />
               </div>
@@ -79,20 +79,25 @@
 
 <script lang="ts" setup>
 import { useElementSize } from "@vueuse/core";
-import { computed, defineAsyncComponent, ref, unref, watch } from "vue";
-import { watchEffect } from "vue";
+import {
+  computed,
+  defineAsyncComponent,
+  ref,
+  unref,
+  watch,
+  watchEffect,
+} from "vue";
 import { BBSpin } from "@/bbkit";
 import type { IStandaloneCodeEditor } from "@/components/MonacoEditor";
 import {
-  useSQLEditorTabStore,
   useDatabaseV1Store,
+  useSQLEditorTabStore,
   useWebTerminalStore,
-  batchGetOrFetchDatabases,
 } from "@/store";
 import type { SQLEditorQueryParams, WebTerminalQueryItemV1 } from "@/types";
 import {
-  EditorAction,
   ConnectionHolder,
+  EditorAction,
   ResultViewV1,
 } from "../../EditorCommon";
 import { useHistory } from "./useHistory";
@@ -114,7 +119,7 @@ const queryList = computed(() => {
 });
 
 watchEffect(async () => {
-  await batchGetOrFetchDatabases(
+  await databaseStore.batchGetOrFetchDatabases(
     queryList.value.map((query) => query?.params?.connection.database ?? "")
   );
 });

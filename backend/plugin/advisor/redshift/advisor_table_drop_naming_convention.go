@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
 	parser "github.com/bytebase/parser/redshift"
 	"github.com/pkg/errors"
@@ -19,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_REDSHIFT, advisor.SchemaRuleTableDropNamingConvention, &TableDropNamingConventionAdvisor{})
+	advisor.Register(storepb.Engine_REDSHIFT, storepb.SQLReviewRule_TABLE_DROP_NAMING_CONVENTION, &TableDropNamingConventionAdvisor{})
 }
 
 // TableDropNamingConventionAdvisor is the advisor checking for table drop with naming convention.
@@ -28,9 +30,9 @@ type TableDropNamingConventionAdvisor struct {
 
 // Check checks for table drop with naming convention.
 func (*TableDropNamingConventionAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to ANTLR Tree")
+	tree, err := getANTLRTree(checkCtx)
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -38,14 +40,19 @@ func (*TableDropNamingConventionAdvisor) Check(_ context.Context, checkCtx advis
 		return nil, err
 	}
 
-	format, _, err := advisor.UnmarshalNamingRulePayloadAsRegexp(checkCtx.Rule.Payload)
+	namingPayload := checkCtx.Rule.GetNamingPayload()
+	if namingPayload == nil {
+		return nil, errors.New("naming_payload is required for table drop naming convention rule")
+	}
+
+	format, err := regexp.Compile(namingPayload.Format)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to compile regex format %q", namingPayload.Format)
 	}
 
 	listener := &tableDropNamingConventionListener{
 		level:      level,
-		title:      string(checkCtx.Rule.Type),
+		title:      checkCtx.Rule.Type.String(),
 		format:     format,
 		adviceList: []*storepb.Advice{},
 	}
@@ -79,7 +86,7 @@ func (l *tableDropNamingConventionListener) EnterDropstmt(ctx *parser.DropstmtCo
 				if tableName != "" && !l.format.MatchString(tableName) {
 					l.adviceList = append(l.adviceList, &storepb.Advice{
 						Status:  l.level,
-						Code:    advisor.TableDropNamingConventionMismatch.Int32(),
+						Code:    code.TableDropNamingConventionMismatch.Int32(),
 						Title:   l.title,
 						Content: fmt.Sprintf("`%s` mismatches drop table naming convention, naming format should be %q", tableName, l.format),
 						StartPosition: common.ConvertANTLRPositionToPosition(&common.ANTLRPosition{

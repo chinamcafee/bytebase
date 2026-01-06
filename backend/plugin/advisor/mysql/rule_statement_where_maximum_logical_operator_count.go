@@ -5,13 +5,14 @@ import (
 	"fmt"
 
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/bytebase/parser/mysql"
 	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -19,39 +20,41 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleStatementWhereMaximumLogicalOperatorCount, &StatementWhereMaximumLogicalOperatorCountAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_STATEMENT_WHERE_MAXIMUM_LOGICAL_OPERATOR_COUNT, &StatementWhereMaximumLogicalOperatorCountAdvisor{})
 }
 
 type StatementWhereMaximumLogicalOperatorCountAdvisor struct {
 }
 
 func (*StatementWhereMaximumLogicalOperatorCountAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalNumberTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	numberPayload := checkCtx.Rule.GetNumberPayload()
+	if numberPayload == nil {
+		return nil, errors.New("number_payload is required for this rule")
 	}
 
 	var allAdvice []*storepb.Advice
-	for _, stmt := range stmtList {
+	for _, stmt := range checkCtx.ParsedStatements {
 		// Create the rule for each statement
-		rule := NewStatementWhereMaximumLogicalOperatorCountRule(level, string(checkCtx.Rule.Type), payload.Number)
+		rule := NewStatementWhereMaximumLogicalOperatorCountRule(level, checkCtx.Rule.Type.String(), int(numberPayload.Number))
 
 		// Create the generic checker with the rule
 		checker := NewGenericChecker([]Rule{rule})
 
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
 		rule.resetForStatement()
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 
 		// Check OR conditions after walking the tree
 		rule.checkOrConditions()
@@ -143,7 +146,7 @@ func (r *StatementWhereMaximumLogicalOperatorCountRule) checkExprList(ctx *mysql
 	if count > r.maximum {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.StatementWhereMaximumLogicalOperatorCount.Int32(),
+			Code:          code.StatementWhereMaximumLogicalOperatorCount.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("Number of tokens (%d) in IN predicate operation exceeds limit (%d) in statement %q.", count, r.maximum, r.text),
 			StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + ctx.GetStart().GetLine()),
@@ -164,7 +167,7 @@ func (r *StatementWhereMaximumLogicalOperatorCountRule) checkOrConditions() {
 	if r.maxOrCount > r.maximum {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.StatementWhereMaximumLogicalOperatorCount.Int32(),
+			Code:          code.StatementWhereMaximumLogicalOperatorCount.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("Number of tokens (%d) in the OR predicate operation exceeds limit (%d) in statement %q.", r.maxOrCount, r.maximum, r.text),
 			StartPosition: common.ConvertANTLRLineToPosition(r.maxOrCountLine),

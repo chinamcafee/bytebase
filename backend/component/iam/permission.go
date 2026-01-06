@@ -5,15 +5,15 @@ type Permission = string
 const (
 	PermissionAuditLogsExport         Permission = "bb.auditLogs.export"
 	PermissionAuditLogsSearch         Permission = "bb.auditLogs.search"
-	PermissionChangelistsCreate       Permission = "bb.changelists.create"
-	PermissionChangelistsDelete       Permission = "bb.changelists.delete"
-	PermissionChangelistsGet          Permission = "bb.changelists.get"
-	PermissionChangelistsList         Permission = "bb.changelists.list"
-	PermissionChangelistsUpdate       Permission = "bb.changelists.update"
 	PermissionChangelogsGet           Permission = "bb.changelogs.get"
 	PermissionChangelogsList          Permission = "bb.changelogs.list"
 	PermissionDatabaseCatalogsGet     Permission = "bb.databaseCatalogs.get"
 	PermissionDatabaseCatalogsUpdate  Permission = "bb.databaseCatalogs.update"
+	PermissionDatabaseGroupsCreate    Permission = "bb.databaseGroups.create"
+	PermissionDatabaseGroupsDelete    Permission = "bb.databaseGroups.delete"
+	PermissionDatabaseGroupsGet       Permission = "bb.databaseGroups.get"
+	PermissionDatabaseGroupsList      Permission = "bb.databaseGroups.list"
+	PermissionDatabaseGroupsUpdate    Permission = "bb.databaseGroups.update"
 	PermissionDatabasesCheck          Permission = "bb.databases.check"
 	PermissionDatabasesGet            Permission = "bb.databases.get"
 	PermissionDatabasesGetSchema      Permission = "bb.databases.getSchema"
@@ -40,7 +40,7 @@ const (
 	PermissionIssuesGet               Permission = "bb.issues.get"
 	PermissionIssuesList              Permission = "bb.issues.list"
 	PermissionIssuesUpdate            Permission = "bb.issues.update"
-	PermissionPlanCheckRunsList       Permission = "bb.planCheckRuns.list"
+	PermissionPlanCheckRunsGet        Permission = "bb.planCheckRuns.get"
 	PermissionPlanCheckRunsRun        Permission = "bb.planCheckRuns.run"
 	PermissionPlansCreate             Permission = "bb.plans.create"
 	PermissionPlansGet                Permission = "bb.plans.get"
@@ -75,10 +75,6 @@ const (
 	PermissionRevisionsDelete         Permission = "bb.revisions.delete"
 	PermissionRevisionsGet            Permission = "bb.revisions.get"
 	PermissionRevisionsList           Permission = "bb.revisions.list"
-	PermissionRisksCreate             Permission = "bb.risks.create"
-	PermissionRisksDelete             Permission = "bb.risks.delete"
-	PermissionRisksList               Permission = "bb.risks.list"
-	PermissionRisksUpdate             Permission = "bb.risks.update"
 	PermissionRolesCreate             Permission = "bb.roles.create"
 	PermissionRolesDelete             Permission = "bb.roles.delete"
 	PermissionRolesList               Permission = "bb.roles.list"
@@ -87,7 +83,6 @@ const (
 	PermissionRolloutsCreate          Permission = "bb.rollouts.create"
 	PermissionRolloutsGet             Permission = "bb.rollouts.get"
 	PermissionRolloutsList            Permission = "bb.rollouts.list"
-	PermissionRolloutsPreview         Permission = "bb.rollouts.preview"
 	PermissionSettingsGet             Permission = "bb.settings.get"
 	PermissionSettingsList            Permission = "bb.settings.list"
 	PermissionSettingsSet             Permission = "bb.settings.set"
@@ -113,6 +108,7 @@ const (
 	PermissionUsersList               Permission = "bb.users.list"
 	PermissionUsersUndelete           Permission = "bb.users.undelete"
 	PermissionUsersUpdate             Permission = "bb.users.update"
+	PermissionUsersUpdateEmail        Permission = "bb.users.updateEmail"
 	PermissionWorksheetsGet           Permission = "bb.worksheets.get"
 	PermissionWorksheetsManage        Permission = "bb.worksheets.manage"
 	PermissionWorkspacesGetIamPolicy  Permission = "bb.workspaces.getIamPolicy"
@@ -122,15 +118,15 @@ const (
 var allPermissions = []Permission{
 	PermissionAuditLogsExport,
 	PermissionAuditLogsSearch,
-	PermissionChangelistsCreate,
-	PermissionChangelistsDelete,
-	PermissionChangelistsGet,
-	PermissionChangelistsList,
-	PermissionChangelistsUpdate,
 	PermissionChangelogsGet,
 	PermissionChangelogsList,
 	PermissionDatabaseCatalogsGet,
 	PermissionDatabaseCatalogsUpdate,
+	PermissionDatabaseGroupsCreate,
+	PermissionDatabaseGroupsDelete,
+	PermissionDatabaseGroupsGet,
+	PermissionDatabaseGroupsList,
+	PermissionDatabaseGroupsUpdate,
 	PermissionDatabasesCheck,
 	PermissionDatabasesGet,
 	PermissionDatabasesGetSchema,
@@ -157,7 +153,7 @@ var allPermissions = []Permission{
 	PermissionIssuesGet,
 	PermissionIssuesList,
 	PermissionIssuesUpdate,
-	PermissionPlanCheckRunsList,
+	PermissionPlanCheckRunsGet,
 	PermissionPlanCheckRunsRun,
 	PermissionPlansCreate,
 	PermissionPlansGet,
@@ -192,10 +188,6 @@ var allPermissions = []Permission{
 	PermissionRevisionsDelete,
 	PermissionRevisionsGet,
 	PermissionRevisionsList,
-	PermissionRisksCreate,
-	PermissionRisksDelete,
-	PermissionRisksList,
-	PermissionRisksUpdate,
 	PermissionRolesCreate,
 	PermissionRolesDelete,
 	PermissionRolesList,
@@ -204,7 +196,6 @@ var allPermissions = []Permission{
 	PermissionRolloutsCreate,
 	PermissionRolloutsGet,
 	PermissionRolloutsList,
-	PermissionRolloutsPreview,
 	PermissionSettingsGet,
 	PermissionSettingsList,
 	PermissionSettingsSet,
@@ -230,6 +221,7 @@ var allPermissions = []Permission{
 	PermissionUsersList,
 	PermissionUsersUndelete,
 	PermissionUsersUpdate,
+	PermissionUsersUpdateEmail,
 	PermissionWorksheetsGet,
 	PermissionWorksheetsManage,
 	PermissionWorkspacesGetIamPolicy,

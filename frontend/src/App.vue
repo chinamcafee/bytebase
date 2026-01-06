@@ -1,6 +1,5 @@
 <template>
   <NConfigProvider
-    :key="key"
     :locale="generalLang"
     :date-locale="dateLang"
     :theme-overrides="themeOverrides"
@@ -32,16 +31,14 @@ import {
   NDialogProvider,
   NNotificationProvider,
 } from "naive-ui";
-import { onErrorCaptured, watchEffect } from "vue";
-import { watch } from "vue";
+import { onErrorCaptured, watch, watchEffect } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import Watermark from "@/components/misc/Watermark.vue";
-import { themeOverrides, dateLang, generalLang } from "../naive-ui.config";
-import { provideAppRootContext } from "./AppRootContext";
+import { dateLang, generalLang, themeOverrides } from "../naive-ui.config";
 import AuthContext from "./AuthContext.vue";
-import NotificationContext from "./NotificationContext.vue";
 import OverlayStackManager from "./components/misc/OverlayStackManager.vue";
 import { overrideAppProfile } from "./customAppProfile";
+import NotificationContext from "./NotificationContext.vue";
 import { t } from "./plugins/i18n";
 import { useNotificationStore } from "./store";
 import { isDev } from "./utils";
@@ -51,8 +48,6 @@ const MAX_NOTIFICATION_DISPLAY_COUNT = 3;
 
 const route = useRoute();
 const router = useRouter();
-// TODO(ed): can we remove it?
-const { key } = provideAppRootContext();
 const notificationStore = useNotificationStore();
 
 watchEffect(async () => {
@@ -60,7 +55,7 @@ watchEffect(async () => {
   overrideAppProfile();
 });
 
-onErrorCaptured((error: any /* , _, info */) => {
+onErrorCaptured((error: unknown /* , _, info */) => {
   if (
     error instanceof ConnectError &&
     Object.values(Code).includes(error.code)
@@ -68,12 +63,13 @@ onErrorCaptured((error: any /* , _, info */) => {
     return;
   }
 
-  if (!error.response) {
+  const err = error as { response?: unknown; stack?: string };
+  if (!err.response) {
     notificationStore.pushNotification({
       module: "bytebase",
       style: "CRITICAL",
       title: `Internal error captured`,
-      description: isDev() ? error.stack : undefined,
+      description: isDev() ? err.stack : undefined,
     });
   }
   return true;

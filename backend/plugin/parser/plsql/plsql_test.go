@@ -3,8 +3,10 @@ package plsql
 import (
 	"testing"
 
-	parser "github.com/bytebase/plsql-parser"
+	parser "github.com/bytebase/parser/plsql"
 	"github.com/stretchr/testify/require"
+
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 func TestPLSQLParser(t *testing.T) {
@@ -43,13 +45,53 @@ func TestPLSQLParser(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		tree, _, err := ParsePLSQL(test.statement)
-		_, ok := tree.(*parser.Sql_scriptContext)
+		results, err := ParsePLSQL(test.statement)
 		if test.errorMessage == "" {
-			require.True(t, ok)
 			require.NoError(t, err)
+			require.NotEmpty(t, results)
+			_, ok := results[0].Tree.(*parser.Sql_scriptContext)
+			require.True(t, ok)
 		} else {
 			require.EqualError(t, err, test.errorMessage)
+		}
+	}
+}
+
+func TestPLSQLParser_MultipleStatements(t *testing.T) {
+	tests := []struct {
+		statement     string
+		expectedCount int   // Number of individual statements
+		expectedLines []int // StartPosition.Line - 1 for each result (0-based line of first character, including leading whitespace)
+	}{
+		{
+			statement:     "SELECT * FROM t1;",
+			expectedCount: 1,
+			expectedLines: []int{0},
+		},
+		{
+			// Statement 2's first character is the newline at end of line 1
+			statement: `SELECT * FROM t1;
+SELECT * FROM t2;`,
+			expectedCount: 2,
+			expectedLines: []int{0, 0},
+		},
+		{
+			// Statement 2's first char is newline at end of line 1, statement 3's first char is newline at end of line 2
+			statement: `SELECT * FROM t1;
+SELECT * FROM t2;
+INSERT INTO t3 VALUES (1, 2);`,
+			expectedCount: 3,
+			expectedLines: []int{0, 0, 1},
+		},
+	}
+
+	for _, test := range tests {
+		results, err := ParsePLSQL(test.statement)
+		require.NoError(t, err)
+		require.Equal(t, test.expectedCount, len(results), "Statement: %s", test.statement)
+
+		for i, result := range results {
+			require.Equal(t, test.expectedLines[i], base.GetLineOffset(result.StartPosition), "Statement %d", i+1)
 		}
 	}
 }

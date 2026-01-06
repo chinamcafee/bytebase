@@ -103,77 +103,6 @@ export declare type ListReleasesResponse = Message<"bytebase.v1.ListReleasesResp
 export declare const ListReleasesResponseSchema: GenMessage<ListReleasesResponse>;
 
 /**
- * @generated from message bytebase.v1.SearchReleasesRequest
- */
-export declare type SearchReleasesRequest = Message<"bytebase.v1.SearchReleasesRequest"> & {
-  /**
-   * Format: projects/{project}
-   *
-   * @generated from field: string parent = 1;
-   */
-  parent: string;
-
-  /**
-   * The maximum number of releases to return. The service may return fewer than this value.
-   * If unspecified, at most 10 releases will be returned.
-   * The maximum value is 1000; values above 1000 will be coerced to 1000.
-   *
-   * @generated from field: int32 page_size = 2;
-   */
-  pageSize: number;
-
-  /**
-   * A page token, received from a previous `ListReleases` call.
-   * Provide this to retrieve the subsequent page.
-   *
-   * When paginating, all other parameters provided to `ListReleases` must match
-   * the call that provided the page token.
-   *
-   * @generated from field: string page_token = 3;
-   */
-  pageToken: string;
-
-  /**
-   * Search by the digest of the release.
-   *
-   * @generated from field: optional string digest = 4;
-   */
-  digest?: string;
-};
-
-/**
- * Describes the message bytebase.v1.SearchReleasesRequest.
- * Use `create(SearchReleasesRequestSchema)` to create a new message.
- */
-export declare const SearchReleasesRequestSchema: GenMessage<SearchReleasesRequest>;
-
-/**
- * @generated from message bytebase.v1.SearchReleasesResponse
- */
-export declare type SearchReleasesResponse = Message<"bytebase.v1.SearchReleasesResponse"> & {
-  /**
-   * The releases matching the search criteria.
-   *
-   * @generated from field: repeated bytebase.v1.Release releases = 1;
-   */
-  releases: Release[];
-
-  /**
-   * A token, which can be sent as `page_token` to retrieve the next page.
-   * If this field is omitted, there are no subsequent pages.
-   *
-   * @generated from field: string next_page_token = 2;
-   */
-  nextPageToken: string;
-};
-
-/**
- * Describes the message bytebase.v1.SearchReleasesResponse.
- * Use `create(SearchReleasesResponseSchema)` to create a new message.
- */
-export declare const SearchReleasesResponseSchema: GenMessage<SearchReleasesResponse>;
-
-/**
  * @generated from message bytebase.v1.CreateReleaseRequest
  */
 export declare type CreateReleaseRequest = Message<"bytebase.v1.CreateReleaseRequest"> & {
@@ -297,6 +226,16 @@ export declare type CheckReleaseRequest = Message<"bytebase.v1.CheckReleaseReque
    * @generated from field: repeated string targets = 3;
    */
   targets: string[];
+
+  /**
+   * Custom linting rules in natural language for AI-powered validation.
+   * Each rule should be a clear statement describing the desired schema constraint.
+   * Example: "All tables must have a primary key"
+   * Example: "VARCHAR columns should specify a maximum length"
+   *
+   * @generated from field: string custom_rules = 4;
+   */
+  customRules: string;
 };
 
 /**
@@ -446,6 +385,13 @@ export declare type Release = Message<"bytebase.v1.Release"> & {
    * @generated from field: string digest = 8;
    */
   digest: string;
+
+  /**
+   * The type of schema change for all files in this release.
+   *
+   * @generated from field: bytebase.v1.Release.Type type = 9;
+   */
+  type: Release_Type;
 };
 
 /**
@@ -461,25 +407,11 @@ export declare const ReleaseSchema: GenMessage<Release>;
  */
 export declare type Release_File = Message<"bytebase.v1.Release.File"> & {
   /**
-   * The unique identifier for the file.
-   *
-   * @generated from field: string id = 1;
-   */
-  id: string;
-
-  /**
    * The path of the file. e.g., `2.2/V0001_create_table.sql`.
    *
    * @generated from field: string path = 2;
    */
   path: string;
-
-  /**
-   * The type of the file.
-   *
-   * @generated from field: bytebase.v1.Release.File.Type type = 5;
-   */
-  type: Release_File_Type;
 
   /**
    * The version identifier for the file.
@@ -489,13 +421,11 @@ export declare type Release_File = Message<"bytebase.v1.Release.File"> & {
   version: string;
 
   /**
-   * The migration type of the file.
-   * For versioned files, it is the migration type of the file.
-   * For declarative files, this field is always DDL, thus meaningless.
+   * Whether to use gh-ost for online schema migration.
    *
-   * @generated from field: bytebase.v1.Release.File.MigrationType migration_type = 9;
+   * @generated from field: bool enable_ghost = 9;
    */
-  migrationType: Release_File_MigrationType;
+  enableGhost: boolean;
 
   /**
    * For inputs, we must either use `sheet` or `statement`.
@@ -521,13 +451,6 @@ export declare type Release_File = Message<"bytebase.v1.Release.File"> & {
    * @generated from field: string sheet_sha256 = 4;
    */
   sheetSha256: string;
-
-  /**
-   * The size of the statement in bytes.
-   *
-   * @generated from field: int64 statement_size = 8;
-   */
-  statementSize: bigint;
 };
 
 /**
@@ -535,79 +458,6 @@ export declare type Release_File = Message<"bytebase.v1.Release.File"> & {
  * Use `create(Release_FileSchema)` to create a new message.
  */
 export declare const Release_FileSchema: GenMessage<Release_File>;
-
-/**
- * The type of migration file.
- *
- * @generated from enum bytebase.v1.Release.File.Type
- */
-export enum Release_File_Type {
-  /**
-   * Unspecified type.
-   *
-   * @generated from enum value: TYPE_UNSPECIFIED = 0;
-   */
-  TYPE_UNSPECIFIED = 0,
-
-  /**
-   * Versioned migration file with sequential version numbers.
-   *
-   * @generated from enum value: VERSIONED = 1;
-   */
-  VERSIONED = 1,
-
-  /**
-   * Declarative schema definition file describing desired state.
-   *
-   * @generated from enum value: DECLARATIVE = 2;
-   */
-  DECLARATIVE = 2,
-}
-
-/**
- * Describes the enum bytebase.v1.Release.File.Type.
- */
-export declare const Release_File_TypeSchema: GenEnum<Release_File_Type>;
-
-/**
- * The migration type for versioned files.
- *
- * @generated from enum bytebase.v1.Release.File.MigrationType
- */
-export enum Release_File_MigrationType {
-  /**
-   * Unspecified migration type.
-   *
-   * @generated from enum value: MIGRATION_TYPE_UNSPECIFIED = 0;
-   */
-  MIGRATION_TYPE_UNSPECIFIED = 0,
-
-  /**
-   * DDL (Data Definition Language) migration.
-   *
-   * @generated from enum value: DDL = 1;
-   */
-  DDL = 1,
-
-  /**
-   * DDL migration using gh-ost for online schema changes.
-   *
-   * @generated from enum value: DDL_GHOST = 2;
-   */
-  DDL_GHOST = 2,
-
-  /**
-   * DML (Data Manipulation Language) migration.
-   *
-   * @generated from enum value: DML = 3;
-   */
-  DML = 3,
-}
-
-/**
- * Describes the enum bytebase.v1.Release.File.MigrationType.
- */
-export declare const Release_File_MigrationTypeSchema: GenEnum<Release_File_MigrationType>;
 
 /**
  * Version control system source information.
@@ -637,6 +487,39 @@ export declare type Release_VCSSource = Message<"bytebase.v1.Release.VCSSource">
 export declare const Release_VCSSourceSchema: GenMessage<Release_VCSSource>;
 
 /**
+ * The type of schema change.
+ *
+ * @generated from enum bytebase.v1.Release.Type
+ */
+export enum Release_Type {
+  /**
+   * Unspecified type.
+   *
+   * @generated from enum value: TYPE_UNSPECIFIED = 0;
+   */
+  TYPE_UNSPECIFIED = 0,
+
+  /**
+   * Versioned schema migration.
+   *
+   * @generated from enum value: VERSIONED = 1;
+   */
+  VERSIONED = 1,
+
+  /**
+   * Declarative schema definition.
+   *
+   * @generated from enum value: DECLARATIVE = 2;
+   */
+  DECLARATIVE = 2,
+}
+
+/**
+ * Describes the enum bytebase.v1.Release.Type.
+ */
+export declare const Release_TypeSchema: GenEnum<Release_Type>;
+
+/**
  * ReleaseService manages releases for coordinating deployments.
  *
  * @generated from service bytebase.v1.ReleaseService
@@ -663,17 +546,6 @@ export declare const ReleaseService: GenService<{
     methodKind: "unary";
     input: typeof ListReleasesRequestSchema;
     output: typeof ListReleasesResponseSchema;
-  },
-  /**
-   * Searches releases by digest or other criteria.
-   * Permissions required: bb.releases.get
-   *
-   * @generated from rpc bytebase.v1.ReleaseService.SearchReleases
-   */
-  searchReleases: {
-    methodKind: "unary";
-    input: typeof SearchReleasesRequestSchema;
-    output: typeof SearchReleasesResponseSchema;
   },
   /**
    * Creates a new release with SQL files.

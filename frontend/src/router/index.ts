@@ -23,6 +23,7 @@ import authRoutes, {
   AUTH_OIDC_CALLBACK_MODULE,
   AUTH_PASSWORD_RESET_MODULE,
   AUTH_SIGNIN_MODULE,
+  OAUTH2_CONSENT_MODULE,
 } from "./auth";
 import dashboardRoutes from "./dashboard";
 import {
@@ -31,6 +32,8 @@ import {
   INSTANCE_ROUTE_DASHBOARD,
   PROJECT_V1_ROUTE_DASHBOARD,
   WORKSPACE_ROOT_MODULE,
+  WORKSPACE_ROUTE_403,
+  WORKSPACE_ROUTE_404,
 } from "./dashboard/workspaceRoutes";
 import { SETTING_ROUTE } from "./dashboard/workspaceSetting";
 import setupRoutes, { SETUP_MODULE } from "./setup";
@@ -74,11 +77,7 @@ router.beforeEach((to, from, next) => {
   }
 
   // Error pages can be accessed directly
-  if (
-    to.name === "error.403" ||
-    to.name === "error.404" ||
-    to.name === "error.500"
-  ) {
+  if (to.name === WORKSPACE_ROUTE_403 || to.name === WORKSPACE_ROUTE_404) {
     next();
     return;
   }
@@ -88,6 +87,12 @@ router.beforeEach((to, from, next) => {
     to.name === AUTH_OAUTH_CALLBACK_MODULE ||
     to.name === AUTH_OIDC_CALLBACK_MODULE
   ) {
+    next();
+    return;
+  }
+
+  // OAuth2 consent page requires login but should not redirect away
+  if (to.name === OAUTH2_CONSENT_MODULE) {
     next();
     return;
   }
@@ -124,7 +129,22 @@ router.beforeEach((to, from, next) => {
     authStore.isLoggedIn &&
     !authStore.unauthenticatedOccurred
   ) {
-    const redirect = (to.query["redirect"] as string) || "/";
+    // For IdP-initiated SSO, use relay_state parameter
+    // For other auth routes, use redirect parameter
+    const relayState = to.query["relay_state"] as string | undefined;
+    const redirectParam = to.query["redirect"] as string | undefined;
+
+    // Validate relay_state to prevent open redirect attacks
+    let redirect = "/";
+    if (relayState && typeof relayState === "string") {
+      // Only allow relative URLs, reject protocol-relative URLs (//)
+      if (relayState.startsWith("/") && !relayState.startsWith("//")) {
+        redirect = relayState;
+      }
+    } else if (redirectParam) {
+      redirect = redirectParam;
+    }
+
     next(redirect);
     return;
   }
@@ -230,19 +250,6 @@ router.beforeEach((to, from, next) => {
     return;
   }
 
-  // === DYNAMIC ROUTE HANDLING ===
-
-  const routerSlug = routerStore.routeSlug(to);
-  if (
-    routerSlug.issueSlug ||
-    routerSlug.sheetSlug ||
-    routerSlug.connectionSlug
-  ) {
-    // Data fetching is handled by respective components
-    next();
-    return;
-  }
-
   // === FALLBACK ===
 
   // Log unexpected route for debugging
@@ -253,7 +260,7 @@ router.beforeEach((to, from, next) => {
   });
 
   next({
-    name: "error.404",
+    name: WORKSPACE_ROUTE_404,
     replace: false,
   });
 });

@@ -31,7 +31,7 @@
               @click="handleRunQuery"
             >
               <template #icon>
-                <PlayIcon class="w-4 h-4 !fill-current" />
+                <PlayIcon class="w-4 h-4 fill-current!" />
               </template>
               <template #default>
                 <div class="inline-flex items-center">
@@ -114,7 +114,7 @@
             </NPopover>
           </template>
           <template #default>
-            <SharePopover />
+            <SharePopover :worksheet="sheetAndTabStore.currentSheet" />
           </template>
         </NPopover>
       </template>
@@ -159,6 +159,7 @@ import {
   useSQLEditorStore,
   useSQLEditorTabStore,
   useUIStateStore,
+  useWorkSheetAndTabStore,
   useWorkSheetStore,
 } from "@/store";
 import {
@@ -167,7 +168,11 @@ import {
 } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
-import { isWorksheetWritableV1, keyboardShortcutStr } from "@/utils";
+import {
+  isDatabaseV1Queryable,
+  isWorksheetWritableV1,
+  keyboardShortcutStr,
+} from "@/utils";
 import { useSQLEditorContext } from "../context";
 import AdminModeButton from "./AdminModeButton.vue";
 import ContainerChooser from "./ContainerChooser.vue";
@@ -194,6 +199,7 @@ const tabStore = useSQLEditorTabStore();
 const uiStateStore = useUIStateStore();
 const { events } = useSQLEditorContext();
 const { resultRowsLimit } = storeToRefs(useSQLEditorStore());
+const sheetAndTabStore = useWorkSheetAndTabStore();
 
 const { currentTab, isDisconnected } = storeToRefs(tabStore);
 
@@ -204,7 +210,7 @@ const isEmptyStatement = computed(() => {
   }
   return tab.statement === "";
 });
-const { instance } = useConnectionOfCurrentSQLEditorTab();
+const { instance, database } = useConnectionOfCurrentSQLEditorTab();
 const { t } = useI18n();
 
 const showSheetsFeature = computed(() => {
@@ -229,7 +235,8 @@ const allowQuery = computed(() => {
   if (instance.value.engine === Engine.COSMOSDB) {
     return !!currentTab.value?.connection.table;
   }
-  return true;
+
+  return isDatabaseV1Queryable(database.value);
 });
 
 const canWriteSheet = computed(() => {
@@ -249,9 +256,6 @@ const allowSave = computed(() => {
   if (!showSheetsFeature.value) {
     return false;
   }
-  if (isEmptyStatement.value) {
-    return false;
-  }
   const tab = currentTab.value;
   if (!tab) {
     return false;
@@ -266,10 +270,7 @@ const allowSave = computed(() => {
       return true;
     }
   }
-  if (tab.status === "NEW" || tab.status === "CLEAN") {
-    return false;
-  }
-  if (!tab.connection.database) {
+  if (tab.status === "CLEAN") {
     return false;
   }
 
@@ -279,7 +280,7 @@ const allowSave = computed(() => {
 const allowShare = computed(() => {
   const tab = currentTab.value;
   if (!tab) return false;
-  if (tab.status === "NEW" || tab.status === "DIRTY") return false;
+  if (tab.status === "DIRTY") return false;
   if (isEmptyStatement.value) return false;
   if (isDisconnected.value) return false;
   if (tab.worksheet) {

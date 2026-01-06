@@ -15,7 +15,7 @@
 
 <script lang="tsx" setup>
 import type { DropdownOption } from "naive-ui";
-import { NSwitch, NDropdown } from "naive-ui";
+import { NDropdown, NSwitch } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { twMerge } from "tailwind-merge";
 import { computed, ref } from "vue";
@@ -35,9 +35,9 @@ import {
 } from "@/store";
 import { PlanType } from "@/types/proto-es/v1/subscription_service_pb";
 import { hasWorkspacePermissionV2, isDev, isSQLEditorRoute } from "@/utils";
+import Version from "./misc/Version.vue";
 import ProfilePreview from "./ProfilePreview.vue";
 import UserAvatar from "./User/UserAvatar.vue";
-import Version from "./misc/Version.vue";
 
 const { t } = useI18n();
 
@@ -53,18 +53,6 @@ const uiStateStore = useUIStateStore();
 const { setLocale, locale } = useLanguage();
 const currentUserV1 = useCurrentUserV1();
 const showDropdown = ref(false);
-const hideQuickstart = computed(() => {
-  if (useAppFeature("bb.feature.hide-quick-start").value) {
-    return true;
-  }
-  // Hide quickstart if there are more than 1 active users.
-  return (
-    actuatorStore.getActiveUserCount({
-      includeBot: false,
-      includeServiceAccount: false,
-    }) > 1
-  );
-});
 const hideHelp = useAppFeature("bb.feature.hide-help");
 
 // For now, debug mode is a global setting and will affect all users.
@@ -236,7 +224,12 @@ const options = computed((): DropdownOption[] => [
     key: "profile",
     type: "render",
     render() {
-      return <ProfilePreview link={props.link} />;
+      return (
+        <ProfilePreview
+          link={props.link}
+          onClick={() => (showDropdown.value = false)}
+        />
+      );
     },
   },
   {
@@ -277,7 +270,7 @@ const options = computed((): DropdownOption[] => [
   {
     key: "quick-start",
     type: "render",
-    show: !hideQuickstart.value,
+    show: actuatorStore.quickStartEnabled,
     render() {
       return (
         <div class="menu-item" onClick={resetQuickstart}>
@@ -347,7 +340,7 @@ const options = computed((): DropdownOption[] => [
     render() {
       return (
         <div class="menu-item">
-          <div class="flex flex-row items-center space-x-2 justify-between">
+          <div class="flex flex-row items-center gap-x-2 justify-between">
             <span>Debug</span>
             <NSwitch
               size="small"
@@ -365,7 +358,7 @@ const options = computed((): DropdownOption[] => [
     render() {
       return (
         <div class="menu-item">
-          <div class="flex flex-row items-center gap-2 justify-between">
+          <div class="flex flex-row items-center gap-x-2 justify-between">
             <span>{t("issue.new-layout")}</span>
             <NSwitch
               size="small"

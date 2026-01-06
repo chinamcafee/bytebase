@@ -1,14 +1,5 @@
 import { cloneDeep, pullAt } from "lodash-es";
 
-export type SemanticIssueStatus = "OPEN" | "CLOSED";
-
-export const UIIssueFilterScopeIdList = [
-  "approver",
-  "approval",
-  "releaser",
-] as const;
-type UIIssueFilterScopeId = (typeof UIIssueFilterScopeIdList)[number];
-
 export const CommonFilterScopeIdList = ["environment", "instance"] as const;
 type CommonFilterScopeId = (typeof CommonFilterScopeIdList)[number];
 
@@ -32,6 +23,8 @@ export const AllSearchScopeIdList = [
   // issue related search scopes.
   "issue-label",
   "taskType",
+  "current-approver",
+  "approval",
   // auditLog related search scopes.
   "method",
   "level",
@@ -45,8 +38,8 @@ export const AllSearchScopeIdList = [
 
 export type SearchScopeId =
   | (typeof AllSearchScopeIdList)[number]
-  | UIIssueFilterScopeId
-  | CommonFilterScopeId;
+  | CommonFilterScopeId
+  | string;
 
 export type SearchScope = {
   id: SearchScopeId;
@@ -60,11 +53,7 @@ export interface SearchParams {
 }
 
 export const isValidSearchScopeId = (id: string): id is SearchScopeId => {
-  return (
-    AllSearchScopeIdList.includes(id as any) ||
-    UIIssueFilterScopeIdList.includes(id as any) ||
-    CommonFilterScopeIdList.includes(id as any)
-  );
+  return (AllSearchScopeIdList as readonly string[]).includes(id);
 };
 
 export const buildSearchTextBySearchParams = (
@@ -83,7 +72,8 @@ export const buildSearchTextBySearchParams = (
 
 export const mergeSearchParams = (base: SearchParams, patch: SearchParams) => {
   for (const scope of patch.scopes) {
-    if (!base.scopes.find((s) => s.id === scope.id)) {
+    const existed = base.scopes.find((s) => s.id === scope.id);
+    if (!existed || existed.value !== scope.value) {
       base.scopes.push(scope);
     }
   }
@@ -114,6 +104,13 @@ export const buildSearchParamsBySearchText = (text: string): SearchParams => {
   params.scopes = params.scopes.filter((scope) => scope.id && scope.value);
 
   return params;
+};
+
+export const getValuesFromSearchParams = (
+  params: SearchParams,
+  scopeId: SearchScopeId
+) => {
+  return params.scopes.filter((s) => s.id === scopeId).map((s) => s.value);
 };
 
 export const getValueFromSearchParams = (
@@ -167,9 +164,12 @@ export const upsertScope = ({
   if (!Array.isArray(scopes)) {
     scopes = [scopes];
   }
-  scopes.forEach((scope) => {
+  for (const scope of scopes) {
     const index = target.scopes.findIndex((s) => s.id === scope.id);
     if (index >= 0) {
+      if (target.scopes[index].value === scope.value) {
+        continue;
+      }
       if (!scope.value) {
         pullAt(target.scopes, index);
       } else {
@@ -184,7 +184,8 @@ export const upsertScope = ({
         target.scopes.push(scope);
       }
     }
-  });
+  }
+
   return target;
 };
 

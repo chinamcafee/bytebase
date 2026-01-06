@@ -83,6 +83,9 @@ func (x *ListDatabasesRequest) Equal(y *ListDatabasesRequest) bool {
 	if x.ShowDeleted != y.ShowDeleted {
 		return false
 	}
+	if x.OrderBy != y.OrderBy {
+		return false
+	}
 	return true
 }
 
@@ -738,9 +741,6 @@ func (x *TableMetadata) Equal(y *TableMetadata) bool {
 	if x.Comment != y.Comment {
 		return false
 	}
-	if x.UserComment != y.UserComment {
-		return false
-	}
 	if len(x.ForeignKeys) != len(y.ForeignKeys) {
 		return false
 	}
@@ -899,9 +899,6 @@ func (x *ColumnMetadata) Equal(y *ColumnMetadata) bool {
 		return false
 	}
 	if x.Comment != y.Comment {
-		return false
-	}
-	if x.UserComment != y.UserComment {
 		return false
 	}
 	if !x.Generation.Equal(y.Generation) {
@@ -1614,174 +1611,6 @@ func (x *DatabaseSDLSchema) Equal(y *DatabaseSDLSchema) bool {
 	return true
 }
 
-func (x *ChangedResources) Equal(y *ChangedResources) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if len(x.Databases) != len(y.Databases) {
-		return false
-	}
-	for i := 0; i < len(x.Databases); i++ {
-		if !x.Databases[i].Equal(y.Databases[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func (x *ChangedResourceDatabase) Equal(y *ChangedResourceDatabase) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Name != y.Name {
-		return false
-	}
-	if len(x.Schemas) != len(y.Schemas) {
-		return false
-	}
-	for i := 0; i < len(x.Schemas); i++ {
-		if !x.Schemas[i].Equal(y.Schemas[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func (x *ChangedResourceSchema) Equal(y *ChangedResourceSchema) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Name != y.Name {
-		return false
-	}
-	if len(x.Tables) != len(y.Tables) {
-		return false
-	}
-	for i := 0; i < len(x.Tables); i++ {
-		if !x.Tables[i].Equal(y.Tables[i]) {
-			return false
-		}
-	}
-	if len(x.Views) != len(y.Views) {
-		return false
-	}
-	for i := 0; i < len(x.Views); i++ {
-		if !x.Views[i].Equal(y.Views[i]) {
-			return false
-		}
-	}
-	if len(x.Functions) != len(y.Functions) {
-		return false
-	}
-	for i := 0; i < len(x.Functions); i++ {
-		if !x.Functions[i].Equal(y.Functions[i]) {
-			return false
-		}
-	}
-	if len(x.Procedures) != len(y.Procedures) {
-		return false
-	}
-	for i := 0; i < len(x.Procedures); i++ {
-		if !x.Procedures[i].Equal(y.Procedures[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func (x *ChangedResourceTable) Equal(y *ChangedResourceTable) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Name != y.Name {
-		return false
-	}
-	if len(x.Ranges) != len(y.Ranges) {
-		return false
-	}
-	for i := 0; i < len(x.Ranges); i++ {
-		if !x.Ranges[i].Equal(y.Ranges[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func (x *ChangedResourceView) Equal(y *ChangedResourceView) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Name != y.Name {
-		return false
-	}
-	if len(x.Ranges) != len(y.Ranges) {
-		return false
-	}
-	for i := 0; i < len(x.Ranges); i++ {
-		if !x.Ranges[i].Equal(y.Ranges[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func (x *ChangedResourceFunction) Equal(y *ChangedResourceFunction) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Name != y.Name {
-		return false
-	}
-	if len(x.Ranges) != len(y.Ranges) {
-		return false
-	}
-	for i := 0; i < len(x.Ranges); i++ {
-		if !x.Ranges[i].Equal(y.Ranges[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func (x *ChangedResourceProcedure) Equal(y *ChangedResourceProcedure) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Name != y.Name {
-		return false
-	}
-	if len(x.Ranges) != len(y.Ranges) {
-		return false
-	}
-	for i := 0; i < len(x.Ranges); i++ {
-		if !x.Ranges[i].Equal(y.Ranges[i]) {
-			return false
-		}
-	}
-	return true
-}
-
 func (x *ListChangelogsRequest) Equal(y *ListChangelogsRequest) bool {
 	if x == y {
 		return true
@@ -1860,46 +1689,19 @@ func (x *Changelog) Equal(y *Changelog) bool {
 	if x.Status != y.Status {
 		return false
 	}
-	if x.Statement != y.Statement {
-		return false
-	}
-	if x.StatementSize != y.StatementSize {
-		return false
-	}
-	if x.StatementSheet != y.StatementSheet {
-		return false
-	}
 	if x.Schema != y.Schema {
 		return false
 	}
 	if x.SchemaSize != y.SchemaSize {
 		return false
 	}
-	if x.PrevSchema != y.PrevSchema {
-		return false
-	}
-	if x.PrevSchemaSize != y.PrevSchemaSize {
-		return false
-	}
-	if x.Issue != y.Issue {
-		return false
-	}
 	if x.TaskRun != y.TaskRun {
 		return false
 	}
-	if x.Version != y.Version {
-		return false
-	}
-	if x.Revision != y.Revision {
-		return false
-	}
-	if !x.ChangedResources.Equal(y.ChangedResources) {
+	if x.PlanTitle != y.PlanTitle {
 		return false
 	}
 	if x.Type != y.Type {
-		return false
-	}
-	if x.MigrationType != y.MigrationType {
 		return false
 	}
 	return true

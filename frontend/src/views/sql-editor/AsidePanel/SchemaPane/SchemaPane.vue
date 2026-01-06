@@ -52,9 +52,9 @@
           :theme-overrides="{ nodeHeight: '21px' }"
           :render-label="renderLabel"
         />
-        <NEmpty v-else class="mt-[4rem]" />
+        <NEmpty v-else class="mt-16" />
       </template>
-      <NEmpty v-else class="mt-[4rem]" />
+      <NEmpty v-else class="mt-16" />
     </div>
 
     <NDropdown
@@ -69,7 +69,7 @@
       @select="handleDropdownSelect"
     />
 
-    <MaskSpinner v-if="isFetchingMetadata" class="!bg-white/75" />
+    <MaskSpinner v-if="isFetchingMetadata" class="bg-white/75!" />
 
     <BBModal :show="!!schemaViewer" @close="schemaViewer = undefined">
       <template v-if="schemaViewer" #title>
@@ -104,11 +104,10 @@ import {
   type TreeOption,
 } from "naive-ui";
 import { storeToRefs } from "pinia";
-import { computed, h, nextTick, ref, watch } from "vue";
-import { watchEffect } from "vue";
+import { computed, h, nextTick, ref, watch, watchEffect } from "vue";
 import { BBModal } from "@/bbkit";
-import TableSchemaViewer from "@/components/TableSchemaViewer.vue";
 import MaskSpinner from "@/components/misc/MaskSpinner.vue";
+import TableSchemaViewer from "@/components/TableSchemaViewer.vue";
 import { RichDatabaseName, SearchBox } from "@/components/v2";
 import { useEmitteryEventListener } from "@/composables/useEmitteryEventListener";
 import {
@@ -124,19 +123,19 @@ import {
   findAncestor,
   isDescendantOf,
 } from "@/utils";
-import { useCurrentTabViewStateContext } from "../../EditorPanel";
 import { useSQLEditorContext } from "../../context";
+import { useCurrentTabViewStateContext } from "../../EditorPanel";
+import { useActions, useDropdown } from "./actions";
+import { useClickEvents } from "./click";
 import FlatTableList from "./FlatTableList.vue";
 import HoverPanel, { provideHoverStateContext } from "./HoverPanel";
 import SyncSchemaButton from "./SyncSchemaButton.vue";
 import { Label } from "./TreeNode";
-import { useDropdown, useActions } from "./actions";
-import { useClickEvents } from "./click";
 import {
-  type NodeTarget,
-  type TreeNode,
   buildDatabaseSchemaTree,
   ExpandableNodeTypes,
+  type NodeTarget,
+  type TreeNode,
 } from "./tree";
 
 const mounted = useMounted();
@@ -253,7 +252,7 @@ const defaultExpandedKeys = () => {
   return keys;
 };
 const nodeProps = ({ option }: { option: TreeOption }) => {
-  const node = option as any as TreeNode;
+  const node = option as TreeNode;
   return {
     onclick(e: MouseEvent) {
       if (node.disabled) return;
@@ -319,7 +318,7 @@ const nodeProps = ({ option }: { option: TreeOption }) => {
 
 // dynamic render the highlight keywords
 const renderLabel = ({ option }: { option: TreeOption }) => {
-  const node = option as any as TreeNode;
+  const node = option as TreeNode;
   const keyword = searchPattern.value;
   return h(Label, { node, keyword });
 };
@@ -485,7 +484,7 @@ watch(
 );
 
 // Handlers for flat list events
-const handleFlatListSelect = (table: any) => {
+const handleFlatListSelect = (table: { schema?: string }) => {
   // Update connection schema if needed
   const tab = currentTab.value;
   if (tab && table.schema) {
@@ -551,7 +550,10 @@ useEventListener(treeContainerElRef, "keydown", () => {
   --n-node-content-height: 21px !important;
 }
 .schema-tree :deep(.n-tree-node-content) {
-  @apply !px-0 text-sm;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
 }
 .schema-tree :deep(.n-tree-node-wrapper) {
   padding: 0;
@@ -569,14 +571,18 @@ useEventListener(treeContainerElRef, "keydown", () => {
   width: 0 !important;
 }
 .schema-tree :deep(.n-tree-node-content__prefix) {
-  @apply shrink-0 !mr-1;
+  flex-shrink: 0;
+  margin-right: 0.25rem !important;
 }
 .schema-tree.project
   :deep(.n-tree-node[data-node-type="project"] .n-tree-node-content__prefix) {
-  @apply hidden;
+  display: none;
 }
 .schema-tree :deep(.n-tree-node-content__text) {
-  @apply truncate mr-1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 0.25rem;
 }
 .schema-tree :deep(.n-tree-node--pending) {
   background-color: transparent !important;

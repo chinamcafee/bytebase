@@ -167,28 +167,29 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 	}
 
 	// Parse transaction mode from the script
-	transactionMode, cleanedStatement := base.ParseTransactionMode(statement)
+	config, cleanedStatement := base.ParseTransactionConfig(statement)
 	statement = cleanedStatement
+	transactionMode := config.Mode
 
 	// Apply default when transaction mode is not specified
 	if transactionMode == common.TransactionModeUnspecified {
 		transactionMode = common.GetDefaultTransactionMode()
 	}
 
-	var commands []base.SingleSQL
+	var commands []base.Statement
 	oneshot := true
 	if len(statement) <= common.MaxSheetCheckSize {
 		singleSQLs, err := pgparser.SplitSQL(statement)
 		if err != nil {
 			return 0, err
 		}
-		commands = base.FilterEmptySQL(singleSQLs)
+		commands = base.FilterEmptyStatements(singleSQLs)
 		if len(commands) <= common.MaximumCommands {
 			oneshot = false
 		}
 	}
 	if oneshot {
-		commands = []base.SingleSQL{
+		commands = []base.Statement{
 			{
 				Text: statement,
 			},
@@ -227,7 +228,7 @@ func (d *Driver) createDatabaseExecute(ctx context.Context, statement string) er
 }
 
 // executeInTransactionMode executes statements within a single transaction
-func (d *Driver) executeInTransactionMode(ctx context.Context, commands []base.SingleSQL, opts db.ExecuteOptions) (int64, error) {
+func (d *Driver) executeInTransactionMode(ctx context.Context, commands []base.Statement, opts db.ExecuteOptions) (int64, error) {
 	totalRowsAffected := int64(0)
 	if len(commands) == 0 {
 		return 0, nil
@@ -255,7 +256,7 @@ func (d *Driver) executeInTransactionMode(ctx context.Context, commands []base.S
 	}()
 
 	for i, command := range commands {
-		opts.LogCommandExecute([]int32{int32(i)}, command.Text)
+		opts.LogCommandExecute(command.Range, command.Text)
 		// Log the query statement in char code to see if there are some control characters that cause issues.
 		var charCode []rune
 		for _, r := range command.Text {
@@ -265,11 +266,7 @@ func (d *Driver) executeInTransactionMode(ctx context.Context, commands []base.S
 		sqlResult, err := tx.ExecContext(ctx, command.Text)
 		if err != nil {
 			opts.LogCommandResponse(0, nil, err.Error())
-			return 0, &db.ErrorWithPosition{
-				Err:   errors.Wrapf(err, "failed to execute context in a transaction"),
-				Start: command.Start,
-				End:   command.End,
-			}
+			return 0, err
 		}
 		rowsAffected, err := sqlResult.RowsAffected()
 		if err != nil {
@@ -291,11 +288,11 @@ func (d *Driver) executeInTransactionMode(ctx context.Context, commands []base.S
 }
 
 // executeInAutoCommitMode executes statements sequentially in auto-commit mode
-func (d *Driver) executeInAutoCommitMode(ctx context.Context, commands []base.SingleSQL, opts db.ExecuteOptions) (int64, error) {
+func (d *Driver) executeInAutoCommitMode(ctx context.Context, commands []base.Statement, opts db.ExecuteOptions) (int64, error) {
 	totalRowsAffected := int64(0)
 
 	for i, command := range commands {
-		opts.LogCommandExecute([]int32{int32(i)}, command.Text)
+		opts.LogCommandExecute(command.Range, command.Text)
 		// Log the query statement in char code to see if there are some control characters that cause issues.
 		var charCode []rune
 		for _, r := range command.Text {
@@ -307,11 +304,7 @@ func (d *Driver) executeInAutoCommitMode(ctx context.Context, commands []base.Si
 			opts.LogCommandResponse(0, nil, err.Error())
 			// In auto-commit mode, we stop at the first error
 			// The database is left in a partially migrated state
-			return totalRowsAffected, &db.ErrorWithPosition{
-				Err:   errors.Wrapf(err, "failed to execute statement %d in auto-commit mode", i+1),
-				Start: command.Start,
-				End:   command.End,
-			}
+			return totalRowsAffected, err
 		}
 		rowsAffected, err := sqlResult.RowsAffected()
 		if err != nil {
@@ -372,7 +365,7 @@ func (d *Driver) QueryConn(ctx context.Context, conn *sql.Conn, statement string
 	if err != nil {
 		return nil, err
 	}
-	singleSQLs = base.FilterEmptySQL(singleSQLs)
+	singleSQLs = base.FilterEmptyStatements(singleSQLs)
 	if len(singleSQLs) == 0 {
 		return nil, nil
 	}

@@ -2,7 +2,7 @@ package mysql
 
 import (
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/mysql-parser"
+	parser "github.com/bytebase/parser/mysql"
 	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
@@ -19,20 +19,20 @@ func init() {
 	base.RegisterExtractChangedResourcesFunc(storepb.Engine_DORIS, extractChangedResources)
 }
 
-func extractChangedResources(currentDatabase string, _ string, dbSchema *model.DatabaseSchema, asts any, statement string) (*base.ChangeSummary, error) {
-	nodes, ok := asts.([]*ParseResult)
-	if !ok {
-		return nil, errors.Errorf("invalid ast type %T", asts)
-	}
-	changedResources := model.NewChangedResources(dbSchema)
+func extractChangedResources(currentDatabase string, _ string, dbMetadata *model.DatabaseMetadata, asts []base.AST, statement string) (*base.ChangeSummary, error) {
+	changedResources := model.NewChangedResources(dbMetadata)
 	l := &resourceChangedListener{
 		currentDatabase:  currentDatabase,
 		statement:        statement,
 		changedResources: changedResources,
 	}
-	for _, node := range nodes {
+	for _, ast := range asts {
+		antlrAST, ok := base.GetANTLRAST(ast)
+		if !ok {
+			return nil, errors.New("expected ANTLR AST for MySQL")
+		}
 		l.reset()
-		antlr.ParseTreeWalkerDefault.Walk(l, node.Tree)
+		antlr.ParseTreeWalkerDefault.Walk(l, antlrAST.Tree)
 	}
 
 	return &base.ChangeSummary{
@@ -77,8 +77,7 @@ func (l *resourceChangedListener) EnterCreateTable(ctx *parser.CreateTableContex
 		database,
 		"",
 		&storepb.ChangedResourceTable{
-			Name:   table,
-			Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
+			Name: table,
 		},
 		false,
 	)
@@ -96,8 +95,7 @@ func (l *resourceChangedListener) EnterDropTable(ctx *parser.DropTableContext) {
 			database,
 			"",
 			&storepb.ChangedResourceTable{
-				Name:   table,
-				Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
+				Name: table,
 			},
 			true,
 		)
@@ -115,8 +113,7 @@ func (l *resourceChangedListener) EnterAlterTable(ctx *parser.AlterTableContext)
 		database,
 		"",
 		&storepb.ChangedResourceTable{
-			Name:   table,
-			Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
+			Name: table,
 		},
 		true,
 	)
@@ -135,8 +132,7 @@ func (l *resourceChangedListener) EnterRenameTableStatement(ctx *parser.RenameTa
 				database,
 				"",
 				&storepb.ChangedResourceTable{
-					Name:   table,
-					Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
+					Name: table,
 				},
 				false,
 			)
@@ -151,8 +147,7 @@ func (l *resourceChangedListener) EnterRenameTableStatement(ctx *parser.RenameTa
 				database,
 				"",
 				&storepb.ChangedResourceTable{
-					Name:   table,
-					Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
+					Name: table,
 				},
 				false,
 			)
@@ -173,8 +168,7 @@ func (l *resourceChangedListener) EnterCreateIndex(ctx *parser.CreateIndexContex
 		database,
 		"",
 		&storepb.ChangedResourceTable{
-			Name:   table,
-			Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
+			Name: table,
 		},
 		false,
 	)
@@ -194,160 +188,9 @@ func (l *resourceChangedListener) EnterDropIndex(ctx *parser.DropIndexContext) {
 		database,
 		"",
 		&storepb.ChangedResourceTable{
-			Name:   table,
-			Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
+			Name: table,
 		},
 		false,
-	)
-}
-
-func (l *resourceChangedListener) EnterCreateView(ctx *parser.CreateViewContext) {
-	database, view := NormalizeMySQLViewName(ctx.ViewName())
-	if database == "" {
-		database = l.currentDatabase
-	}
-
-	l.changedResources.AddView(
-		database,
-		"",
-		&storepb.ChangedResourceView{
-			Name:   view,
-			Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
-		},
-	)
-}
-
-func (l *resourceChangedListener) EnterAlterView(ctx *parser.AlterViewContext) {
-	database, view := NormalizeMySQLViewRef(ctx.ViewRef())
-	if database == "" {
-		database = l.currentDatabase
-	}
-
-	l.changedResources.AddView(
-		database,
-		"",
-		&storepb.ChangedResourceView{
-			Name:   view,
-			Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
-		},
-	)
-}
-
-func (l *resourceChangedListener) EnterDropView(ctx *parser.DropViewContext) {
-	if ctx.ViewRefList() == nil {
-		return
-	}
-
-	for _, ref := range ctx.ViewRefList().AllViewRef() {
-		database, view := NormalizeMySQLViewRef(ref)
-		if database == "" {
-			database = l.currentDatabase
-		}
-
-		l.changedResources.AddView(
-			database,
-			"",
-			&storepb.ChangedResourceView{
-				Name:   view,
-				Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
-			},
-		)
-	}
-}
-
-func (l *resourceChangedListener) EnterCreateFunction(ctx *parser.CreateFunctionContext) {
-	database, function := NormalizeMySQLFunctionName(ctx.FunctionName())
-	if database == "" {
-		database = l.currentDatabase
-	}
-
-	l.changedResources.AddFunction(
-		database,
-		"",
-		&storepb.ChangedResourceFunction{
-			Name:   function,
-			Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
-		},
-	)
-}
-
-func (l *resourceChangedListener) EnterAlterFunction(ctx *parser.AlterFunctionContext) {
-	database, function := NormalizeMySQLFunctionRef(ctx.FunctionRef())
-	if database == "" {
-		database = l.currentDatabase
-	}
-
-	l.changedResources.AddFunction(
-		database,
-		"",
-		&storepb.ChangedResourceFunction{
-			Name:   function,
-			Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
-		},
-	)
-}
-
-func (l *resourceChangedListener) EnterDropFunction(ctx *parser.DropFunctionContext) {
-	database, function := NormalizeMySQLFunctionRef(ctx.FunctionRef())
-	if database == "" {
-		database = l.currentDatabase
-	}
-
-	l.changedResources.AddFunction(
-		database,
-		"",
-		&storepb.ChangedResourceFunction{
-			Name:   function,
-			Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
-		},
-	)
-}
-
-func (l *resourceChangedListener) EnterCreateProcedure(ctx *parser.CreateProcedureContext) {
-	database, procedure := NormalizeMySQLProcedureName(ctx.ProcedureName())
-	if database == "" {
-		database = l.currentDatabase
-	}
-
-	l.changedResources.AddProcedure(
-		database,
-		"",
-		&storepb.ChangedResourceProcedure{
-			Name:   procedure,
-			Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
-		},
-	)
-}
-
-func (l *resourceChangedListener) EnterAlterProcedure(ctx *parser.AlterProcedureContext) {
-	database, procedure := NormalizeMySQLProcedureRef(ctx.ProcedureRef())
-	if database == "" {
-		database = l.currentDatabase
-	}
-
-	l.changedResources.AddProcedure(
-		database,
-		"",
-		&storepb.ChangedResourceProcedure{
-			Name:   procedure,
-			Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
-		},
-	)
-}
-
-func (l *resourceChangedListener) EnterDropProcedure(ctx *parser.DropProcedureContext) {
-	database, procedure := NormalizeMySQLProcedureRef(ctx.ProcedureRef())
-	if database == "" {
-		database = l.currentDatabase
-	}
-
-	l.changedResources.AddProcedure(
-		database,
-		"",
-		&storepb.ChangedResourceProcedure{
-			Name:   procedure,
-			Ranges: []*storepb.Range{base.NewRange(l.statement, l.text)},
-		},
 	)
 }
 

@@ -3,7 +3,7 @@
     v-model:show="show"
     :mask-closable="true"
     placement="right"
-    class="!w-[100vw] sm:!w-[80vw]"
+    class="w-screen! sm:w-[80vw]!"
   >
     <DrawerContent :title="$t('plan.select-targets')" closable>
       <div class="flex flex-col gap-y-4">
@@ -36,8 +36,8 @@
 <script setup lang="ts">
 import { NButton } from "naive-ui";
 import { computed, reactive, watch } from "vue";
-import DatabaseAndGroupSelector from "@/components/DatabaseAndGroupSelector";
 import type { DatabaseSelectState } from "@/components/DatabaseAndGroupSelector";
+import DatabaseAndGroupSelector from "@/components/DatabaseAndGroupSelector";
 import { Drawer, DrawerContent } from "@/components/v2";
 import { useCurrentProjectV1 } from "@/store";
 

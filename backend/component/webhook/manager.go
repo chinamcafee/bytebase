@@ -4,16 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gosimple/slug"
-	"github.com/nyaruka/phonenumbers"
 
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
-	"github.com/bytebase/bytebase/backend/component/iam"
+	"github.com/bytebase/bytebase/backend/component/config"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/webhook"
 	"github.com/bytebase/bytebase/backend/store"
@@ -24,30 +21,28 @@ import (
 
 // Manager is the webhook manager.
 type Manager struct {
-	store      *store.Store
-	iamManager *iam.Manager
-}
-
-// Metadata is the activity metadata.
-type Metadata struct {
-	Issue *store.IssueMessage
+	store   *store.Store
+	profile *config.Profile
 }
 
 // NewManager creates an activity manager.
-func NewManager(store *store.Store, iamManager *iam.Manager) *Manager {
+func NewManager(store *store.Store, profile *config.Profile) *Manager {
 	return &Manager{
-		store:      store,
-		iamManager: iamManager,
+		store:   store,
+		profile: profile,
 	}
 }
 
 func (m *Manager) CreateEvent(ctx context.Context, e *Event) {
-	webhookList, err := m.store.FindProjectWebhookV2(ctx, &store.FindProjectWebhookMessage{
+	webhookList, err := m.store.ListProjectWebhooks(ctx, &store.FindProjectWebhookMessage{
 		ProjectID: &e.Project.ResourceID,
 		EventType: &e.Type,
 	})
 	if err != nil {
-		slog.Warn("failed to find project webhook", "issue_name", e.Issue.Title, log.BBError(err))
+		slog.Warn("failed to find project webhook",
+			slog.String("project", e.Project.ResourceID),
+			slog.String("event_type", e.Type.String()),
+			log.BBError(err))
 		return
 	}
 
@@ -58,7 +53,8 @@ func (m *Manager) CreateEvent(ctx context.Context, e *Event) {
 	webhookCtx, err := m.getWebhookContextFromEvent(ctx, e, e.Type)
 	if err != nil {
 		slog.Warn("failed to get webhook context",
-			slog.String("issue_name", e.Issue.Title),
+			slog.String("project", e.Project.ResourceID),
+			slog.String("event_type", e.Type.String()),
 			log.BBError(err))
 		return
 	}
@@ -68,191 +64,87 @@ func (m *Manager) CreateEvent(ctx context.Context, e *Event) {
 
 func (m *Manager) getWebhookContextFromEvent(ctx context.Context, e *Event, eventType storepb.Activity_Type) (*webhook.Context, error) {
 	var webhookCtx webhook.Context
-	var mentions []string
 	var mentionUsers []*store.UserMessage
 
-	setting, err := m.store.GetWorkspaceGeneralSetting(ctx)
+	// Use command-line flag value if set, otherwise use database value
+	externalURL, err := utils.GetEffectiveExternalURL(ctx, m.store, m.profile)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get workspace setting")
+		return nil, err
 	}
 
 	level := webhook.WebhookInfo
 	title := ""
 	titleZh := ""
 	link := ""
-	if e.Issue != nil {
-		// TODO(steven): Remove the slug dependency when the legacy issue page is removed.
-		link = fmt.Sprintf("%s/projects/%s/issues/%s-%d", setting.ExternalUrl, e.Project.ResourceID, slug.Make(e.Issue.Title), e.Issue.UID)
-	} else if e.Rollout != nil {
-		link = fmt.Sprintf("%s/projects/%s/rollouts/%d", setting.ExternalUrl, e.Project.ResourceID, e.Rollout.UID)
-	}
+	var actor *User
+	var issue *Issue
+	var rollout *Rollout
+
 	switch e.Type {
-	case storepb.Activity_ISSUE_CREATE:
+	case storepb.Activity_ISSUE_CREATED:
 		title = "Issue created"
 		titleZh = "创建工单"
-
-	case storepb.Activity_ISSUE_STATUS_UPDATE:
-		switch e.Issue.Status {
-		case "OPEN":
-			title = "Issue reopened"
-			titleZh = "工单重开"
-		case "DONE":
-			level = webhook.WebhookSuccess
-			title = "Issue resolved"
-			titleZh = "工单完成"
-		case "CANCELED":
-			title = "Issue canceled"
-			titleZh = "工单取消"
-		default:
-			title = "Issue status changed"
-			titleZh = "工单状态变更"
+		if e.IssueCreated != nil {
+			actor = e.IssueCreated.Creator
+			issue = e.IssueCreated.Issue
+			link = fmt.Sprintf("%s/projects/%s/issues/%s-%d", externalURL, e.Project.ResourceID, slug.Make(issue.Title), issue.UID)
+			webhookCtx.Description = fmt.Sprintf("%s created issue %s", actor.Name, issue.Title)
 		}
 
-	case storepb.Activity_ISSUE_COMMENT_CREATE:
-		title = "Comment created"
-		titleZh = "工单新评论"
-
-	case storepb.Activity_ISSUE_FIELD_UPDATE:
-		update := e.IssueUpdate
-		switch update.Path {
-		case "description":
-			title = "Changed issue description"
-			titleZh = "工单描述变更"
-		case "title":
-			title = "Changed issue name"
-			titleZh = "工单标题变更"
-		default:
-			title = "Updated issue"
-			titleZh = "工单信息变更"
-		}
-
-	case storepb.Activity_ISSUE_PIPELINE_STAGE_STATUS_UPDATE:
-		u := e.StageStatusUpdate
-		if e.Issue != nil {
-			stageID := u.StageID
-			if stageID == "" {
-				stageID = "-" // Use "-" as a placeholder if StageID is not set.
-			}
-			link = fmt.Sprintf("%s/projects/%s/issues/%s-%d?stage=%s", setting.ExternalUrl, e.Project.ResourceID, slug.Make(e.Issue.Title), e.Issue.UID, stageID)
-		}
-		title = "Stage ends"
-		titleZh = "阶段结束"
-
-	case storepb.Activity_ISSUE_PIPELINE_TASK_RUN_STATUS_UPDATE:
-		u := e.TaskRunStatusUpdate
-		switch u.Status {
-		case storepb.TaskRun_PENDING.String():
-			title = "Task run started"
-			titleZh = "任务开始"
-		case storepb.TaskRun_RUNNING.String():
-			title = "Task run is running"
-			titleZh = "任务运行中"
-		case storepb.TaskRun_DONE.String():
-			level = webhook.WebhookSuccess
-			title = "Task run completed"
-			titleZh = "任务完成"
-		case storepb.TaskRun_FAILED.String():
-			level = webhook.WebhookError
-			title = "Task run failed"
-			titleZh = "任务失败"
-		case storepb.TaskRun_CANCELED.String():
-			title = "Task run is canceled"
-			titleZh = "任务取消"
-		case storepb.TaskRun_SKIPPED.String():
-			title = "Task is skipped"
-			titleZh = "任务跳过"
-		default:
-			title = "Task run status changed"
-			titleZh = "任务状态变更"
-		}
-
-	case storepb.Activity_NOTIFY_ISSUE_APPROVED:
-		title = "Issue approved"
-		titleZh = "工单审批通过"
-
-		mentionUsers = append(mentionUsers, e.Issue.Creator)
-		phone, err := maybeGetPhoneFromUser(e.Issue.Creator)
-		if err != nil {
-			slog.Warn("failed to parse phone number", slog.String("issue_title", e.Issue.Title), log.BBError(err))
-		} else if phone != "" {
-			mentions = append(mentions, phone)
-		}
-
-	case storepb.Activity_NOTIFY_PIPELINE_ROLLOUT:
-		u := e.IssueRolloutReady
-		title = "Issue is waiting for rollout"
-		titleZh = "工单待发布"
-		var usersGetters []func(context.Context) ([]*store.UserMessage, error)
-		if u.RolloutPolicy.GetAutomatic() {
-			usersGetters = append(usersGetters, getUsersFromUsers(e.Issue.Creator))
-		} else {
-			for _, role := range u.RolloutPolicy.GetRoles() {
-				role := strings.TrimPrefix(role, "roles/")
-				usersGetters = append(usersGetters, getUsersFromRole(m.store, role, e.Project.ResourceID))
-			}
-		}
-		mentionedUser := map[int]bool{}
-		for _, usersGetter := range usersGetters {
-			users, err := usersGetter(ctx)
-			if err != nil {
-				slog.Warn("failed to get users",
-					slog.String("issue_name", e.Issue.Title),
-					log.BBError(err))
-				return nil, err
-			}
-			for _, user := range users {
-				if mentionedUser[user.ID] {
-					continue
-				}
-				if user.MemberDeleted {
-					continue
-				}
-				mentionedUser[user.ID] = true
-				mentionUsers = append(mentionUsers, user)
-				phone, err := maybeGetPhoneFromUser(user)
-				if err != nil {
-					slog.Warn("failed to parse phone number",
-						slog.String("issue_name", e.Issue.Title),
-						log.BBError(err))
-					continue
-				}
-				if phone != "" {
-					mentions = append(mentions, phone)
-				}
+	case storepb.Activity_ISSUE_APPROVAL_REQUESTED:
+		level = webhook.WebhookWarn
+		title = "Approval required"
+		titleZh = "需要审批"
+		if e.ApprovalRequested != nil {
+			actor = e.ApprovalRequested.Creator
+			issue = e.ApprovalRequested.Issue
+			link = fmt.Sprintf("%s/projects/%s/issues/%s-%d", externalURL, e.Project.ResourceID, slug.Make(issue.Title), issue.UID)
+			mentionUsers = make([]*store.UserMessage, 0, len(e.ApprovalRequested.Approvers))
+			for _, user := range e.ApprovalRequested.Approvers {
+				mentionUsers = append(mentionUsers, &store.UserMessage{
+					Name:  user.Name,
+					Email: user.Email,
+				})
 			}
 		}
 
-	case storepb.Activity_ISSUE_APPROVAL_NOTIFY:
-		roleWithPrefix := e.IssueApprovalCreate.Role
-
-		title = "Issue approval needed"
-		titleZh = "工单待审批"
-
-		var usersGetter func(ctx context.Context) ([]*store.UserMessage, error)
-
-		role := strings.TrimPrefix(roleWithPrefix, "roles/")
-		usersGetter = getUsersFromRole(m.store, role, e.Project.ResourceID)
-
-		users, err := usersGetter(ctx)
-		if err != nil {
-			slog.Warn("Failed to post webhook event after changing the issue approval node status, failed to get users",
-				slog.String("issue_name", e.Issue.Title),
-				log.BBError(err))
-			return nil, err
-		}
-		for _, user := range users {
-			mentionUsers = append(mentionUsers, user)
-			phone, err := maybeGetPhoneFromUser(user)
-			if err != nil {
-				slog.Warn("failed to parse phone number",
-					slog.String("issue_name", e.Issue.Title),
-					log.BBError(err))
-				continue
-			}
-			if phone != "" {
-				mentions = append(mentions, phone)
+	case storepb.Activity_ISSUE_SENT_BACK:
+		level = webhook.WebhookWarn
+		title = "Issue sent back"
+		titleZh = "工单被退回"
+		if e.SentBack != nil {
+			actor = e.SentBack.Approver
+			issue = e.SentBack.Issue
+			link = fmt.Sprintf("%s/projects/%s/issues/%s-%d", externalURL, e.Project.ResourceID, slug.Make(issue.Title), issue.UID)
+			webhookCtx.Description = fmt.Sprintf("%s sent back the issue: %s", e.SentBack.Approver.Name, e.SentBack.Reason)
+			mentionUsers = []*store.UserMessage{
+				{
+					Name:  e.SentBack.Creator.Name,
+					Email: e.SentBack.Creator.Email,
+				},
 			}
 		}
+
+	case storepb.Activity_PIPELINE_FAILED:
+		level = webhook.WebhookError
+		title = "Rollout failed"
+		titleZh = "发布失败"
+		if e.RolloutFailed != nil {
+			rollout = e.RolloutFailed.Rollout
+			link = fmt.Sprintf("%s/projects/%s/plans/%d/rollout", externalURL, e.Project.ResourceID, rollout.UID)
+			webhookCtx.Description = "Rollout failed"
+		}
+
+	case storepb.Activity_PIPELINE_COMPLETED:
+		level = webhook.WebhookSuccess
+		title = "Rollout completed"
+		titleZh = "发布完成"
+		if e.RolloutCompleted != nil {
+			rollout = e.RolloutCompleted.Rollout
+			link = fmt.Sprintf("%s/projects/%s/plans/%d/rollout", externalURL, e.Project.ResourceID, rollout.UID)
+			webhookCtx.Description = "Rollout completed successfully"
+		}
+
 	default:
 		// Unsupported event type
 		return nil, errors.Errorf("unsupported activity type %q for generating webhook context", e.Type)
@@ -266,52 +158,54 @@ func (m *Manager) getWebhookContextFromEvent(ctx context.Context, e *Event, even
 	}
 
 	webhookCtx = webhook.Context{
-		Level:     level,
-		EventType: string(eventType),
-		Title:     title,
-		TitleZh:   titleZh,
-		Issue:     nil,
-		Rollout:   nil,
+		Level:           level,
+		EventType:       string(eventType),
+		Title:           title,
+		TitleZh:         titleZh,
+		Link:            link,
+		MentionEndUsers: mentionEndUsers,
 		Project: &webhook.Project{
 			Name:  common.FormatProject(e.Project.ResourceID),
 			Title: e.Project.Title,
 		},
-		Stage:               nil,
-		TaskResult:          nil,
-		Description:         e.Comment,
-		Link:                link,
-		ActorID:             e.Actor.ID,
-		ActorName:           e.Actor.Name,
-		ActorEmail:          e.Actor.Email,
-		MentionEndUsers:     mentionEndUsers,
-		MentionUsersByPhone: mentions,
 	}
-	if e.Issue != nil {
+
+	// Set actor information if available
+	if actor != nil {
+		webhookCtx.ActorID = 0 // We don't have ID in User struct
+		webhookCtx.ActorName = actor.Name
+		webhookCtx.ActorEmail = actor.Email
+	}
+
+	// Set issue information if available
+	if issue != nil {
+		creatorName := issue.Title // Fallback
+		creatorUser, err := m.store.GetUserByEmail(ctx, actor.Email)
+		if err != nil {
+			slog.Warn("failed to get creator user for webhook context",
+				slog.String("issue_title", issue.Title),
+				log.BBError(err))
+		} else {
+			creatorName = creatorUser.Name
+		}
 		webhookCtx.Issue = &webhook.Issue{
-			ID:          e.Issue.UID,
-			Name:        e.Issue.Title,
-			Status:      e.Issue.Status,
-			Type:        e.Issue.Type,
-			Description: e.Issue.Description,
-			Creator:     e.Issue.Creator,
+			ID:          issue.UID,
+			Name:        issue.Title,
+			Status:      issue.Status,
+			Type:        issue.Type,
+			Description: issue.Description,
+			Creator: webhook.Creator{
+				Name:  creatorName,
+				Email: actor.Email,
+			},
 		}
 	}
-	if e.Rollout != nil {
+
+	// Set rollout information if available
+	if rollout != nil {
 		webhookCtx.Rollout = &webhook.Rollout{
-			UID: e.Rollout.UID,
-		}
-	}
-	if u := e.TaskRunStatusUpdate; u != nil {
-		webhookCtx.TaskResult = &webhook.TaskResult{
-			Name:          u.Title,
-			Status:        u.Status,
-			Detail:        u.Detail,
-			SkippedReason: u.SkippedReason,
-		}
-	}
-	if u := e.StageStatusUpdate; u != nil {
-		webhookCtx.Stage = &webhook.Stage{
-			Name: u.StageTitle,
+			UID:   rollout.UID,
+			Title: rollout.Title,
 		}
 	}
 
@@ -337,7 +231,7 @@ func (m *Manager) postWebhookList(ctx context.Context, webhookCtx *webhook.Conte
 				return webhook.Post(hook.Payload.GetType(), *webhookCtx)
 			}); err != nil {
 				// The external webhook endpoint might be invalid which is out of our code control, so we just emit a warning
-				slog.Warn("Failed to post webhook event on activity",
+				slog.Warn("failed to post webhook event on activity",
 					slog.String("webhook type", hook.Payload.GetType().String()),
 					slog.String("webhook name", hook.Payload.GetTitle()),
 					slog.String("activity type", webhookCtx.EventType),
@@ -347,63 +241,4 @@ func (m *Manager) postWebhookList(ctx context.Context, webhookCtx *webhook.Conte
 			}
 		}(&webhookCtx, hook)
 	}
-}
-
-func getUsersFromRole(s *store.Store, role string, projectID string) func(context.Context) ([]*store.UserMessage, error) {
-	return func(ctx context.Context) ([]*store.UserMessage, error) {
-		projectIAM, err := s.GetProjectIamPolicy(ctx, projectID)
-		if err != nil {
-			return nil, err
-		}
-		workspaceIAM, err := s.GetWorkspaceIamPolicy(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		return utils.GetUsersByRoleInIAMPolicy(ctx, s, role, projectIAM.Policy, workspaceIAM.Policy), nil
-	}
-}
-
-func getUsersFromUsers(users ...*store.UserMessage) func(context.Context) ([]*store.UserMessage, error) {
-	return func(_ context.Context) ([]*store.UserMessage, error) {
-		return users, nil
-	}
-}
-
-func maybeGetPhoneFromUser(user *store.UserMessage) (string, error) {
-	if user == nil {
-		return "", nil
-	}
-	if user.Phone == "" {
-		return "", nil
-	}
-	phoneNumber, err := phonenumbers.Parse(user.Phone, "")
-	if err != nil {
-		return "", errors.Wrapf(err, "failed to parse phone number %q", user.Phone)
-	}
-	if phoneNumber == nil {
-		return "", nil
-	}
-	if phoneNumber.NationalNumber == nil {
-		return "", nil
-	}
-	return strconv.FormatInt(int64(*phoneNumber.NationalNumber), 10), nil
-}
-
-// ChangeIssueStatus changes the status of an issue.
-func ChangeIssueStatus(ctx context.Context, stores *store.Store, webhookManager *Manager, issue *store.IssueMessage, newStatus storepb.Issue_Status, updater *store.UserMessage, comment string) error {
-	updateIssueMessage := &store.UpdateIssueMessage{Status: &newStatus}
-	updatedIssue, err := stores.UpdateIssueV2(ctx, issue.UID, updateIssueMessage)
-	if err != nil {
-		return errors.Wrapf(err, "failed to update issue %q's status", issue.Title)
-	}
-
-	webhookManager.CreateEvent(ctx, &Event{
-		Actor:   updater,
-		Type:    storepb.Activity_ISSUE_STATUS_UPDATE,
-		Comment: comment,
-		Issue:   NewIssue(updatedIssue),
-		Project: NewProject(updatedIssue.Project),
-	})
-	return nil
 }

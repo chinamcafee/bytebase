@@ -140,9 +140,53 @@ func getMetadataForTest(_ context.Context, _, databaseName string) (string, *mod
 						`,
 					},
 				},
+				Sequences: []*storepb.SequenceMetadata{
+					{
+						Name: "seq1",
+					},
+					{
+						Name: "user_id_seq",
+					},
+				},
+			},
+			{
+				Name: "test",
+				Tables: []*storepb.TableMetadata{
+					{
+						Name: "auto",
+						Columns: []*storepb.ColumnMetadata{
+							{
+								Name: "id",
+								Type: "int",
+							},
+							{
+								Name: "name",
+								Type: "varchar",
+							},
+						},
+					},
+					{
+						Name: "users",
+						Columns: []*storepb.ColumnMetadata{
+							{
+								Name: "user_id",
+								Type: "int",
+							},
+							{
+								Name: "username",
+								Type: "varchar",
+							},
+						},
+					},
+				},
+				Sequences: []*storepb.SequenceMetadata{
+					{
+						Name: "order_id_seq",
+					},
+				},
 			},
 		},
-	}, true /* isObjectCaseSensitive */, true /* isDetailCaseSensitive */), nil
+	}, nil, nil, storepb.Engine_POSTGRES, true /* isObjectCaseSensitive */), nil
 }
 
 func catchCaret(s string) (string, int) {

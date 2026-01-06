@@ -1,5 +1,5 @@
 <template>
-  <form class="w-full space-y-4">
+  <form class="w-full flex flex-col gap-y-4">
     <div>
       <div class="font-medium">
         {{ $t("common.name") }}
@@ -35,7 +35,6 @@
         v-model:kv-list="labelKVList"
         :readonly="!allowEdit"
         :show-errors="true"
-        class="max-w-[30rem]"
       />
     </div>
   </form>
@@ -52,9 +51,9 @@ import { useProjectV1Store } from "@/store";
 import { DEFAULT_PROJECT_NAME } from "@/types";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import {
-  extractProjectResourceName,
-  convertLabelsToKVList,
   convertKVListToLabels,
+  convertLabelsToKVList,
+  extractProjectResourceName,
 } from "@/utils";
 
 interface LocalState {

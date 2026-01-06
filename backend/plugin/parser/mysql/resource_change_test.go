@@ -19,18 +19,12 @@ func TestExtractChangedResources(t *testing.T) {
 	UPDATE t1 SET c1 = 5;
 	CREATE PROCEDURE getUser(id INT) SELECT * FROM hello WHERE uid = id;
 	`
-	changedResources := model.NewChangedResources(nil /* dbSchema */)
+	changedResources := model.NewChangedResources(nil /* dbMetadata */)
 	changedResources.AddTable(
 		"db",
 		"",
 		&storepb.ChangedResourceTable{
 			Name: "t1",
-			Ranges: []*storepb.Range{
-				{Start: 0, End: 25},
-				{Start: 27, End: 41},
-				{Start: 43, End: 76},
-				{Start: 78, End: 100},
-			},
 		},
 		true,
 	)
@@ -38,18 +32,9 @@ func TestExtractChangedResources(t *testing.T) {
 		"db",
 		"",
 		&storepb.ChangedResourceTable{
-			Name:   "t2",
-			Ranges: []*storepb.Range{{Start: 78, End: 100}},
+			Name: "t2",
 		},
 		false,
-	)
-	changedResources.AddProcedure(
-		"db",
-		"",
-		&storepb.ChangedResourceProcedure{
-			Name:   "getUser",
-			Ranges: []*storepb.Range{{Start: 163, End: 231}},
-		},
 	)
 	want := &base.ChangeSummary{
 		ChangedResources: changedResources,
@@ -60,8 +45,9 @@ func TestExtractChangedResources(t *testing.T) {
 		InsertCount: 2,
 	}
 
-	asts, _ := ParseMySQL(statement)
-	got, err := extractChangedResources("db", "", nil /* dbSchema */, asts, statement)
+	asts, err := base.Parse(storepb.Engine_MYSQL, statement)
+	require.NoError(t, err)
+	got, err := extractChangedResources("db", "", nil /* dbMetadata */, asts, statement)
 	require.NoError(t, err)
 	require.Equal(t, want, got)
 }

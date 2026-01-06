@@ -13,7 +13,7 @@
       <Draggable
         id="tab-list"
         ref="tabListRef"
-        v-model="tabStore.tabIdList"
+        v-model="tabStore.openTabList"
         item-key="id"
         animation="300"
         class="relative flex flex-nowrap overflow-hidden h-9 pt-0.5 hide-scrollbar"
@@ -22,20 +22,18 @@
           'more-right': scrollState.moreRight,
         }"
         ghost-class="ghost"
-        @start="state.dragging = true"
-        @end="state.dragging = false"
       >
         <template
-          #item="{ element: id, index }: { element: string; index: number }"
+          #item="{ element: tab, index }: { element: SQLEditorTab; index: number }"
         >
           <TabItem
-            :tab="tabStore.tabById(id)!"
+            :tab="tab"
             :index="index"
-            :data-tab-id="id"
-            @select="(tab) => handleSelectTab(tab)"
-            @close="(tab, index) => handleRemoveTab(tab, index)"
+            :data-tab-id="tab.id"
+            @select="(tab) => tabStore.setCurrentTabId(tab.id)"
+            @close="(tab) => handleRemoveTab(tab)"
             @contextmenu.stop.prevent="
-              contextMenuRef?.show(tabStore.tabById(id)!, index, $event)
+              contextMenuRef?.show(tab, index, $event)
             "
           />
         </template>
@@ -46,6 +44,7 @@
       >
         <button
           class="bg-gray-200/20 hover:bg-accent/10py-1 px-1.5 border-t border-x rounded-t hover:border-accent"
+          :disabled="state.loading"
           @click="handleAddTab"
         >
           <PlusIcon class="h-5 w-5" stroke-width="2.5" />
@@ -68,41 +67,38 @@ import { useResizeObserver } from "@vueuse/core";
 import { PlusIcon } from "lucide-vue-next";
 import { NScrollbar, useDialog } from "naive-ui";
 import scrollIntoView from "scroll-into-view-if-needed";
-import { ref, reactive, nextTick, computed, onMounted, watch } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import Draggable from "vuedraggable";
 import ProfileDropdown from "@/components/ProfileDropdown.vue";
 import { useEmitteryEventListener } from "@/composables/useEmitteryEventListener";
-import { useSQLEditorTabStore, useTabViewStateStore } from "@/store";
+import { useSQLEditorTabStore } from "@/store";
 import type { SQLEditorTab } from "@/types";
 import { defer, usePreventBackAndForward } from "@/utils";
-import { useSheetContext } from "../Sheet";
 import { useSQLEditorContext } from "../context";
 import BrandingLogoWrapper from "./BrandingLogoWrapper.vue";
 import ContextMenu from "./ContextMenu.vue";
-import TabItem from "./TabItem";
-import { provideTabListContext } from "./context";
+import { useTabListContext } from "./context";
+import TabItem from "./TabItem/TabItem.vue";
 
 type LocalState = {
-  dragging: boolean;
   hoverTabId: string;
+  loading: boolean;
 };
 
 const tabStore = useSQLEditorTabStore();
+const editorContext = useSQLEditorContext();
+const context = useTabListContext();
 
 const { t } = useI18n();
 const dialog = useDialog();
-const { showConnectionPanel } = useSQLEditorContext();
 
 const state = reactive<LocalState>({
-  dragging: false,
   hoverTabId: "",
+  loading: false,
 });
-const { events: sheetEvents } = useSheetContext();
 const scrollbarRef = ref<InstanceType<typeof NScrollbar>>();
 const tabListRef = ref<InstanceType<typeof Draggable>>();
-const { removeViewState } = useTabViewStateStore();
-const context = provideTabListContext();
 const contextMenuRef = ref<InstanceType<typeof ContextMenu>>();
 
 const scrollState = reactive({
@@ -114,33 +110,31 @@ const scrollElement = computed((): HTMLElement | null | undefined => {
   return scrollbarRef.value?.scrollbarInstRef?.containerRef;
 });
 
-const handleSelectTab = async (tab: SQLEditorTab | undefined) => {
-  tabStore.setCurrentTabId(tab?.id ?? "");
-};
+const handleAddTab = async () => {
+  if (state.loading) {
+    return;
+  }
 
-const handleAddTab = () => {
-  tabStore.addTab();
-
-  nextTick(() => {
-    showConnectionPanel.value = true;
-    requestAnimationFrame(() => {
-      const elem = scrollElement.value;
-      if (elem) {
-        elem.scrollTo(elem.scrollWidth, 0);
-      }
+  state.loading = true;
+  try {
+    await editorContext.createWorksheet({});
+    nextTick(() => {
       requestAnimationFrame(() => {
-        recalculateScrollState();
+        const elem = scrollElement.value;
+        if (elem) {
+          elem.scrollTo(elem.scrollWidth, 0);
+        }
+        requestAnimationFrame(() => {
+          recalculateScrollState();
+        });
       });
     });
-  });
-  sheetEvents.emit("add-sheet");
+  } finally {
+    state.loading = false;
+  }
 };
 
-const handleRemoveTab = async (
-  tab: SQLEditorTab,
-  index: number,
-  focusWhenConfirm = false
-) => {
+const handleRemoveTab = async (tab: SQLEditorTab, focusWhenConfirm = false) => {
   const _defer = defer<boolean>();
   if (tab.mode === "WORKSHEET" && tab.status === "DIRTY") {
     if (focusWhenConfirm) {
@@ -155,7 +149,7 @@ const handleRemoveTab = async (
       maskClosable: false,
       closeOnEsc: false,
       onPositiveClick() {
-        remove(index);
+        remove();
         $dialog.destroy();
         _defer.resolve(true);
       },
@@ -168,19 +162,12 @@ const handleRemoveTab = async (
       showIcon: false,
     });
   } else {
-    remove(index);
+    remove();
     _defer.resolve(true);
   }
 
-  function remove(index: number) {
-    tabStore.removeTab(tab);
-    removeViewState(tab.id);
-
-    // select a tab near the removed tab.
-    const nextIndex = Math.min(index, tabStore.tabList.length - 1);
-    const nextTab = tabStore.tabList[nextIndex];
-    handleSelectTab(nextTab);
-
+  function remove() {
+    tabStore.closeTab(tab.id);
     nextTick(recalculateScrollState);
   }
 
@@ -246,45 +233,48 @@ useEmitteryEventListener(
   context.events,
   "close-tab",
   async ({ tab, index, action }) => {
-    const { tabList } = tabStore;
+    const { openTabList } = tabStore;
 
-    const remove = async (tab: SQLEditorTab, index: number) => {
-      await handleRemoveTab(tab, index, true);
+    const remove = async (tab: SQLEditorTab) => {
+      await handleRemoveTab(tab, true);
       await new Promise((r) => requestAnimationFrame(r));
     };
 
-    if (action === "CLOSE") {
-      await remove(tab, index);
-      return;
-    }
-    const max = tabList.length - 1;
-    if (action === "CLOSE_OTHERS") {
-      for (let i = max; i > index; i--) {
-        await remove(tabList[i], i);
+    const max = openTabList.length - 1;
+    switch (action) {
+      case "CLOSE": {
+        await remove(tab);
+        return;
       }
-      for (let i = index - 1; i >= 0; i--) {
-        await remove(tabList[i], i);
-      }
-      return;
-    }
-    if (action === "CLOSE_TO_THE_RIGHT") {
-      for (let i = max; i > index; i--) {
-        await remove(tabList[i], i);
-      }
-      return;
-    }
-    if (action === "CLOSE_SAVED") {
-      for (let i = max; i >= 0; i--) {
-        const tab = tabList[i];
-        if (tab.status === "CLEAN") {
-          await remove(tab, i);
+      case "CLOSE_OTHERS": {
+        for (let i = max; i > index; i--) {
+          await remove(openTabList[i]);
         }
+        for (let i = index - 1; i >= 0; i--) {
+          await remove(openTabList[i]);
+        }
+        return;
       }
-      return;
-    }
-    if (action === "CLOSE_ALL") {
-      for (let i = max; i >= 0; i--) {
-        await remove(tabList[i], i);
+      case "CLOSE_TO_THE_RIGHT": {
+        for (let i = max; i > index; i--) {
+          await remove(openTabList[i]);
+        }
+        return;
+      }
+      case "CLOSE_SAVED": {
+        for (let i = max; i >= 0; i--) {
+          const tab = openTabList[i];
+          if (tab.status === "CLEAN") {
+            await remove(tab);
+          }
+        }
+        return;
+      }
+      case "CLOSE_ALL": {
+        for (let i = max; i >= 0; i--) {
+          await remove(openTabList[i]);
+        }
+        return;
       }
     }
   }
@@ -293,7 +283,8 @@ useEmitteryEventListener(
 
 <style lang="postcss">
 .bb-sql-editor-tab-list .ghost {
-  @apply opacity-30 bg-white;
+  opacity: 0.3;
+  background-color: white;
 }
 .bb-sql-editor-tab-list .scrollbar .n-scrollbar-rail--horizontal--bottom {
   inset: auto 2px 2px 2px !important;

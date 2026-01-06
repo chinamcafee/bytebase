@@ -11,6 +11,7 @@ import (
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 )
 
 var (
@@ -19,7 +20,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleTableNaming, &NamingTableConventionAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_NAMING_TABLE, &NamingTableConventionAdvisor{})
 }
 
 // NamingTableConventionAdvisor is the advisor checking for table naming convention.
@@ -28,22 +29,33 @@ type NamingTableConventionAdvisor struct {
 
 // Check checks for table naming convention.
 func (*NamingTableConventionAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	root, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	format, maxLength, err := advisor.UnmarshalNamingRulePayloadAsRegexp(checkCtx.Rule.Payload)
+	namingPayload := checkCtx.Rule.GetNamingPayload()
+	if namingPayload == nil {
+		return nil, errors.New("naming_payload is required for naming table rule")
+	}
+
+	format, err := regexp.Compile(namingPayload.Format)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to compile regex format %q", namingPayload.Format)
+	}
+
+	maxLength := int(namingPayload.MaxLength)
+	if maxLength == 0 {
+		maxLength = advisor.DefaultNameLengthLimit
 	}
 	checker := &namingTableConventionChecker{
 		level:     level,
-		title:     string(checkCtx.Rule.Type),
+		title:     checkCtx.Rule.Type.String(),
 		format:    format,
 		maxLength: maxLength,
 	}
@@ -89,7 +101,7 @@ func (v *namingTableConventionChecker) Enter(in ast.Node) (ast.Node, bool) {
 		if !v.format.MatchString(tableName) {
 			v.adviceList = append(v.adviceList, &storepb.Advice{
 				Status:        v.level,
-				Code:          advisor.NamingTableConventionMismatch.Int32(),
+				Code:          code.NamingTableConventionMismatch.Int32(),
 				Title:         v.title,
 				Content:       fmt.Sprintf("`%s` mismatches table naming convention, naming format should be %q", tableName, v.format),
 				StartPosition: common.ConvertANTLRLineToPosition(in.OriginTextPosition()),
@@ -98,7 +110,7 @@ func (v *namingTableConventionChecker) Enter(in ast.Node) (ast.Node, bool) {
 		if v.maxLength > 0 && len(tableName) > v.maxLength {
 			v.adviceList = append(v.adviceList, &storepb.Advice{
 				Status:        v.level,
-				Code:          advisor.NamingTableConventionMismatch.Int32(),
+				Code:          code.NamingTableConventionMismatch.Int32(),
 				Title:         v.title,
 				Content:       fmt.Sprintf("`%s` mismatches table naming convention, its length should be within %d characters", tableName, v.maxLength),
 				StartPosition: common.ConvertANTLRLineToPosition(in.OriginTextPosition()),

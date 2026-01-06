@@ -18,30 +18,19 @@
 
 <script setup lang="ts">
 import { v4 as uuidv4 } from "uuid";
-import { computed, toRef, ref } from "vue";
-import type { Language } from "@/types";
+import { computed, ref, toRef } from "vue";
 import MonacoTextModelEditor from "./MonacoTextModelEditor.vue";
 import { useMonacoTextModel } from "./text-model";
-import type { Selection } from "./types";
+import type { MonacoEditorEmits, MonacoEditorProps } from "./types";
 import { extensionNameOfLanguage } from "./utils";
 
 const textModelEditorRef = ref<InstanceType<typeof MonacoTextModelEditor>>();
 
-const props = withDefaults(
-  defineProps<{
-    content: string;
-    filename?: string;
-    language?: Language;
-  }>(),
-  {
-    filename: undefined,
-    language: "sql",
-  }
-);
-const emit = defineEmits<{
-  (event: "update:content", content: string): void;
-  (event: "update:selection", selection: Selection | null): void;
-}>();
+const props = withDefaults(defineProps<MonacoEditorProps>(), {
+  filename: undefined,
+  language: "sql",
+});
+const emit = defineEmits<MonacoEditorEmits>();
 
 const content = computed({
   get() {
@@ -82,6 +71,6 @@ defineExpose({
   display: none !important;
 }
 .bb-monaco-editor :deep(.monaco-editor .line-numbers) {
-  @apply pr-2;
+  padding-right: 0.5rem;
 }
 </style>

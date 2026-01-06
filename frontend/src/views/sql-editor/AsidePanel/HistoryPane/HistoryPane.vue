@@ -14,7 +14,7 @@
       <div
         v-for="history in queryHistoryData.queryHistories"
         :key="history.name"
-        class="w-full p-2 space-y-1 border-b flex flex-col justify-start items-start cursor-pointer hover:bg-gray-50"
+        class="w-full p-2 gap-y-1 border-b flex flex-col justify-start items-start cursor-pointer hover:bg-gray-50"
         @click="handleQueryHistoryClick(history)"
       >
         <div class="w-full flex flex-row justify-between items-center">
@@ -31,7 +31,7 @@
           />
         </div>
         <p
-          class="max-w-full text-xs break-words font-mono line-clamp-3"
+          class="max-w-full text-xs wrap-break-word font-mono line-clamp-3"
           v-html="getFormattedStatement(history.statement)"
         ></p>
       </div>
@@ -53,7 +53,7 @@
     </div>
 
     <template v-if="queryHistoryData.queryHistories.length === 0">
-      <MaskSpinner v-if="state.loading" class="!bg-white/75" />
+      <MaskSpinner v-if="state.loading" class="bg-white/75!" />
       <div
         v-else
         class="w-full flex items-center justify-center py-8 textinfolabel"
@@ -71,13 +71,12 @@ import { escape } from "lodash-es";
 import { NButton } from "naive-ui";
 import { computed, reactive, watch } from "vue";
 import MaskSpinner from "@/components/misc/MaskSpinner.vue";
-import { SearchBox } from "@/components/v2";
-import { CopyButton } from "@/components/v2";
+import { CopyButton, SearchBox } from "@/components/v2";
 import {
-  useSQLEditorQueryHistoryStore,
-  useSQLEditorTabStore,
-  useSQLEditorStore,
   type QueryHistoryFilter,
+  useSQLEditorQueryHistoryStore,
+  useSQLEditorStore,
+  useSQLEditorTabStore,
 } from "@/store";
 import { DEBOUNCE_SEARCH_DELAY, getDateForPbTimestampProtoEs } from "@/types";
 import type { QueryHistory } from "@/types/proto-es/v1/sql_service_pb";

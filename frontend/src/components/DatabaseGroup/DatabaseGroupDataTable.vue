@@ -10,7 +10,7 @@
     :row-key="(data: DatabaseGroup) => data.name"
     :checked-row-keys="selectedDatabaseGroupNames"
     :row-props="rowProps"
-    :pagination="{ pageSize: 20 }"
+    :pagination="{ pageSize }"
     :paginate-single-page="false"
     @update:checked-row-keys="
       (val) => $emit('update:selected-database-group-names', val as string[])
@@ -20,7 +20,7 @@
 
 <script lang="tsx" setup>
 import { ExternalLinkIcon } from "lucide-vue-next";
-import { NDataTable, NEllipsis, type DataTableColumn } from "naive-ui";
+import { type DataTableColumn, NDataTable, NEllipsis } from "naive-ui";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
@@ -41,10 +41,12 @@ const props = withDefaults(
     showSelection?: boolean;
     showExternalLink?: boolean;
     singleSelection?: boolean;
+    pageSize?: number;
     selectedDatabaseGroupNames?: string[];
   }>(),
   {
     bordered: true,
+    pageSize: 20,
     selectedDatabaseGroupNames: () => [],
   }
 );
@@ -77,13 +79,7 @@ const columnList = computed((): DatabaseGroupDataTableColumn[] => {
       width: 256,
       ellipsis: true,
       resizable: true,
-      render: (data) => {
-        return (
-          <div class="space-x-2">
-            <span>{data.title}</span>
-          </div>
-        );
-      },
+      render: (data) => data.title,
     },
     {
       key: "expression",
@@ -118,7 +114,7 @@ const columnList = computed((): DatabaseGroupDataTableColumn[] => {
 
         return (
           <div
-            class="flex items-center justify-end cursor-pointer w-6 h-6 p-1 opacity-60 hover:opacity-100 hover:bg-white hover:shadow rounded"
+            class="flex items-center justify-end cursor-pointer w-6 h-6 p-1 opacity-60 hover:opacity-100 hover:bg-white hover:shadow-sm rounded-sm"
             onClick={openExternalLink}
           >
             <ExternalLinkIcon class="w-4 h-auto" />

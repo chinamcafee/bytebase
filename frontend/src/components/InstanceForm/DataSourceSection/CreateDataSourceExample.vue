@@ -189,7 +189,7 @@
           />
         </NConfigProvider>
         <div
-          class="flex items-center -ml-px px-2 py-2 border border-gray-300 text-sm font-medium text-control-light disabled:text-gray-300 bg-gray-50 hover:bg-gray-100 disabled:bg-gray-50 focus:ring-control focus:outline-none focus-visible:ring-2 focus:ring-offset-1 disabled:cursor-not-allowed rounded-r-[3px]"
+          class="flex items-center -ml-px px-2 py-2 border border-gray-300 text-sm font-medium text-control-light disabled:text-gray-300 bg-gray-50 hover:bg-gray-100 disabled:bg-gray-50 focus:ring-control focus:outline-hidden focus-visible:ring-2 focus:ring-offset-1 disabled:cursor-not-allowed rounded-r-[3px]"
         >
           <CopyButton :content="grantStatement" />
         </div>
@@ -201,18 +201,18 @@
 <script lang="ts" setup>
 import hljs from "highlight.js/lib/core";
 import { NCode, NConfigProvider } from "naive-ui";
-import { reactive, computed } from "vue";
+import { computed, reactive } from "vue";
 import { BBAttention } from "@/bbkit";
 import { CopyButton } from "@/components/v2";
 import {
-  languageOfEngineV1,
   DATASOURCE_ADMIN_USER_NAME,
   DATASOURCE_READONLY_USER_NAME,
+  languageOfEngineV1,
 } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import {
-  DataSourceType,
   DataSource_AuthenticationType,
+  DataSourceType,
 } from "@/types/proto-es/v1/instance_service_pb";
 
 interface LocalState {

@@ -1,11 +1,11 @@
 <template>
-  <div class="w-full space-y-4">
+  <div class="w-full flex flex-col gap-y-4">
     <FeatureAttention
       :feature="PlanFeature.FEATURE_DATA_MASKING"
       :instance="database.instanceResource"
     />
     <div
-      class="flex flex-col space-x-2 lg:flex-row gap-y-4 justify-between items-end lg:items-center"
+      class="flex flex-col gap-x-2 lg:flex-row gap-y-4 justify-between items-end lg:items-center"
     >
       <SearchBox v-model:value="state.searchText" style="max-width: 100%" />
       <NButton
@@ -36,9 +36,8 @@
       :row-selectable="!isMaskingForNoSQL"
       :show-operation="hasUpdateCatalogPermission && hasSensitiveDataFeature"
       :column-list="filteredColumnList"
-      :checked-column-index-list="checkedColumnIndexList"
+      v-model:checked-column-list="state.pendingGrantAccessColumn"
       @delete="onColumnRemove"
-      @checked:update="updateCheckedColumnList($event)"
     />
   </div>
 
@@ -75,23 +74,25 @@ import { ShieldCheckIcon } from "lucide-vue-next";
 import { NButton } from "naive-ui";
 import { computed, reactive, watch } from "vue";
 import {
-  FeatureModal,
-  FeatureBadge,
   FeatureAttention,
+  FeatureBadge,
+  FeatureModal,
 } from "@/components/FeatureGuard";
-import GrantAccessDrawer from "@/components/SensitiveData/GrantAccessDrawer.vue";
 import SensitiveColumnTable from "@/components/SensitiveData/components/SensitiveColumnTable.vue";
+import GrantAccessDrawer from "@/components/SensitiveData/GrantAccessDrawer.vue";
 import type { MaskData } from "@/components/SensitiveData/types";
 import { isCurrentColumnException } from "@/components/SensitiveData/utils";
 import { SearchBox } from "@/components/v2";
-import { featureToRef, usePolicyV1Store, useDatabaseCatalog } from "@/store";
+import { featureToRef, useDatabaseCatalog, usePolicyV1Store } from "@/store";
 import { type ComposedDatabase } from "@/types";
 import {
-  ObjectSchema_Type,
   type ObjectSchema,
+  ObjectSchema_Type,
 } from "@/types/proto-es/v1/database_catalog_service_pb";
-import { MaskingExceptionPolicySchema } from "@/types/proto-es/v1/org_policy_service_pb";
-import { PolicyType } from "@/types/proto-es/v1/org_policy_service_pb";
+import {
+  MaskingExemptionPolicySchema,
+  PolicyType,
+} from "@/types/proto-es/v1/org_policy_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import { hasProjectPermissionV2, instanceV1MaskingForNoSQL } from "@/utils";
 
@@ -271,15 +272,15 @@ const removeSensitiveColumn = async (sensitiveColumn: MaskData) => {
 const removeMaskingExceptions = async (sensitiveColumn: MaskData) => {
   const policy = await policyStore.getOrFetchPolicyByParentAndType({
     parentPath: props.database.project,
-    policyType: PolicyType.MASKING_EXCEPTION,
+    policyType: PolicyType.MASKING_EXEMPTION,
   });
   if (!policy) {
     return;
   }
 
   const exceptions = (
-    policy.policy?.case === "maskingExceptionPolicy"
-      ? policy.policy.value.maskingExceptions
+    policy.policy?.case === "maskingExemptionPolicy"
+      ? policy.policy.value.exemptions
       : []
   ).filter(
     (exception) =>
@@ -290,9 +291,9 @@ const removeMaskingExceptions = async (sensitiveColumn: MaskData) => {
   );
 
   policy.policy = {
-    case: "maskingExceptionPolicy",
-    value: create(MaskingExceptionPolicySchema, {
-      maskingExceptions: exceptions,
+    case: "maskingExemptionPolicy",
+    value: create(MaskingExemptionPolicySchema, {
+      exemptions: exceptions,
     }),
   };
   await policyStore.upsertPolicy({
@@ -311,32 +312,5 @@ const onGrantAccessButtonClick = () => {
     return;
   }
   state.showGrantAccessDrawer = true;
-};
-
-const checkedColumnIndexList = computed(() => {
-  const resp = [];
-  for (const column of state.pendingGrantAccessColumn) {
-    const index = filteredColumnList.value.findIndex((col) => {
-      return (
-        col.table === column.table &&
-        col.schema === column.schema &&
-        col.column === column.column
-      );
-    });
-    if (index >= 0) {
-      resp.push(index);
-    }
-  }
-  return resp;
-});
-
-const updateCheckedColumnList = (indexes: number[]) => {
-  state.pendingGrantAccessColumn = [];
-  for (const index of indexes) {
-    const col = filteredColumnList.value[index];
-    if (col) {
-      state.pendingGrantAccessColumn.push(col);
-    }
-  }
 };
 </script>

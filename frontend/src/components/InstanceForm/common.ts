@@ -8,8 +8,8 @@ import type {
   Instance,
 } from "@/types/proto-es/v1/instance_service_pb";
 import {
-  DataSourceType,
   DataSource_AuthenticationType,
+  DataSourceType,
 } from "@/types/proto-es/v1/instance_service_pb";
 import { PlanType } from "@/types/proto-es/v1/subscription_service_pb";
 import { calcUpdateMask } from "@/utils";
@@ -26,7 +26,6 @@ export type EditDataSource = DataSource & {
   useEmptyPassword?: boolean;
   useEmptyMasterPassword?: boolean;
   updateSsl?: boolean;
-  updateAuthenticationPrivateKey?: boolean;
   extraConnectionParameters?: Record<string, string>;
 };
 
@@ -79,7 +78,6 @@ export const extractBasicInfo = (instance: Instance | undefined): BasicInfo => {
         availableLicenseCount > 0,
 
     syncInterval: instance?.syncInterval,
-    maximumConnections: instance?.maximumConnections ?? 0,
     syncDatabases: instance?.syncDatabases ?? [],
     roles: instance?.roles ?? [],
     labels: instance?.labels ?? {},
@@ -131,8 +129,7 @@ export const calcDataSourceUpdateMask = (
   const updateMask = new Set(
     calcUpdateMask(editing, original, true /* toSnakeCase */)
   );
-  const { useEmptyPassword, updateSsl, updateAuthenticationPrivateKey } =
-    editState;
+  const { useEmptyPassword, updateSsl } = editState;
   if (useEmptyPassword) {
     // We need to implicitly set "password" need to be updated
     // if the "use empty password" option if checked
@@ -144,9 +141,6 @@ export const calcDataSourceUpdateMask = (
     updateMask.add("ssl_ca");
     updateMask.add("ssl_key");
     updateMask.add("ssl_cert");
-  }
-  if (updateAuthenticationPrivateKey) {
-    updateMask.add("authentication_private_key");
   }
 
   if (updateMask.has("iam_extension")) {

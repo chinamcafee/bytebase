@@ -1,13 +1,13 @@
 import {
-  type GlobalThemeOverrides,
-  type NLocale,
-  type NDateLocale,
   dateZhCN,
+  type GlobalThemeOverrides,
+  type NDateLocale,
+  type NLocale,
   zhCN,
 } from "naive-ui";
 import { computed } from "vue";
 import { callCssVariable } from "@/utils";
-import i18n from "./src/plugins/i18n";
+import { locale } from "./src/plugins/i18n";
 
 export const themeOverrides = computed((): GlobalThemeOverrides => {
   return {
@@ -67,7 +67,7 @@ export const darkThemeOverrides = computed((): GlobalThemeOverrides => {
 });
 
 const isZhCn = (): boolean => {
-  return i18n.global.locale.value === "zh-CN";
+  return locale.value === "zh-CN";
 };
 
 export const dateLang = computed((): NDateLocale | null => {

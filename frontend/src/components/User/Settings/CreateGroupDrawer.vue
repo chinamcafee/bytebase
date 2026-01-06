@@ -1,7 +1,7 @@
 <template>
   <Drawer @close="$emit('close')">
     <DrawerContent
-      class="w-[50rem] max-w-[90vw] relative"
+      class="w-200 max-w-[90vw] relative"
       :title="
         isCreating
           ? $t('settings.members.groups.add-group')
@@ -31,7 +31,11 @@
               {{ $t("settings.members.groups.form.title") }}
               <RequiredStar />
             </label>
-            <NInput v-model:value="state.group.title" :disabled="!allowEdit" />
+            <NInput
+              v-model:value="state.group.title"
+              :disabled="!allowEdit"
+              :maxlength="200"
+            />
           </div>
           <div class="flex flex-col gap-y-2">
             <label class="textlabel block">
@@ -40,42 +44,40 @@
             <NInput
               v-model:value="state.group.description"
               :disabled="!allowEdit"
+              :maxlength="1000"
             />
           </div>
           <div class="flex flex-col gap-y-2">
             <label class="textlabel block">
               {{ $t("settings.members.groups.form.members") }}
             </label>
-            <div class="flex flex-col space-y-2">
+            <div class="flex flex-col gap-y-2">
               <div
                 v-for="(member, i) in state.group.members"
-                :key="member.member"
-                class="w-full flex items-center space-x-3"
+                :key="i"
+                class="w-full flex items-center gap-x-3"
               >
                 <UserSelect
-                  :user="getUserUidForMember(member)"
+                  :value="extractUserId(member.member)"
                   :multiple="false"
                   :size="'medium'"
                   :include-all="false"
-                  :filter="
-                    (user, _) =>
-                      !state.group.members.find(
-                        (member) =>
-                          member.member === `${userNamePrefix}${user.email}`
-                      )
-                  "
-                  @update:user="(uid) => updateMemberEmail(i, uid)"
+                  :disabled="!allowEdit"
+                  :filter="(user) => userFilter(user, member.member)"
+                  @update:value="($event) => updateMemberEmail(i, $event as (string | undefined))"
                 />
                 <GroupMemberRoleSelect
                   :value="member.role"
                   :size="'medium'"
+                  :disabled="!allowEdit"
                   @update:value="(role) => updateMemberRole(i, role)"
                 />
                 <div class="flex justify-end">
                   <NButton
                     quaternary
                     size="tiny"
-                    :disabled="disallowEditMember"
+                    type="error"
+                    :disabled="!allowEdit"
                     @click="deleteMember(i)"
                   >
                     <template #icon>
@@ -87,7 +89,7 @@
             </div>
             <div>
               <NButton
-                :disabled="!allowEdit || disallowEditMember"
+                :disabled="!allowEdit"
                 @click="addMember"
               >
                 {{ $t("settings.members.add-member") }}
@@ -100,8 +102,10 @@
         <div class="w-full flex justify-between items-center">
           <RemoveGroupButton
             v-if="!isCreating && allowDelete"
+            quaternary
+            size="small"
             :group="group!"
-            @removed="$emit('close')"
+            @removed="$emit('removed', group!)"
           >
             <template #icon>
               <Trash2Icon class="w-4 h-auto" />
@@ -142,30 +146,25 @@ import { create } from "@bufbuild/protobuf";
 import { cloneDeep, isEqual } from "lodash-es";
 import { Trash2Icon } from "lucide-vue-next";
 import { NButton, NInput, NTooltip } from "naive-ui";
-import { computed, reactive, watchEffect } from "vue";
+import { computed, reactive } from "vue";
 import { useI18n } from "vue-i18n";
 import EmailInput from "@/components/EmailInput.vue";
 import RequiredStar from "@/components/RequiredStar.vue";
 import { Drawer, DrawerContent, UserSelect } from "@/components/v2";
+import { pushNotification, useCurrentUserV1, useGroupStore } from "@/store";
 import {
-  extractGroupEmail,
-  useGroupStore,
-  useCurrentUserV1,
-  pushNotification,
-  useUserStore,
-} from "@/store";
-import {
-  userNamePrefix,
-  groupNamePrefix,
   extractUserId,
+  groupNamePrefix,
+  userNamePrefix,
 } from "@/store/modules/v1/common";
 import type { Group, GroupMember } from "@/types/proto-es/v1/group_service_pb";
 import {
-  GroupSchema,
-  GroupMemberSchema,
   GroupMember_Role,
+  GroupMemberSchema,
+  GroupSchema,
 } from "@/types/proto-es/v1/group_service_pb";
-import { isValidEmail, hasWorkspacePermissionV2 } from "@/utils";
+import { type User } from "@/types/proto-es/v1/user_service_pb";
+import { hasWorkspacePermissionV2, isValidEmail } from "@/utils";
 import RemoveGroupButton from "./RemoveGroupButton.vue";
 import GroupMemberRoleSelect from "./UserDataTableByGroup/cells/GroupMemberRoleSelect.vue";
 
@@ -185,18 +184,18 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: "close"): void;
+  (event: "removed", group: Group): void;
   (event: "updated", group: Group): void;
 }>();
 
 const { t } = useI18n();
-const userStore = useUserStore();
 const groupStore = useGroupStore();
 const currentUserV1 = useCurrentUserV1();
 
 const state = reactive<LocalState>({
   isRequesting: false,
   group: {
-    email: extractGroupEmail(props.group?.name ?? ""),
+    email: props.group?.email ?? "",
     title: props.group?.title ?? "",
     description: props.group?.description ?? "",
     members: cloneDeep(
@@ -210,16 +209,16 @@ const state = reactive<LocalState>({
   },
 });
 
-const isCreating = computed(() => !props.group);
-
-watchEffect(async () => {
-  if (props.group) {
-    const memberUserIds = props.group.members.map((m) => m.member);
-    await userStore.batchGetUsers(memberUserIds);
+const userFilter = (user: User, member: string) => {
+  if (extractUserId(member) === user.email) {
+    return true;
   }
-});
+  return !state.group.members.find(
+    (member) => member.member === `${userNamePrefix}${user.email}`
+  );
+};
 
-const disallowEditMember = computed(() => !!props.group?.source);
+const isCreating = computed(() => !props.group);
 
 const isGroupOwner = computed(() => {
   return (
@@ -234,6 +233,10 @@ const allowDelete = computed(() => {
 });
 
 const allowEdit = computed(() => {
+  if (!!props.group?.source) {
+    // do not support edit external group manually.
+    return false;
+  }
   if (isGroupOwner.value) {
     return true;
   }
@@ -256,7 +259,9 @@ const validGroup = computed(() => {
     }
   }
   return create(GroupSchema, {
-    name: `${groupNamePrefix}${state.group.email}`,
+    name: props.group
+      ? props.group.name
+      : `${groupNamePrefix}${state.group.email}`,
     title: state.group.title,
     description: state.group.description,
     members: [...memberMap.values()],
@@ -291,28 +296,13 @@ const addMember = () => {
   state.group.members.push(member);
 };
 
-const getUserUidForMember = (member: GroupMember) => {
-  if (!member.member) {
-    return;
-  }
-  const user = userStore.getUserByIdentifier(member.member);
-  if (!user) {
-    return;
-  }
-  return extractUserId(user.name);
-};
-
-const updateMemberEmail = (index: number, uid: string | undefined) => {
-  if (!uid) {
-    return;
-  }
-  const user = userStore.getUserByIdentifier(uid);
-  if (!user) {
+const updateMemberEmail = (index: number, email: string | undefined) => {
+  if (!email) {
     return;
   }
   state.group.members[index] = {
     ...state.group.members[index],
-    member: `${userNamePrefix}${user.email}`,
+    member: `${userNamePrefix}${email}`,
   };
 };
 

@@ -13,11 +13,12 @@ import (
 
 func init() {
 	base.RegisterParseFunc(storepb.Engine_COCKROACHDB, parseCockroachDBForRegistry)
+	base.RegisterParseStatementsFunc(storepb.Engine_COCKROACHDB, parseCockroachDBStatements)
 }
 
 // parseCockroachDBForRegistry is the ParseFunc for CockroachDB.
-// Returns statements.Statements (github.com/cockroachdb/cockroachdb-parser/pkg/sql/parser/statements) on success.
-func parseCockroachDBForRegistry(statement string) (any, error) {
+// Returns []base.AST with *CockroachDBAST instances.
+func parseCockroachDBForRegistry(statement string) ([]base.AST, error) {
 	result, err := ParseCockroachDBSQL(statement)
 	if err != nil {
 		return nil, err
@@ -25,7 +26,46 @@ func parseCockroachDBForRegistry(statement string) (any, error) {
 	if result == nil {
 		return nil, nil
 	}
-	return result.Stmts, nil
+	var asts []base.AST
+	for _, stmt := range result.Stmts {
+		asts = append(asts, &AST{
+			StartPosition: &storepb.Position{Line: 1},
+			Stmt:          stmt,
+		})
+	}
+	return asts, nil
+}
+
+// parseCockroachDBStatements is the ParseStatementsFunc for CockroachDB.
+// Returns []ParsedStatement with both text and AST populated.
+func parseCockroachDBStatements(statement string) ([]base.ParsedStatement, error) {
+	// First split to get Statement with text and positions (uses PostgreSQL splitter)
+	stmts, err := base.SplitMultiSQL(storepb.Engine_COCKROACHDB, statement)
+	if err != nil {
+		return nil, err
+	}
+
+	// Then parse to get ASTs
+	asts, err := parseCockroachDBForRegistry(statement)
+	if err != nil {
+		return nil, err
+	}
+
+	// Combine: Statement provides text/positions, AST provides parsed tree
+	var result []base.ParsedStatement
+	astIndex := 0
+	for _, stmt := range stmts {
+		ps := base.ParsedStatement{
+			Statement: stmt,
+		}
+		if !stmt.Empty && astIndex < len(asts) {
+			ps.AST = asts[astIndex]
+			astIndex++
+		}
+		result = append(result, ps)
+	}
+
+	return result, nil
 }
 
 type ParseResult struct {

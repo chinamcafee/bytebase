@@ -1,7 +1,7 @@
 <template>
   <div class="flex-1 flex w-full border-t -mt-px">
     <!-- Left Panel - Activity -->
-    <div class="flex-1 shrink p-4 space-y-4 overflow-x-auto">
+    <div class="flex-1 shrink p-4 flex flex-col gap-y-4 overflow-x-auto">
       <slot />
       <ActivitySection />
     </div>
@@ -85,7 +85,6 @@ const composedIssue = computed(() => {
   composedIssue.plan = unref(plan).name;
   composedIssue.planEntity = unref(plan);
   if (rollout?.value) {
-    composedIssue.rollout = rollout.value.name;
     composedIssue.rolloutEntity = rollout.value;
   }
   return composedIssue;

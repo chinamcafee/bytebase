@@ -23,7 +23,8 @@
     "sentence": {
       "verb-type-target-by-people": "{verb} {type} {target}",
       "verb-type-target-by-system-bot": "{type} {target} {verb}",
-      "changed-x-link": "changed {name}. {link}"
+      "changed-x-link": "changed {name}. {link}",
+      "modified-sql-of-spec-link": "Modified SQL of {spec}. {link}"
     }
   },
   "settings": {
@@ -114,14 +115,6 @@
       "FEATURE_SCHEMA_DRIFT_DETECTION": {
         "title": "Schema drift detection",
         "desc": "Detect out-of-band schema changes and report discrepancies."
-      },
-      "FEATURE_CHANGELIST": {
-        "title": "Changelist",
-        "desc": "Group and manage multiple database changes together."
-      },
-      "FEATURE_SCHEMA_TEMPLATE": {
-        "title": "Schema template",
-        "desc": "Create reusable field templates for consistent schema design."
       },
       "FEATURE_ROLLOUT_POLICY": {
         "title": "Rollout policy",
@@ -279,9 +272,9 @@
         "title": "Directory sync",
         "desc": "Sync users and groups from Entra ID to Bytebase."
       },
-      "FEATURE_SIGN_IN_FREQUENCY_CONTROL": {
-        "title": "Sign-in frequency control",
-        "desc": "Configure how often users must re-authenticate."
+      "FEATURE_TOKEN_DURATION_CONTROL": {
+        "title": "Token duration control",
+        "desc": "Configure access token and refresh token durations."
       },
       "FEATURE_EXTERNAL_SECRET_MANAGER": {
         "title": "External secret manager",
@@ -359,7 +352,6 @@
     "project": "Project",
     "idp": "Identity Provider",
     "database-group": "Database Group",
-    "changelist": "Changelist",
     "review-config": "Review Config",
     "role": "Role"
   }

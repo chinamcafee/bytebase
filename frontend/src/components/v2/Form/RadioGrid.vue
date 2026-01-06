@@ -19,11 +19,7 @@
           class="pointer-events-none"
           v-bind="radioProps ? radioProps(option.value, index) : undefined"
         />
-        <slot
-          name="item"
-          :option="option as RadioGridOption<any>"
-          :index="index"
-        />
+        <slot name="item" :option="option" :index="index" />
       </div>
     </NButton>
   </div>
@@ -48,6 +44,7 @@ defineEmits<{
 
 <style lang="postcss" scoped>
 .bb-radio-grid--button :deep(.n-button__content) {
-  @apply w-full justify-start;
+  width: 100%;
+  justify-content: flex-start;
 }
 </style>

@@ -9,47 +9,46 @@
       <IssueCommentView
         class="group"
         v-for="(item, index) in issueComments"
-        :key="item.comment.name"
+        :key="item.name"
         :issue="issue"
         :index="index"
         :is-last="index === issueComments.length - 1"
-        :issue-comment="item.comment"
-        :similar="item.similar"
+        :issue-comment="item"
       >
-        <template v-if="allowEditIssueComment(item.comment)" #subject-suffix>
+        <template v-if="allowEditIssueComment(item)" #subject-suffix>
           <!-- Edit Comment Button-->
           <NButton
             v-if="!state.editCommentMode"
             quaternary
             size="tiny"
             class="text-gray-500 hover:text-gray-700"
-            @click.prevent="onUpdateComment(item.comment)"
+            @click.prevent="onUpdateComment(item)"
           >
             <PencilIcon class="w-3.5 h-3.5" />
           </NButton>
         </template>
 
-        <template v-if="item.comment.comment" #comment>
+        <template v-if="item.comment" #comment>
           <MarkdownEditor
             :mode="
               state.editCommentMode &&
-              state.activeComment?.name === item.comment.name
+              state.activeComment?.name === item.name
                 ? 'editor'
                 : 'preview'
             "
-            :content="item.comment.comment"
-            :issue-list="issueList"
+            :content="item.comment"
             :project="project"
+            :maxlength="65536"
+            :max-height="Number.MAX_SAFE_INTEGER"
             @change="(val: string) => (state.editComment = val)"
             @submit="doUpdateComment"
-            @cancel="cancelEditComment"
           />
           <div
             v-if="
               state.editCommentMode &&
-              state.activeComment?.name === item.comment.name
+              state.activeComment?.name === item.name
             "
-            class="flex space-x-2 mt-2 items-center justify-end"
+            class="flex gap-x-2 mt-2 items-center justify-end"
           >
             <NButton quaternary size="small" @click.prevent="cancelEditComment">
               {{ $t("common.cancel") }}
@@ -68,7 +67,7 @@
 
     <div v-if="!state.editCommentMode && allowCreateComment" class="mt-2">
       <div class="flex gap-3">
-        <div class="flex-shrink-0 pt-1">
+        <div class="shrink-0 pt-1">
           <UserAvatar :user="currentUser" />
         </div>
         <div class="min-w-0 flex-1">
@@ -76,8 +75,8 @@
           <MarkdownEditor
             mode="editor"
             :content="state.newComment"
-            :issue-list="issueList"
             :project="project"
+            :maxlength="65536"
             @change="(val: string) => (state.newComment = val)"
             @submit="doCreateComment(state.newComment)"
           />
@@ -100,29 +99,24 @@
 import { create } from "@bufbuild/protobuf";
 import { PencilIcon } from "lucide-vue-next";
 import { NButton } from "naive-ui";
-import { computed, onMounted, reactive, ref, watch, watchEffect } from "vue";
+import { computed, onMounted, reactive, watch, watchEffect } from "vue";
 import { useRoute } from "vue-router";
 import MarkdownEditor from "@/components/MarkdownEditor";
 import UserAvatar from "@/components/User/UserAvatar.vue";
 import {
+  extractUserId,
+  getIssueCommentType,
+  IssueCommentType,
+  useCurrentProjectV1,
   useCurrentUserV1,
   useIssueCommentStore,
-  useIssueV1Store,
-  useCurrentProjectV1,
-  extractUserId,
 } from "@/store";
 import type { ComposedIssue } from "@/types";
-import { isValidProjectName } from "@/types";
 import type { IssueComment } from "@/types/proto-es/v1/issue_service_pb";
 import { ListIssueCommentsRequestSchema } from "@/types/proto-es/v1/issue_service_pb";
 import { hasProjectPermissionV2 } from "@/utils";
 import { useIssueContext } from "../../logic";
-import {
-  IssueCommentView,
-  isSimilarIssueComment,
-  isUserEditableComment,
-  type DistinctIssueComment,
-} from "./IssueCommentView";
+import { IssueCommentView } from "./IssueCommentView";
 import IssueCreatedCommentV1 from "./IssueCommentView/IssueCreatedCommentV1.vue";
 
 interface LocalState {
@@ -136,7 +130,6 @@ const route = useRoute();
 
 const { project } = useCurrentProjectV1();
 const { issue } = useIssueContext();
-const issueList = ref<ComposedIssue[]>([]);
 
 const state = reactive<LocalState>({
   editCommentMode: false,
@@ -145,22 +138,7 @@ const state = reactive<LocalState>({
 });
 
 const currentUser = useCurrentUserV1();
-const issueV1Store = useIssueV1Store();
 const issueCommentStore = useIssueCommentStore();
-
-const prepareIssueListForMarkdownEditor = async () => {
-  const project = issue.value.project;
-  issueList.value = [];
-  if (!isValidProjectName(project)) return;
-
-  const list = await issueV1Store.listIssues({
-    find: {
-      project,
-      query: "",
-    },
-  });
-  issueList.value = list.issues;
-};
 
 const prepareIssueComments = async () => {
   await issueCommentStore.listIssueComments(
@@ -174,24 +152,8 @@ const prepareIssueComments = async () => {
 
 watchEffect(prepareIssueComments);
 
-const issueComments = computed((): DistinctIssueComment[] => {
-  const list = issueCommentStore.getIssueComments(issue.value.name);
-  const distinctIssueComments: DistinctIssueComment[] = [];
-  for (let i = 0; i < list.length; i++) {
-    const comment = list[i];
-    if (distinctIssueComments.length === 0) {
-      distinctIssueComments.push({ comment, similar: [] });
-      continue;
-    }
-
-    const prev = distinctIssueComments[distinctIssueComments.length - 1];
-    if (isSimilarIssueComment(prev.comment, comment)) {
-      prev.similar.push(comment);
-    } else {
-      distinctIssueComments.push({ comment, similar: [] });
-    }
-  }
-  return distinctIssueComments;
+const issueComments = computed(() => {
+  return issueCommentStore.getIssueComments(issue.value.name);
 });
 
 const allowCreateComment = computed(() => {
@@ -214,7 +176,13 @@ const doCreateComment = async (comment: string) => {
 };
 
 const allowEditIssueComment = (comment: IssueComment) => {
-  if (!isUserEditableComment(comment)) {
+  const commentType = getIssueCommentType(comment);
+  // Check if comment is user-editable
+  const isEditable =
+    commentType === IssueCommentType.USER_COMMENT ||
+    (commentType === IssueCommentType.APPROVAL && comment.comment !== "");
+
+  if (!isEditable) {
     return false;
   }
   if (currentUser.value.email === extractUserId(comment.creator)) {
@@ -269,12 +237,4 @@ onMounted(() => {
     }
   );
 });
-
-watch(
-  () => issue.value.project,
-  () => {
-    prepareIssueListForMarkdownEditor();
-  },
-  { immediate: true }
-);
 </script>

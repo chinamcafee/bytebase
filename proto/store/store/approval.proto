@@ -2,8 +2,6 @@ syntax = "proto3";
 
 package bytebase.store;
 
-import "store/common.proto";
-
 option go_package = "generated-go/store";
 
 // IssuePayloadApproval records the approval template used and approval history for an issue.
@@ -23,8 +21,9 @@ message IssuePayloadApproval {
     // The current approval status.
     Status status = 1;
 
-    // The ID of the principal who is the approver.
-    int32 principal_id = 2;
+    // The principal who is the approver.
+    // Format: users/{email}.
+    string principal = 2;
   }
 
   // The approval template being used for this issue.
@@ -35,20 +34,10 @@ message IssuePayloadApproval {
   // Whether the system has finished finding a matching approval template.
   // False means the backend is still searching for matching templates.
   bool approval_finding_done = 3;
-
-  // Error message if approval template finding failed.
-  string approval_finding_error = 4;
-
-  // The assessed risk level for this issue.
-  RiskLevel risk_level = 5;
 }
 
 // ApprovalTemplate defines the approval workflow and requirements for an issue.
 message ApprovalTemplate {
-  // The unique identifier for the approval template.
-  // Built-in templates use "bb." prefix (e.g., "bb.project-owner", "bb.workspace-dba").
-  // Custom templates use a UUID or other unique identifier.
-  string id = 4;
   // The approval workflow specification.
   ApprovalFlow flow = 1;
   // Human-readable title of the approval template.

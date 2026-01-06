@@ -6,7 +6,7 @@ import (
 	"unicode"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/trino-parser"
+	parser "github.com/bytebase/parser/trino"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
@@ -41,16 +41,17 @@ func parseTrinoStatement(statement string) *base.SyntaxError {
 	p := parser.NewTrinoParser(stream)
 
 	// Set up error listeners
+	startPosition := &storepb.Position{Line: 1}
 	lexerErrorListener := &base.ParseErrorListener{
-		Statement: statement,
-		BaseLine:  0,
+		Statement:     statement,
+		StartPosition: startPosition,
 	}
 	lexer.RemoveErrorListeners()
 	lexer.AddErrorListener(lexerErrorListener)
 
 	parserErrorListener := &base.ParseErrorListener{
-		Statement: statement,
-		BaseLine:  0,
+		Statement:     statement,
+		StartPosition: startPosition,
 	}
 	p.RemoveErrorListeners()
 	p.AddErrorListener(parserErrorListener)

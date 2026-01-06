@@ -12,28 +12,11 @@ func init() {
 	base.RegisterSplitterFunc(storepb.Engine_CASSANDRA, SplitSQL)
 }
 
-// SplitSQL splits CQL statements into multiple single statements.
-func SplitSQL(statement string) ([]base.SingleSQL, error) {
+// SplitSQL splits the input into multiple CQL statements using semicolon as delimiter.
+func SplitSQL(statement string) ([]base.Statement, error) {
 	lexer := cql.NewCqlLexer(antlr.NewInputStream(statement))
 	stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
-	p := cql.NewCqlParser(stream)
+	stream.Fill()
 
-	p.BuildParseTrees = true
-	p.RemoveErrorListeners()
-
-	tree := p.Root()
-	if tree == nil {
-		return nil, nil
-	}
-
-	// For now, return the entire statement as a single SQL
-	// CQL typically doesn't support multiple statements in one query
-	// unlike SQL databases
-	return []base.SingleSQL{
-		{
-			Text:            statement,
-			ByteOffsetStart: 0,
-			ByteOffsetEnd:   len(statement),
-		},
-	}, nil
+	return base.SplitSQLByLexer(stream, cql.CqlLexerSEMI)
 }

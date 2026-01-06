@@ -17,21 +17,22 @@ func init() {
 	base.RegisterExtractChangedResourcesFunc(storepb.Engine_REDSHIFT, extractChangedResources)
 }
 
-func extractChangedResources(database string, _ string, dbSchema *model.DatabaseSchema, asts any, _ string) (*base.ChangeSummary, error) {
-	tree, ok := asts.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("invalid ast type %T, expected antlr.Tree", asts)
-	}
-
-	changedResources := model.NewChangedResources(dbSchema)
+func extractChangedResources(database string, _ string, dbMetadata *model.DatabaseMetadata, asts []base.AST, _ string) (*base.ChangeSummary, error) {
+	changedResources := model.NewChangedResources(dbMetadata)
 	listener := &resourceChangeListener{
 		currentDatabase:  database,
 		changedResources: changedResources,
-		dbSchema:         dbSchema,
+		dbMetadata:       dbMetadata,
 		searchPath:       []string{"public"}, // Default search path for Redshift
 	}
 
-	antlr.ParseTreeWalkerDefault.Walk(listener, tree)
+	for _, ast := range asts {
+		antlrAST, ok := base.GetANTLRAST(ast)
+		if !ok {
+			return nil, errors.New("expected ANTLR AST for Redshift")
+		}
+		antlr.ParseTreeWalkerDefault.Walk(listener, antlrAST.Tree)
+	}
 
 	return &base.ChangeSummary{
 		ChangedResources: changedResources,
@@ -46,7 +47,7 @@ type resourceChangeListener struct {
 
 	currentDatabase  string
 	changedResources *model.ChangedResources
-	dbSchema         *model.DatabaseSchema
+	dbMetadata       *model.DatabaseMetadata
 	searchPath       []string
 	sampleDMLs       []string
 	dmlCount         int
@@ -131,44 +132,6 @@ func (*resourceChangeListener) EnterIndexstmt(ctx *parser.IndexstmtContext) {
 	// For CREATE INDEX, we need to track which table it affects
 	// TODO: Extract table name from index statement context
 	// For now, we skip index tracking
-}
-
-// EnterCreatematviewstmt is called when entering a creatematviewstmt rule.
-func (l *resourceChangeListener) EnterCreatematviewstmt(ctx *parser.CreatematviewstmtContext) {
-	if ctx.CREATE() == nil || ctx.Qualified_name() == nil {
-		return
-	}
-
-	viewName := extractQualifiedName(ctx.Qualified_name())
-	schemaName := extractSchemaName(ctx.Qualified_name(), l.searchPath[0])
-
-	// For materialized views, we use AddView method
-	l.changedResources.AddView(
-		l.currentDatabase,
-		schemaName,
-		&storepb.ChangedResourceView{
-			Name: viewName,
-		},
-	)
-}
-
-// EnterCreateexternalviewstmt is called when entering a createexternalviewstmt rule.
-func (l *resourceChangeListener) EnterCreateexternalviewstmt(ctx *parser.CreateexternalviewstmtContext) {
-	if ctx.CREATE() == nil || ctx.Qualified_name() == nil {
-		return
-	}
-
-	viewName := extractQualifiedName(ctx.Qualified_name())
-	schemaName := extractSchemaName(ctx.Qualified_name(), l.searchPath[0])
-
-	// For external views, we use AddView method
-	l.changedResources.AddView(
-		l.currentDatabase,
-		schemaName,
-		&storepb.ChangedResourceView{
-			Name: viewName,
-		},
-	)
 }
 
 // EnterVariablesetstmt is called when entering a variablesetstmt rule.

@@ -1,15 +1,15 @@
 permissions:
   - bb.auditLogs.export
   - bb.auditLogs.search
-  - bb.changelists.create
-  - bb.changelists.delete
-  - bb.changelists.get
-  - bb.changelists.list
-  - bb.changelists.update
   - bb.changelogs.get
   - bb.changelogs.list
   - bb.databaseCatalogs.get
   - bb.databaseCatalogs.update
+  - bb.databaseGroups.create
+  - bb.databaseGroups.delete
+  - bb.databaseGroups.get
+  - bb.databaseGroups.list
+  - bb.databaseGroups.update
   - bb.databases.check
   - bb.databases.get
   - bb.databases.getSchema
@@ -41,7 +41,7 @@ permissions:
   - bb.issues.get
   - bb.issues.list
   - bb.issues.update
-  - bb.planCheckRuns.list
+  - bb.planCheckRuns.get
   - bb.planCheckRuns.run
   - bb.plans.create
   - bb.plans.get
@@ -76,10 +76,6 @@ permissions:
   - bb.revisions.delete
   - bb.revisions.get
   - bb.revisions.list
-  - bb.risks.create
-  - bb.risks.delete
-  - bb.risks.list
-  - bb.risks.update
   - bb.roles.create
   - bb.roles.delete
   - bb.roles.list
@@ -88,7 +84,6 @@ permissions:
   - bb.rollouts.create
   - bb.rollouts.get
   - bb.rollouts.list
-  - bb.rollouts.preview
   - bb.settings.get
   - bb.settings.list
   - bb.settings.set
@@ -109,6 +104,7 @@ permissions:
   - bb.users.list
   - bb.users.undelete
   - bb.users.update
+  - bb.users.updateEmail
   - bb.worksheets.get
   - bb.worksheets.manage
   - bb.workspaces.getIamPolicy

@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package bytebase.v1;
 
+import "buf/validate/validate.proto";
 import "google/api/annotations.proto";
 import "google/api/client.proto";
 import "google/api/field_behavior.proto";
@@ -10,7 +11,6 @@ import "google/protobuf/field_mask.proto";
 import "google/protobuf/timestamp.proto";
 import "v1/annotation.proto";
 import "v1/common.proto";
-import "v1/database_service.proto";
 import "v1/sql_service.proto";
 
 option go_package = "github.com/bytebase/bytebase/backend/generated-go/v1";
@@ -33,18 +33,6 @@ service PlanService {
     option (google.api.method_signature) = "parent";
     option (bytebase.v1.permission) = "bb.plans.list";
     option (bytebase.v1.auth_method) = IAM;
-  }
-
-  // Search for plans that the caller has the bb.plans.get permission on and also satisfy the specified filter & query.
-  // Permissions required: bb.plans.get
-  rpc SearchPlans(SearchPlansRequest) returns (SearchPlansResponse) {
-    option (google.api.http) = {
-      post: "/v1/{parent=projects/*}/plans:search"
-      body: "*"
-    };
-    option (google.api.method_signature) = "parent";
-    option (bytebase.v1.permission) = "bb.plans.get";
-    option (bytebase.v1.auth_method) = CUSTOM;
   }
 
   // Creates a new deployment plan.
@@ -74,12 +62,12 @@ service PlanService {
     option (bytebase.v1.audit) = true;
   }
 
-  // Lists plan check runs for a deployment plan.
-  // Permissions required: bb.planCheckRuns.list
-  rpc ListPlanCheckRuns(ListPlanCheckRunsRequest) returns (ListPlanCheckRunsResponse) {
-    option (google.api.http) = {get: "/v1/{parent=projects/*/plans/*}/planCheckRuns"};
-    option (google.api.method_signature) = "parent";
-    option (bytebase.v1.permission) = "bb.planCheckRuns.list";
+  // Gets the plan check run for a deployment plan.
+  // Permissions required: bb.planCheckRuns.get
+  rpc GetPlanCheckRun(GetPlanCheckRunRequest) returns (PlanCheckRun) {
+    option (google.api.http) = {get: "/v1/{name=projects/*/plans/*/planCheckRun}"};
+    option (google.api.method_signature) = "name";
+    option (bytebase.v1.permission) = "bb.planCheckRuns.get";
     option (bytebase.v1.auth_method) = IAM;
   }
 
@@ -95,14 +83,14 @@ service PlanService {
     option (bytebase.v1.auth_method) = IAM;
   }
 
-  // Cancels multiple plan check runs.
+  // Cancels the plan check run for a deployment plan.
   // Permissions required: bb.planCheckRuns.run
-  rpc BatchCancelPlanCheckRuns(BatchCancelPlanCheckRunsRequest) returns (BatchCancelPlanCheckRunsResponse) {
+  rpc CancelPlanCheckRun(CancelPlanCheckRunRequest) returns (CancelPlanCheckRunResponse) {
     option (google.api.http) = {
-      post: "/v1/{parent=projects/*/plans/*}/planCheckRuns:batchCancel"
+      post: "/v1/{name=projects/*/plans/*/planCheckRun}:cancel"
       body: "*"
     };
-    option (google.api.method_signature) = "parent";
+    option (google.api.method_signature) = "name";
     option (bytebase.v1.permission) = "bb.planCheckRuns.run";
     option (bytebase.v1.auth_method) = IAM;
   }
@@ -138,35 +126,6 @@ message ListPlansRequest {
   // When paginating, all other parameters provided to `ListPlans` must match
   // the call that provided the page token.
   string page_token = 3;
-}
-
-message ListPlansResponse {
-  // The plans from the specified request.
-  repeated Plan plans = 1;
-
-  // A token, which can be sent as `page_token` to retrieve the next page.
-  // If this field is omitted, there are no subsequent pages.
-  string next_page_token = 2;
-}
-
-message SearchPlansRequest {
-  // The parent, which owns this collection of plans.
-  // Format: projects/{project}
-  // Use "projects/-" to list all plans from all projects.
-  string parent = 1 [(google.api.field_behavior) = REQUIRED];
-
-  // The maximum number of plans to return. The service may return fewer than
-  // this value.
-  // If unspecified, at most 10 plans will be returned.
-  // The maximum value is 1000; values above 1000 will be coerced to 1000.
-  int32 page_size = 2;
-
-  // A page token, received from a previous `SearchPlans` call.
-  // Provide this to retrieve the subsequent page.
-  //
-  // When paginating, all other parameters provided to `SearchPlans` must match
-  // the call that provided the page token.
-  string page_token = 3;
 
   // Filter is used to filter plans returned in the list.
   // The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
@@ -174,7 +133,7 @@ message SearchPlansRequest {
   // Supported filters:
   // - creator: the plan creator full name in "users/{email or id}" format, support "==" operator.
   // - create_time: the plan create time in "2006-01-02T15:04:05Z07:00" format, support ">=" or "<=" operator.
-  // - has_pipeline: the plan has pipeline or not, support "==" operator, the value should be "true" or "false".
+  // - has_rollout: whether the plan has rollout, support "==" operator, the value should be "true" or "false".
   // - has_issue: the plan has issue or not, support "==" operator, the value should be "true" or "false".
   // - title: the plan title, support "==" operator for exact match and ".matches()" operator for case-insensitive substring match.
   // - spec_type: the plan spec config type, support "==" operator, the value should be "create_database_config", "change_database_config", or "export_data_config".
@@ -182,7 +141,7 @@ message SearchPlansRequest {
   //
   // For example:
   // creator == "users/ed@bytebase.com" && create_time >= "2025-01-02T15:04:05Z07:00"
-  // has_pipeline == false && has_issue == true
+  // has_rollout == false && has_issue == true
   // title == "My Plan"
   // title.matches("database migration")
   // spec_type == "change_database_config"
@@ -190,7 +149,7 @@ message SearchPlansRequest {
   string filter = 4;
 }
 
-message SearchPlansResponse {
+message ListPlansResponse {
   // The plans from the specified request.
   repeated Plan plans = 1;
 
@@ -245,27 +204,22 @@ message Plan {
   // Format: projects/{project}/issues/{issue}
   string issue = 3 [(google.api.field_behavior) = OUTPUT_ONLY];
 
-  // The rollout associated with the plan.
-  // Can be empty.
-  // Format: projects/{project}/rollouts/{rollout}
-  string rollout = 15 [(google.api.field_behavior) = OUTPUT_ONLY];
-
   // The title of the plan.
-  string title = 4;
+  string title = 5 [(buf.validate.field).string.max_len = 200];
   // The description of the plan.
-  string description = 5;
+  string description = 6 [(buf.validate.field).string.max_len = 10000];
 
   // The deployment specs for the plan.
-  repeated Spec specs = 14;
+  repeated Spec specs = 7;
 
   message Spec {
     // A UUID4 string that uniquely identifies the Spec.
-    string id = 5;
+    string id = 1;
 
     oneof config {
-      CreateDatabaseConfig create_database_config = 1;
-      ChangeDatabaseConfig change_database_config = 2;
-      ExportDataConfig export_data_config = 7;
+      CreateDatabaseConfig create_database_config = 2;
+      ChangeDatabaseConfig change_database_config = 3;
+      ExportDataConfig export_data_config = 4;
     }
   }
 
@@ -284,7 +238,8 @@ message Plan {
   // - RUNNING
   map<string, int32> plan_check_run_status_count = 11 [(google.api.field_behavior) = OUTPUT_ONLY];
 
-  Deployment deployment = 13;
+  // Whether the plan has started the rollout.
+  bool has_rollout = 12 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   message CreateDatabaseConfig {
     // The resource name of the instance on which the database is created.
@@ -309,38 +264,32 @@ message Plan {
   }
 
   message ChangeDatabaseConfig {
-    reserved 5, 6;
-
     // The list of targets.
     // Multi-database format: [instances/{instance-id}/databases/{database-name}].
     // Single database group format: [projects/{project}/databaseGroups/{databaseGroup}].
-    repeated string targets = 10;
+    repeated string targets = 1;
     // The resource name of the sheet.
     // Format: projects/{project}/sheets/{sheet}
     string sheet = 2;
 
     // The resource name of the release.
     // Format: projects/{project}/releases/{release}
-    string release = 9 [(google.api.resource_reference) = {type: "bytebase.com/Release"}];
+    string release = 3 [(google.api.resource_reference) = {type: "bytebase.com/Release"}];
 
-    // Type is the database change type.
-    DatabaseChangeType type = 3;
-
-    // migration_type is the migration type for imperative schema migration.
-    // It is only set when type is MIGRATE.
-    MigrationType migration_type = 11;
-
-    map<string, string> ghost_flags = 7;
+    map<string, string> ghost_flags = 5;
 
     // If set, a backup of the modified data will be created automatically before any changes are applied.
-    bool enable_prior_backup = 8;
+    bool enable_prior_backup = 6;
+
+    // Whether to use gh-ost for online schema migration.
+    bool enable_ghost = 7;
   }
 
   message ExportDataConfig {
     // The list of targets.
     // Multi-database format: [instances/{instance-id}/databases/{database-name}].
     // Single database group format: [projects/{project}/databaseGroups/{databaseGroup}].
-    repeated string targets = 5;
+    repeated string targets = 1;
     // The resource name of the sheet.
     // Format: projects/{project}/sheets/{sheet}
     string sheet = 2;
@@ -350,51 +299,15 @@ message Plan {
     // Leave it empty if no needs to encrypt the zip file.
     optional string password = 4;
   }
-
-  message Deployment {
-    // The environments deploy order.
-    repeated string environments = 1;
-    // The database group mapping.
-    repeated DatabaseGroupMapping database_group_mappings = 2;
-
-    message DatabaseGroupMapping {
-      // Format: projects/{project}/databaseGroups/{databaseGroup}.
-      string database_group = 1;
-      // Format: instances/{instance-id}/databases/{database-name}.
-      repeated string databases = 2;
-    }
-  }
 }
 
-message ListPlanCheckRunsRequest {
-  // The parent, which owns this collection of plan check runs.
-  // Format: projects/{project}/plans/{plan}
-  string parent = 1 [
+message GetPlanCheckRunRequest {
+  // The name of the plan check run to retrieve.
+  // Format: projects/{project}/plans/{plan}/planCheckRun
+  string name = 1 [
     (google.api.field_behavior) = REQUIRED,
-    (google.api.resource_reference) = {type: "bytebase.com/Plan"}
+    (google.api.resource_reference) = {type: "bytebase.com/PlanCheckRun"}
   ];
-
-  // If set to true, only the latest plan check run will be returned.
-  bool latest_only = 2;
-
-  // Filter is used to filter plan check runs returned in the list.
-  // The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
-  //
-  // Supported filters:
-  // - status: the plan check run status, support "==" and "in" operator, check the Status enum in the PlanCheckRun message for the values.
-  // - result_status: the plan check run result status, support "==" and "in" operator, check the Result.Status enum in the PlanCheckRun message for the values.
-  //
-  // For example:
-  // status in ["DONE", "FAILED"]
-  // status == "RUNNING"
-  // result_status in ["SUCCESS", "ERROR"]
-  // result_status == "WARNING"
-  string filter = 3;
-}
-
-message ListPlanCheckRunsResponse {
-  // The plan check runs from the specified request.
-  repeated PlanCheckRun plan_check_runs = 1;
 }
 
 message RunPlanChecksRequest {
@@ -413,42 +326,25 @@ message RunPlanChecksRequest {
 
 message RunPlanChecksResponse {}
 
-message BatchCancelPlanCheckRunsRequest {
-  // The name of the parent of the planChecks.
-  // Format: projects/{project}/plans/{plan}
-  string parent = 1 [
+message CancelPlanCheckRunRequest {
+  // The name of the plan check run to cancel.
+  // Format: projects/{project}/plans/{plan}/planCheckRun
+  string name = 1 [
     (google.api.field_behavior) = REQUIRED,
-    (google.api.resource_reference) = {type: "bytebase.com/Plan"}
+    (google.api.resource_reference) = {type: "bytebase.com/PlanCheckRun"}
   ];
-  // TODO(d): update this API.
-  // The planCheckRuns to cancel.
-  // Format: projects/{project}/plans/{plan}/planCheckRuns/{planCheckRun}
-  repeated string plan_check_runs = 2;
 }
 
-message BatchCancelPlanCheckRunsResponse {}
+message CancelPlanCheckRunResponse {}
 
 message PlanCheckRun {
-  reserved 2;
+  option (google.api.resource) = {
+    type: "bytebase.com/PlanCheckRun"
+    pattern: "projects/{project}/plans/{plan}/planCheckRun"
+  };
 
-  // Format: projects/{project}/plans/{plan}/planCheckRuns/{planCheckRun}
+  // Format: projects/{project}/plans/{plan}/planCheckRun
   string name = 1;
-
-  enum Type {
-    // Unspecified check type.
-    TYPE_UNSPECIFIED = 0;
-    // Fake advise check for testing purposes without executing against database.
-    DATABASE_STATEMENT_FAKE_ADVISE = 1;
-    // SQL review check that analyzes statements against configured SQL review rules.
-    DATABASE_STATEMENT_ADVISE = 3;
-    // Summary report check that generates impact analysis for the statements.
-    DATABASE_STATEMENT_SUMMARY_REPORT = 5;
-    // Connection check that verifies database connectivity.
-    DATABASE_CONNECT = 6;
-    // Ghost sync check that validates gh-ost online schema change compatibility.
-    DATABASE_GHOST_SYNC = 7;
-  }
-  Type type = 3;
 
   enum Status {
     STATUS_UNSPECIFIED = 0;
@@ -457,19 +353,13 @@ message PlanCheckRun {
     FAILED = 3;
     CANCELED = 4;
   }
-  Status status = 4;
+  Status status = 3;
 
-  // Format: instances/{instance}/databases/{database}
-  string target = 5;
-
-  // Format: project/{project}/sheets/{sheet}
-  string sheet = 6;
-
-  repeated Result results = 7;
+  repeated Result results = 6;
   // error is set if the Status is FAILED.
-  string error = 8;
+  string error = 7;
 
-  google.protobuf.Timestamp create_time = 9 [(google.api.field_behavior) = OUTPUT_ONLY];
+  google.protobuf.Timestamp create_time = 8 [(google.api.field_behavior) = OUTPUT_ONLY];
 
   message Result {
     Advice.Level status = 1;
@@ -477,20 +367,28 @@ message PlanCheckRun {
     string content = 3;
     int32 code = 4;
 
+    // Target identification for consolidated results.
+    // Format: instances/{instance}/databases/{database}
+    string target = 7;
+    Type type = 8;
+
+    enum Type {
+      TYPE_UNSPECIFIED = 0;
+      STATEMENT_ADVISE = 1;
+      STATEMENT_SUMMARY_REPORT = 2;
+      GHOST_SYNC = 3;
+    }
+
     oneof report {
       SqlSummaryReport sql_summary_report = 5;
       SqlReviewReport sql_review_report = 6;
     }
     message SqlSummaryReport {
-      reserved 1;
       // statement_types are the types of statements that are found in the sql.
       repeated string statement_types = 2;
       int64 affected_rows = 3;
-      ChangedResources changed_resources = 4;
     }
     message SqlReviewReport {
-      reserved 1, 2, 3, 4;
-
       // Position of the SQL statement.
       Position start_position = 5;
       Position end_position = 6;

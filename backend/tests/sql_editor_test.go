@@ -40,9 +40,8 @@ func TestAdminQueryAffectedRows(t *testing.T) {
 							},
 						},
 					},
-					Statement:   "INSERT INTO tbl VALUES(1);",
-					RowsCount:   1,
-					AllowExport: true,
+					Statement: "INSERT INTO tbl VALUES(1);",
+					RowsCount: 1,
 				},
 			},
 		},
@@ -62,9 +61,8 @@ func TestAdminQueryAffectedRows(t *testing.T) {
 							},
 						},
 					},
-					Statement:   "INSERT INTO tbl VALUES(1);",
-					RowsCount:   1,
-					AllowExport: true,
+					Statement: "INSERT INTO tbl VALUES(1);",
+					RowsCount: 1,
 				},
 				{
 					ColumnNames:     []string{"Affected Rows"},
@@ -76,9 +74,8 @@ func TestAdminQueryAffectedRows(t *testing.T) {
 							},
 						},
 					},
-					Statement:   " DELETE FROM tbl WHERE id = 1;",
-					RowsCount:   1,
-					AllowExport: true,
+					Statement: " DELETE FROM tbl WHERE id = 1;",
+					RowsCount: 1,
 				},
 			},
 		},
@@ -98,9 +95,8 @@ func TestAdminQueryAffectedRows(t *testing.T) {
 							},
 						},
 					},
-					Statement:   "INSERT INTO tbl VALUES(1),(2);",
-					RowsCount:   1,
-					AllowExport: true,
+					Statement: "INSERT INTO tbl VALUES(1),(2);",
+					RowsCount: 1,
 				},
 			},
 		},
@@ -120,9 +116,8 @@ func TestAdminQueryAffectedRows(t *testing.T) {
 							},
 						},
 					},
-					Statement:   "ALTER TABLE tbl ADD COLUMN name VARCHAR(255);",
-					RowsCount:   1,
-					AllowExport: true,
+					Statement: "ALTER TABLE tbl ADD COLUMN name VARCHAR(255);",
+					RowsCount: 1,
 				},
 			},
 		},
@@ -186,7 +181,7 @@ func TestAdminQueryAffectedRows(t *testing.T) {
 		default:
 			a.FailNow("unsupported db type")
 		}
-		err = ctl.createDatabaseV2(ctx, ctl.project, instance, nil /* environment */, tt.databaseName, databaseOwner)
+		err = ctl.createDatabase(ctx, ctl.project, instance, nil /* environment */, tt.databaseName, databaseOwner)
 		a.NoError(err)
 
 		databaseResp, err := ctl.databaseServiceClient.GetDatabase(ctx, connect.NewRequest(&v1pb.GetDatabaseRequest{
@@ -198,14 +193,13 @@ func TestAdminQueryAffectedRows(t *testing.T) {
 		sheetResp, err := ctl.sheetServiceClient.CreateSheet(ctx, connect.NewRequest(&v1pb.CreateSheetRequest{
 			Parent: ctl.project.Name,
 			Sheet: &v1pb.Sheet{
-				Title:   "prepareStatements",
 				Content: []byte(tt.prepareStatements),
 			},
 		}))
 		a.NoError(err)
 		sheet := sheetResp.Msg
 
-		err = ctl.changeDatabase(ctx, ctl.project, database, sheet, v1pb.MigrationType_DDL)
+		err = ctl.changeDatabase(ctx, ctl.project, database, sheet, false)
 		a.NoError(err)
 
 		results, err := ctl.adminQuery(ctx, database, tt.query)

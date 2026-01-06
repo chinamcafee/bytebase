@@ -107,7 +107,7 @@ func generateSortText(_ lsp.CompletionParams, _ storepb.Engine, candidate parser
 		return "02" + candidate.TextWithPriority()
 	case parserbase.CandidateTypeTable, parserbase.CandidateTypeForeignTable:
 		return "03" + candidate.TextWithPriority()
-	case parserbase.CandidateTypeView, parserbase.CandidateTypeMaterializedView:
+	case parserbase.CandidateTypeView, parserbase.CandidateTypeMaterializedView, parserbase.CandidateTypeSequence:
 		return "04" + candidate.TextWithPriority()
 	case parserbase.CandidateTypeFunction:
 		return "05" + candidate.TextWithPriority()
@@ -137,30 +137,24 @@ func convertLSPCompletionItemKind(tp parserbase.CandidateType) lsp.CompletionIte
 		return lsp.FunctionCompletion
 	case parserbase.CandidateTypeView, parserbase.CandidateTypeMaterializedView:
 		return lsp.VariableCompletion
+	case parserbase.CandidateTypeSequence:
+		return lsp.ConstantCompletion
 	default:
 		return lsp.TextCompletion
 	}
 }
 
 func (h *Handler) GetDatabaseMetadataFunc(ctx context.Context, instanceID, databaseName string) (string, *model.DatabaseMetadata, error) {
-	// TODO: do ACL check here.
-	if instanceID == "" {
-		return "", nil, errors.Errorf("instance is not specified")
+	// Check cache first
+	cacheKey := getDatabaseMetadataCacheKey(instanceID, databaseName)
+	if cached, exists := h.metadataCache.Get(cacheKey); exists {
+		return databaseName, cached, nil
 	}
 
-	database, err := h.store.GetDatabaseV2(ctx, &store.FindDatabaseMessage{
-		InstanceID:   &instanceID,
-		DatabaseName: &databaseName,
-	})
-	if err != nil {
-		return "", nil, errors.Wrap(err, "failed to get database")
-	}
-	if database == nil {
-		return "", nil, errors.Errorf("database %s for instance %s not found", databaseName, instanceID)
-	}
+	// Cache miss, fetch from store
 	metadata, err := h.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
-		InstanceID:   database.InstanceID,
-		DatabaseName: database.DatabaseName,
+		InstanceID:   instanceID,
+		DatabaseName: databaseName,
 	})
 	if err != nil {
 		return "", nil, errors.Wrap(err, "failed to get database schema")
@@ -168,7 +162,15 @@ func (h *Handler) GetDatabaseMetadataFunc(ctx context.Context, instanceID, datab
 	if metadata == nil {
 		return "", nil, errors.Errorf("database %s schema for instance %s not found", databaseName, instanceID)
 	}
-	return databaseName, metadata.GetDatabaseMetadata(), nil
+
+	// Store in cache
+	h.metadataCache.Add(cacheKey, metadata)
+
+	return databaseName, metadata, nil
+}
+
+func getDatabaseMetadataCacheKey(instanceID, databaseName string) string {
+	return instanceID + "/" + databaseName
 }
 
 func (h *Handler) ListDatabaseNamesFunc(ctx context.Context, instanceID string) ([]string, error) {

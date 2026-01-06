@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -21,7 +22,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleColumnTypeDisallowList, &ColumnTypeDisallowListAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_COLUMN_TYPE_DISALLOW_LIST, &ColumnTypeDisallowListAdvisor{})
 }
 
 // ColumnTypeDisallowListAdvisor is the advisor checking for column type restriction.
@@ -30,25 +31,23 @@ type ColumnTypeDisallowListAdvisor struct {
 
 // Check checks for column type restriction.
 func (*ColumnTypeDisallowListAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	paylaod, err := advisor.UnmarshalStringArrayTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
+	stringArrayPayload := checkCtx.Rule.GetStringArrayPayload()
 	checker := &columnTypeDisallowListChecker{
 		level:           level,
-		title:           string(checkCtx.Rule.Type),
+		title:           checkCtx.Rule.Type.String(),
 		typeRestriction: make(map[string]bool),
 	}
-	for _, tp := range paylaod.List {
+	for _, tp := range stringArrayPayload.List {
 		checker.typeRestriction[strings.ToUpper(tp)] = true
 	}
 
@@ -124,7 +123,7 @@ func (checker *columnTypeDisallowListChecker) Enter(in ast.Node) (ast.Node, bool
 	for _, column := range columnList {
 		checker.adviceList = append(checker.adviceList, &storepb.Advice{
 			Status:        checker.level,
-			Code:          advisor.DisabledColumnType.Int32(),
+			Code:          code.DisabledColumnType.Int32(),
 			Title:         checker.title,
 			Content:       fmt.Sprintf("Disallow column type %s but column `%s`.`%s` is", column.tp, column.table, column.column),
 			StartPosition: common.ConvertANTLRLineToPosition(column.line),

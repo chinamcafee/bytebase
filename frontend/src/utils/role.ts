@@ -1,6 +1,7 @@
 import { t } from "@/plugins/i18n";
 import { useRoleStore } from "@/store";
-import { PresetRoleType, type Permission } from "@/types";
+import type { Permission } from "@/types/iam";
+import { PresetRoleType } from "@/types/iam";
 
 export const checkRoleContainsAnyPermission = (
   roleName: string,
@@ -35,6 +36,8 @@ export const displayRoleTitle = (role: string): string => {
       return t("role.project-releaser.self");
     case PresetRoleType.SQL_EDITOR_USER:
       return t("role.sql-editor-user.self");
+    case PresetRoleType.GITOPS_SERVICE_AGENT:
+      return t("role.gitops-service-agent.self");
     case PresetRoleType.PROJECT_VIEWER:
       return t("role.project-viewer.self");
   }
@@ -60,6 +63,8 @@ export const displayRoleDescription = (role: string): string => {
       return t("role.project-releaser.description");
     case PresetRoleType.SQL_EDITOR_USER:
       return t("role.sql-editor-user.description");
+    case PresetRoleType.GITOPS_SERVICE_AGENT:
+      return t("role.gitops-service-agent.description");
     case PresetRoleType.PROJECT_VIEWER:
       return t("role.project-viewer.description");
   }

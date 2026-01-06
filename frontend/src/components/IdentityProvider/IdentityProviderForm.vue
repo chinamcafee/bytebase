@@ -1,7 +1,10 @@
 <template>
-  <div class="space-y-6">
+  <div class="flex flex-col gap-y-6">
     <!-- OAuth2 Configuration -->
-    <div v-if="providerType === IdentityProviderType.OAUTH2" class="space-y-6">
+    <div
+      v-if="providerType === IdentityProviderType.OAUTH2"
+      class="flex flex-col gap-y-6"
+    >
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div>
           <label class="block text-base font-semibold text-gray-800 mb-2">
@@ -120,13 +123,13 @@
           :value="oauth2Config.authStyle"
           @update:value="updateOAuth2Config('authStyle', $event)"
           size="large"
-          class="space-y-3"
+          class="flex flex-col gap-y-3"
         >
           <NRadio
             :value="OAuth2AuthStyle.IN_PARAMS"
             class="text-base font-medium text-gray-800"
           >
-            <div class="space-y-1">
+            <div class="flex flex-col gap-y-1">
               <div class="font-medium">
                 {{ $t("settings.sso.form.in-parameters") }}
               </div>
@@ -139,7 +142,7 @@
             :value="OAuth2AuthStyle.IN_HEADER"
             class="text-base font-medium text-gray-800"
           >
-            <div class="space-y-1">
+            <div class="flex flex-col gap-y-1">
               <div class="font-medium">
                 {{ $t("settings.sso.form.in-header") }}
               </div>
@@ -172,7 +175,7 @@
     <!-- OIDC Configuration -->
     <div
       v-else-if="providerType === IdentityProviderType.OIDC"
-      class="space-y-6"
+      class="flex flex-col gap-y-6"
     >
       <div>
         <label class="block text-base font-semibold text-gray-800 mb-2">
@@ -256,13 +259,13 @@
           :value="oidcConfig.authStyle"
           @update:value="updateOIDCConfig('authStyle', $event)"
           size="large"
-          class="space-y-3"
+          class="flex flex-col gap-y-3"
         >
           <NRadio
             :value="OAuth2AuthStyle.IN_PARAMS"
             class="text-base font-medium text-gray-800"
           >
-            <div class="space-y-1">
+            <div class="flex flex-col gap-y-1">
               <div class="font-medium">
                 {{ $t("settings.sso.form.in-parameters") }}
               </div>
@@ -275,7 +278,7 @@
             :value="OAuth2AuthStyle.IN_HEADER"
             class="text-base font-medium text-gray-800"
           >
-            <div class="space-y-1">
+            <div class="flex flex-col gap-y-1">
               <div class="font-medium">
                 {{ $t("settings.sso.form.in-header") }}
               </div>
@@ -308,7 +311,7 @@
     <!-- LDAP Configuration -->
     <div
       v-else-if="providerType === IdentityProviderType.LDAP"
-      class="space-y-6"
+      class="flex flex-col gap-y-6"
     >
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div class="md:col-span-2">
@@ -422,13 +425,13 @@
           :value="ldapConfig.securityProtocol"
           @update:value="updateLDAPConfig('securityProtocol', $event)"
           size="large"
-          class="space-y-3"
+          class="flex flex-col gap-y-3"
         >
           <NRadio
             :value="LDAPIdentityProviderConfig_SecurityProtocol.START_TLS"
             class="text-base font-medium text-gray-800"
           >
-            <div class="space-y-1">
+            <div class="flex flex-col gap-y-1">
               <div class="font-medium">
                 {{ $t("settings.sso.form.starttls") }}
               </div>
@@ -441,7 +444,7 @@
             :value="LDAPIdentityProviderConfig_SecurityProtocol.LDAPS"
             class="text-base font-medium text-gray-800"
           >
-            <div class="space-y-1">
+            <div class="flex flex-col gap-y-1">
               <div class="font-medium">{{ $t("settings.sso.form.ldaps") }}</div>
               <div class="text-sm text-gray-600">
                 {{ $t("settings.sso.form.ldaps-description") }}
@@ -454,7 +457,7 @@
             "
             class="text-base font-medium text-gray-800"
           >
-            <div class="space-y-1">
+            <div class="flex flex-col gap-y-1">
               <div class="font-medium">{{ $t("settings.sso.form.none") }}</div>
               <div class="text-sm text-gray-600">
                 {{ $t("settings.sso.form.none-description") }}
@@ -485,18 +488,18 @@
 </template>
 
 <script setup lang="ts">
-import { NRadioGroup, NRadio, NCheckbox, NInputNumber } from "naive-ui";
+import { NCheckbox, NInputNumber, NRadio, NRadioGroup } from "naive-ui";
 import { computed, watch } from "vue";
 import { BBTextField } from "@/bbkit";
 import RequiredStar from "@/components/RequiredStar.vue";
 import {
-  IdentityProviderType,
-  OAuth2AuthStyle,
   type IdentityProvider,
-  type OAuth2IdentityProviderConfig,
-  type OIDCIdentityProviderConfig,
+  IdentityProviderType,
   type LDAPIdentityProviderConfig,
   LDAPIdentityProviderConfig_SecurityProtocol,
+  OAuth2AuthStyle,
+  type OAuth2IdentityProviderConfig,
+  type OIDCIdentityProviderConfig,
 } from "@/types/proto-es/v1/idp_service_pb";
 
 interface Props {

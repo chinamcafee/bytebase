@@ -1,23 +1,24 @@
 <template>
   <main
-    class="flex-1 h-full relative pb-8 focus:outline-none xl:order-last"
+    class="flex-1 h-full relative pb-8 focus:outline-hidden xl:order-last"
     tabindex="0"
   >
     <NoPermissionPlaceholder
-      v-if="permissionStore.onlyWorkspaceMember && !isSelf"
-      class="py-6"
+      v-if="!allowGet"
+      class="px-4"
+      :permissions="['bb.users.get']"
     />
     <div v-else>
       <!-- Profile header -->
       <div>
-        <div class="-m-6 h-32 bg-accent lg:h-48"></div>
+        <div class="-mt-4 h-32 bg-accent lg:h-48"></div>
         <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div class="-mt-20 sm:flex sm:items-end sm:space-x-5">
+          <div class="-mt-20 sm:flex sm:items-end sm:gap-x-5">
             <UserAvatar :user="user" size="HUGE" />
             <div
-              class="mt-6 sm:flex-1 sm:min-w-0 sm:flex sm:items-center sm:justify-end sm:space-x-6 sm:pb-1"
+              class="mt-6 sm:flex-1 sm:min-w-0 sm:flex sm:items-center sm:justify-end sm:gap-x-6 sm:pb-1"
             >
-              <div class="mt-6 flex flex-row justify-stretch space-x-2">
+              <div class="mt-6 flex flex-row justify-stretch gap-x-2">
                 <template v-if="allowEdit">
                   <template v-if="state.editing">
                     <NButton @click.prevent="cancelEdit">
@@ -28,18 +29,10 @@
                       :disabled="!allowSaveEdit"
                       @click.prevent="saveEdit"
                     >
-                      <template #icon>
-                        <heroicons-solid:save class="h-5 w-5" />
-                      </template>
                       {{ $t("common.save") }}
                     </NButton>
                   </template>
                   <NButton v-else @click.prevent="editUser">
-                    <template #icon>
-                      <heroicons-solid:pencil
-                        class="h-5 w-5 text-control-light"
-                      />
-                    </template>
                     {{ $t("common.edit") }}
                   </NButton>
                 </template>
@@ -103,7 +96,7 @@
             </dt>
             <dd class="mt-1 text-sm text-main">
               <EmailInput
-                v-if="state.editing"
+                v-if="state.editing && allowEditEmail"
                 v-model:value="state.editingUser!.email"
               />
               <template v-else>
@@ -154,12 +147,12 @@
             {{ $t("two-factor.self") }}
             <FeatureBadge :feature="PlanFeature.FEATURE_TWO_FA" class="ml-2" />
           </span>
-          <div class="space-x-2">
+          <div class="flex gap-x-2">
+            <NButton v-if="isMFAEnabled" type="error" @click="disable2FA">
+              {{ $t("common.disable") }}
+            </NButton>
             <NButton v-if="user.email === currentUser.email" @click="enable2FA">
               {{ isMFAEnabled ? $t("common.edit") : $t("common.enable") }}
-            </NButton>
-            <NButton v-if="isMFAEnabled" @click="disable2FA">
-              {{ $t("common.disable") }}
             </NButton>
           </div>
         </div>
@@ -181,9 +174,9 @@
                 :options="dropDownOptions"
                 placement="bottom-end"
               >
-                <heroicons-outline:ellipsis-horizontal
-                  class="w-8 p-1 h-auto cursor-pointer hover:bg-gray-100 rounded"
-                />
+                <MiniActionButton size="small">
+                  <EllipsisIcon class="w-8" />
+                </MiniActionButton>
               </NDropdown>
             </div>
           </div>
@@ -192,7 +185,7 @@
           </p>
           <RegenerateRecoveryCodesView
             v-if="state.showRegenerateRecoveryCodesView"
-            :recovery-codes="currentUser.recoveryCodes"
+            :recovery-codes="currentUser.tempRecoveryCodes"
             @close="state.showRegenerateRecoveryCodesView = false"
           />
         </template>
@@ -223,24 +216,25 @@ import { create } from "@bufbuild/protobuf";
 import { FieldMaskSchema } from "@bufbuild/protobuf/wkt";
 import type { ConnectError } from "@connectrpc/connect";
 import { computedAsync, useTitle } from "@vueuse/core";
-import { useEventListener } from "@vueuse/core";
 import { cloneDeep, isEqual } from "lodash-es";
+import { EllipsisIcon } from "lucide-vue-next";
 import type { DropdownOption } from "naive-ui";
 import { NButton, NDropdown, NInput, NTag } from "naive-ui";
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { onBeforeRouteLeave } from "vue-router";
 import EmailInput from "@/components/EmailInput.vue";
 import { FeatureModal } from "@/components/FeatureGuard";
 import FeatureBadge from "@/components/FeatureGuard/FeatureBadge.vue";
 import LearnMoreLink from "@/components/LearnMoreLink.vue";
+import NoPermissionPlaceholder from "@/components/misc/NoPermissionPlaceholder.vue";
+import ServiceAccountTag from "@/components/misc/ServiceAccountTag.vue";
 import RegenerateRecoveryCodesView from "@/components/RegenerateRecoveryCodesView.vue";
 import { ActionConfirmModal } from "@/components/SchemaEditorLite";
 import UserPassword from "@/components/User/Settings/UserPassword.vue";
 import UserAvatar from "@/components/User/UserAvatar.vue";
-import NoPermissionPlaceholder from "@/components/misc/NoPermissionPlaceholder.vue";
-import ServiceAccountTag from "@/components/misc/ServiceAccountTag.vue";
+import { MiniActionButton } from "@/components/v2";
+import { useRouteChangeGuard } from "@/composables/useRouteChangeGuard";
 import { WORKSPACE_ROUTE_USER_PROFILE } from "@/router/dashboard/workspaceRoutes";
 import {
   SETTING_ROUTE_PROFILE_TWO_FACTOR,
@@ -252,7 +246,6 @@ import {
   pushNotification,
   useActuatorV1Store,
   useCurrentUserV1,
-  usePermissionStore,
   useSettingV1Store,
   useUserStore,
   useWorkspaceV1Store,
@@ -291,7 +284,6 @@ const settingV1Store = useSettingV1Store();
 const currentUser = useCurrentUserV1();
 const userStore = useUserStore();
 const workspaceStore = useWorkspaceV1Store();
-const permissionStore = usePermissionStore();
 
 const state = reactive<LocalState>({
   editing: false,
@@ -352,6 +344,10 @@ const userRoles = computed(() => {
 
 const isSelf = computed(() => currentUser.value.name === user.value.name);
 
+const allowGet = computed(
+  () => isSelf.value || hasWorkspacePermissionV2("bb.users.get")
+);
+
 // User can change her own info.
 // Besides, owner can also change anyone's info. This is for resetting password in case user forgets.
 const allowEdit = computed(() => {
@@ -365,7 +361,12 @@ const allowEdit = computed(() => {
   if (user.value.state !== State.ACTIVE) {
     return false;
   }
-  return isSelf.value || hasWorkspacePermissionV2("bb.policies.update");
+  return isSelf.value || hasWorkspacePermissionV2("bb.users.update");
+});
+
+// Only users with bb.users.updateEmail permission can change email.
+const allowEditEmail = computed(() => {
+  return hasWorkspacePermissionV2("bb.users.updateEmail");
 });
 
 const allowSaveEdit = computed(() => {
@@ -376,22 +377,7 @@ const allowSaveEdit = computed(() => {
   );
 });
 
-useEventListener("beforeunload", (e) => {
-  if (!state.editing || !allowSaveEdit.value) {
-    return;
-  }
-  e.returnValue = t("common.leave-without-saving");
-  return e.returnValue;
-});
-
-onBeforeRouteLeave((to, from, next) => {
-  if (state.editing && allowSaveEdit.value) {
-    if (!window.confirm(t("common.leave-without-saving"))) {
-      return;
-    }
-  }
-  next();
-});
+useRouteChangeGuard(computed(() => state.editing && allowSaveEdit.value));
 
 const updateUser = <K extends keyof User>(field: K, value: User[K]) => {
   if (!state.editingUser) return;
@@ -416,12 +402,11 @@ const saveEdit = async () => {
   const userPatch = state.editingUser;
   if (!userPatch) return;
 
+  const emailChanged = userPatch.email !== user.value.email;
   const updateMaskPaths: string[] = [];
+
   if (userPatch.title !== user.value.title) {
     updateMaskPaths.push("title");
-  }
-  if (userPatch.email !== user.value.email) {
-    updateMaskPaths.push("email");
   }
   if (userPatch.phone !== user.value.phone) {
     updateMaskPaths.push("phone");
@@ -429,17 +414,26 @@ const saveEdit = async () => {
   if (userPatch.password !== "") {
     updateMaskPaths.push("password");
   }
+
   try {
-    await userStore.updateUser(
-      create(UpdateUserRequestSchema, {
-        user: userPatch,
-        updateMask: create(FieldMaskSchema, {
-          paths: updateMaskPaths,
-        }),
-        regenerateRecoveryCodes: false,
-        regenerateTempMfaSecret: false,
-      })
-    );
+    // Update email using dedicated UpdateEmail API if changed
+    if (emailChanged) {
+      await userStore.updateEmail(user.value.email, userPatch.email);
+    }
+
+    // Update other fields using UpdateUser API if any changed
+    if (updateMaskPaths.length > 0) {
+      await userStore.updateUser(
+        create(UpdateUserRequestSchema, {
+          user: userPatch,
+          updateMask: create(FieldMaskSchema, {
+            paths: updateMaskPaths,
+          }),
+          regenerateRecoveryCodes: false,
+          regenerateTempMfaSecret: false,
+        })
+      );
+    }
   } catch (error) {
     pushNotification({
       module: "bytebase",
@@ -453,7 +447,7 @@ const saveEdit = async () => {
   state.editing = false;
 
   // If we update email, we need to redirect to the new email.
-  if (updateMaskPaths.includes("email") && props.principalEmail) {
+  if (emailChanged && props.principalEmail) {
     router.replace({
       name: WORKSPACE_ROUTE_USER_PROFILE,
       params: {

@@ -9,7 +9,7 @@ import (
 	"github.com/antlr4-go/antlr/v4"
 	"github.com/pkg/errors"
 
-	parsererror "github.com/bytebase/bytebase/backend/plugin/parser/errors"
+	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 
 	"github.com/bytebase/parser/postgresql"
 
@@ -106,10 +106,16 @@ func (q *querySpanExtractor) getQuerySpan(ctx context.Context, stmt string) (*ba
 	q.ctx = ctx
 
 	// Parse the statement using ANTLR
-	parseResult, err := ParsePostgreSQL(stmt)
+	parseResults, err := ParsePostgreSQL(stmt)
 	if err != nil {
 		return nil, err
 	}
+
+	if len(parseResults) != 1 {
+		return nil, errors.Errorf("expected exactly 1 statement, got %d", len(parseResults))
+	}
+
+	parseResult := parseResults[0]
 
 	// Walk the tree to extract access tables
 
@@ -180,7 +186,7 @@ func (q *querySpanExtractor) getQuerySpan(ctx context.Context, stmt string) (*ba
 			if len(stmtmulti.AllStmt()) == 1 {
 				tableSource, err := q.extractTableSourceFromStmt(stmtmulti.AllStmt()[0])
 				if err != nil {
-					var functionNotSupported *parsererror.FunctionNotSupportedError
+					var functionNotSupported *base.FunctionNotSupportedError
 					if errors.As(err, &functionNotSupported) {
 						if len(accessesMap) == 0 {
 							accessesMap[base.ColumnResource{
@@ -194,7 +200,7 @@ func (q *querySpanExtractor) getQuerySpan(ctx context.Context, stmt string) (*ba
 							NotFoundError: functionNotSupported,
 						}, nil
 					}
-					var resourceNotFound *parsererror.ResourceNotFoundError
+					var resourceNotFound *base.ResourceNotFoundError
 					if errors.As(err, &resourceNotFound) {
 						if len(accessesMap) == 0 {
 							accessesMap[base.ColumnResource{
@@ -235,16 +241,16 @@ func (q *querySpanExtractor) getQuerySpan(ctx context.Context, stmt string) (*ba
 
 type functionDefinition struct {
 	schemaName string
-	metadata   *model.FunctionMetadata
+	metadata   *storepb.FunctionMetadata
 }
 
 func (q *querySpanExtractor) findFunctionDefine(schemaName, funcName string, nArgs int) (base.TableSource, error) {
-	dbSchema, err := q.getDatabaseMetadata(q.defaultDatabase)
+	dbMetadata, err := q.getDatabaseMetadata(q.defaultDatabase)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get database metadata for database: %s", q.defaultDatabase)
 	}
-	if dbSchema == nil {
-		return nil, &parsererror.ResourceNotFoundError{
+	if dbMetadata == nil {
+		return nil, &base.ResourceNotFoundError{
 			Database: &q.defaultDatabase,
 		}
 	}
@@ -253,7 +259,7 @@ func (q *querySpanExtractor) findFunctionDefine(schemaName, funcName string, nAr
 	if schemaName != "" {
 		searchPath = []string{schemaName}
 	}
-	schemas, functions := dbSchema.SearchFunctions(searchPath, funcName)
+	schemas, functions := dbMetadata.SearchFunctions(searchPath, funcName)
 	for i, fun := range functions {
 		funcs = append(funcs, &functionDefinition{
 			schemaName: schemas[i],
@@ -266,7 +272,7 @@ func (q *querySpanExtractor) findFunctionDefine(schemaName, funcName string, nAr
 		return nil, errors.Wrapf(err, "failed to get function candidates")
 	}
 	if len(candidates) == 0 {
-		return nil, &parsererror.ResourceNotFoundError{
+		return nil, &base.ResourceNotFoundError{
 			Database: &q.defaultDatabase,
 			Schema:   &schemaName,
 			Function: &funcName,
@@ -281,7 +287,7 @@ func (q *querySpanExtractor) findFunctionDefine(schemaName, funcName string, nAr
 	functionName := fmt.Sprintf("%s.%s", function.schemaName, funcName)
 	columns, err := q.getColumnsFromFunction(functionName, function.metadata.Definition)
 	if err != nil {
-		return nil, &parsererror.FunctionNotSupportedError{
+		return nil, &base.FunctionNotSupportedError{
 			Err:      err,
 			Function: functionName,
 		}
@@ -300,16 +306,20 @@ type functionDefinitionDetail struct {
 
 func buildFunctionDefinitionDetail(funcDef *functionDefinition) (*functionDefinitionDetail, error) {
 	function := funcDef.metadata
-	definition := function.GetProto().GetDefinition()
-	res, err := ParsePostgreSQL(definition)
+	definition := function.GetDefinition()
+	parseResults, err := ParsePostgreSQL(definition)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to parse function definition: %s", definition)
 	}
 
+	if len(parseResults) != 1 {
+		return nil, errors.Errorf("expected exactly 1 statement in function definition, got %d", len(parseResults))
+	}
+
 	// Navigate: root -> stmtblock -> stmt -> createfunctionstmt
-	root, ok := res.Tree.(*postgresql.RootContext)
+	root, ok := parseResults[0].Tree.(*postgresql.RootContext)
 	if !ok {
-		return nil, errors.Errorf("expecting RootContext but got %T", res.Tree)
+		return nil, errors.Errorf("expecting RootContext but got %T", parseResults[0].Tree)
 	}
 
 	stmtblock := root.Stmtblock()
@@ -365,7 +375,7 @@ func getFunctionCandidates(functions []*functionDefinition, nArgs int, funcName 
 	// Filter by name only.
 	var nameFiltered []*functionDefinition
 	for _, function := range functions {
-		if function.metadata.GetProto().GetName() != funcName {
+		if function.metadata.GetName() != funcName {
 			continue
 		}
 		nameFiltered = append(nameFiltered, function)
@@ -425,15 +435,19 @@ const (
 )
 
 func (q *querySpanExtractor) getColumnsFromFunction(name, definition string) ([]base.QuerySpanResult, error) {
-	res, err := ParsePostgreSQL(definition)
+	parseResults, err := ParsePostgreSQL(definition)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to parse function definition: %s", definition)
 	}
 
+	if len(parseResults) != 1 {
+		return nil, errors.Errorf("expected exactly 1 statement in function definition, got %d", len(parseResults))
+	}
+
 	// Navigate: root -> stmtblock -> stmt -> createfunctionstmt
-	root, ok := res.Tree.(*postgresql.RootContext)
+	root, ok := parseResults[0].Tree.(*postgresql.RootContext)
 	if !ok {
-		return nil, errors.Errorf("expecting RootContext but got %T", res.Tree)
+		return nil, errors.Errorf("expecting RootContext but got %T", parseResults[0].Tree)
 	}
 
 	stmtblock := root.Stmtblock()
@@ -632,16 +646,20 @@ func (l *returnQueryListener) EnterStmt_return(ctx *postgresql.Stmt_returnContex
 }
 
 func (q *querySpanExtractor) getColumnsFromComplexPLPGSQL(name string, columnNames []string, definition string) ([]base.QuerySpanResult, error) {
-	res, err := ParsePostgreSQL(definition)
+	parseResults, err := ParsePostgreSQL(definition)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to parse PLpgSQL function body for function %s", name)
+	}
+
+	if len(parseResults) != 1 {
+		return nil, errors.Errorf("expected exactly 1 statement in function definition, got %d", len(parseResults))
 	}
 
 	listener := &plpgSQLListener{
 		q:         q,
 		variables: make(map[string]*base.QuerySpanResult),
 	}
-	antlr.ParseTreeWalkerDefault.Walk(listener, res.Tree)
+	antlr.ParseTreeWalkerDefault.Walk(listener, parseResults[0].Tree)
 	if listener.err != nil {
 		return nil, errors.Wrapf(listener.err, "failed to extract table source from PLpgSQL function body for function %s", name)
 	}
@@ -705,7 +723,7 @@ func (*querySpanExtractor) extractLanguageFromCreateFunction(createFuncStmt post
 		case "plpgsql":
 			language = languageTypePLPGSQL
 		default:
-			return language, &parsererror.TypeNotSupportedError{
+			return language, &base.TypeNotSupportedError{
 				Type:  "function language",
 				Name:  langText,
 				Extra: fmt.Sprintf("function: %s", funcName),
@@ -752,7 +770,7 @@ func (*querySpanExtractor) extractAsBodyFromCreateFunction(createFuncStmt postgr
 		// Check for C-style function definition: AS 'obj_file', 'link_symbol'
 		// This is a legacy format for C language functions that we don't support
 		if len(allSconst) > 1 || funcAs.COMMA() != nil {
-			return "", &parsererror.TypeNotSupportedError{
+			return "", &base.TypeNotSupportedError{
 				Type:  "function",
 				Name:  funcName,
 				Extra: "C-style function with object file and link symbol is not supported",
@@ -1192,27 +1210,24 @@ func (q *querySpanExtractor) findTableSchema(schemaName string, tableName string
 	}
 
 	// FIXME: consider cross database query which is supported in Redshift.
-	dbSchema, err := q.getDatabaseMetadata(q.defaultDatabase)
+	dbMetadata, err := q.getDatabaseMetadata(q.defaultDatabase)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get database metadata for database: %s", q.defaultDatabase)
 	}
-	if dbSchema == nil {
-		return nil, &parsererror.ResourceNotFoundError{
+	if dbMetadata == nil {
+		return nil, &base.ResourceNotFoundError{
 			Database: &q.defaultDatabase,
 		}
 	}
-	searchPath := q.searchPath
-	if schemaName != "" {
-		searchPath = []string{schemaName}
-	}
-	tableSchemaName, table := dbSchema.SearchTable(searchPath, tableName)
-	viewSchemaName, view := dbSchema.SearchView(searchPath, tableName)
-	materializedViewSchemaName, materializedView := dbSchema.SearchMaterializedView(searchPath, tableName)
-	foreignTableSchemaName, foreignTable := dbSchema.SearchExternalTable(searchPath, tableName)
-	sequenceSchemaName, sequence := dbSchema.SearchSequence(searchPath, tableName)
+	searcher := dbMetadata.NewSearcher(schemaName, q.searchPath)
+	tableSchemaName, table := searcher.SearchTable(tableName)
+	viewSchemaName, view := searcher.SearchView(tableName)
+	materializedViewSchemaName, materializedView := searcher.SearchMaterializedView(tableName)
+	foreignTableSchemaName, foreignTable := searcher.SearchExternalTable(tableName)
+	sequenceSchemaName, sequence := searcher.SearchSequence(tableName)
 
 	if table == nil && view == nil && foreignTable == nil && materializedView == nil && sequence == nil {
-		return nil, &parsererror.ResourceNotFoundError{
+		return nil, &base.ResourceNotFoundError{
 			Database: &q.defaultDatabase,
 			Schema:   &schemaName,
 			Table:    &tableName,
@@ -1221,7 +1236,7 @@ func (q *querySpanExtractor) findTableSchema(schemaName string, tableName string
 
 	if table != nil {
 		var columns []string
-		for _, column := range table.GetColumns() {
+		for _, column := range table.GetProto().GetColumns() {
 			columns = append(columns, column.Name)
 		}
 		return &base.PhysicalTable{
@@ -1235,7 +1250,7 @@ func (q *querySpanExtractor) findTableSchema(schemaName string, tableName string
 
 	if foreignTable != nil {
 		var columns []string
-		for _, column := range foreignTable.GetColumns() {
+		for _, column := range foreignTable.GetProto().GetColumns() {
 			columns = append(columns, column.Name)
 		}
 		return &base.PhysicalTable{
@@ -1256,7 +1271,7 @@ func (q *querySpanExtractor) findTableSchema(schemaName string, tableName string
 			Server:   "",
 			Database: q.defaultDatabase,
 			Schema:   viewSchemaName,
-			Name:     view.GetProto().Name,
+			Name:     view.Name,
 			Columns:  columns,
 		}, nil
 	}
@@ -1270,7 +1285,7 @@ func (q *querySpanExtractor) findTableSchema(schemaName string, tableName string
 			Server:   "",
 			Database: q.defaultDatabase,
 			Schema:   materializedViewSchemaName,
-			Name:     materializedView.GetProto().Name,
+			Name:     materializedView.Name,
 			Columns:  columns,
 		}, nil
 	}
@@ -1282,7 +1297,7 @@ func (q *querySpanExtractor) findTableSchema(schemaName string, tableName string
 			Server:   "",
 			Database: q.defaultDatabase,
 			Schema:   sequenceSchemaName,
-			Name:     sequence.GetProto().Name,
+			Name:     sequence.Name,
 			Columns:  columns,
 		}, nil
 	}
@@ -2595,6 +2610,8 @@ func (q *querySpanExtractor) handleTargetLabel(labelCtx *postgresql.Target_label
 		targetAlias := labelCtx.Target_alias()
 		if targetAlias.Collabel() != nil {
 			columnName = normalizePostgreSQLCollabel(targetAlias.Collabel())
+		} else if targetAlias.Bare_col_label() != nil {
+			columnName = normalizePostgreSQLBareColLabel(targetAlias.Bare_col_label())
 		}
 	}
 
@@ -2812,7 +2829,7 @@ func (q *querySpanExtractor) getColumnsFromColumnRef(ctx postgresql.IColumnrefCo
 			}
 			sources, ok := q.getAllTableColumnSources(schemaName, tableName)
 			if !ok {
-				return []base.QuerySpanResult{}, &parsererror.ResourceNotFoundError{
+				return []base.QuerySpanResult{}, &base.ResourceNotFoundError{
 					Err:      errors.New("cannot find the table for star expansion"),
 					Database: &q.defaultDatabase,
 					Schema:   &schemaName,
@@ -2856,7 +2873,7 @@ func (q *querySpanExtractor) getColumnsFromColumnRef(ctx postgresql.IColumnrefCo
 		if schemaName == "" {
 			tableSource := q.findTableInFrom(tableName, columnName)
 			if tableSource == nil {
-				return []base.QuerySpanResult{}, &parsererror.ResourceNotFoundError{
+				return []base.QuerySpanResult{}, &base.ResourceNotFoundError{
 					Err:      errors.New("cannot find the column ref"),
 					Database: &q.defaultDatabase,
 					Schema:   &schemaName,
@@ -2869,7 +2886,7 @@ func (q *querySpanExtractor) getColumnsFromColumnRef(ctx postgresql.IColumnrefCo
 			result = append(result, querySpanResult...)
 			return result, nil
 		}
-		return []base.QuerySpanResult{}, &parsererror.ResourceNotFoundError{
+		return []base.QuerySpanResult{}, &base.ResourceNotFoundError{
 			Err:      errors.New("cannot find the column ref"),
 			Database: &q.defaultDatabase,
 			Schema:   &schemaName,
@@ -3711,7 +3728,7 @@ func (q *querySpanExtractor) extractTableSourceFromSystemFunctionNew(funcName st
 		return tableSource, nil
 	case jsonToRecordset, jsonbToRecordset:
 		if alias == nil {
-			return nil, &parsererror.TypeNotSupportedError{
+			return nil, &base.TypeNotSupportedError{
 				Extra: fmt.Sprintf("function %s must explicitly define the structure of the record with an AS clause", funcName),
 				Type:  "function",
 				Name:  funcName,
@@ -3767,7 +3784,7 @@ func (q *querySpanExtractor) extractTableSourceFromSystemFunctionNew(funcName st
 		return tableSource, nil
 	case jsonPopulateRecord, jsonbPopulateRecord, jsonPopulateRecordset, jsonbPopulateRecordset,
 		jsonToRecord, jsonbToRecord:
-		return nil, &parsererror.TypeNotSupportedError{
+		return nil, &base.TypeNotSupportedError{
 			Extra: fmt.Sprintf("Unsupport function %s", funcName),
 			Type:  "function",
 			Name:  funcName,
@@ -3775,7 +3792,7 @@ func (q *querySpanExtractor) extractTableSourceFromSystemFunctionNew(funcName st
 	default:
 		// For unknown functions, continue with the generic handling below
 		if alias == nil {
-			return nil, &parsererror.TypeNotSupportedError{
+			return nil, &base.TypeNotSupportedError{
 				Extra: "Use system function result as the table source must have the alias clause to specify table and columns name",
 				Type:  "function",
 				Name:  funcName,

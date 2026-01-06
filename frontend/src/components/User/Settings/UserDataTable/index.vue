@@ -23,25 +23,25 @@
 <script lang="ts" setup>
 import { create } from "@bufbuild/protobuf";
 import { FieldMaskSchema } from "@bufbuild/protobuf/wkt";
+import { useClipboard } from "@vueuse/core";
 import type { DataTableColumn } from "naive-ui";
 import { NDataTable } from "naive-ui";
-import { computed, reactive, h, watchEffect } from "vue";
+import { computed, h, reactive, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { BBAlert } from "@/bbkit";
+import { UserNameCell } from "@/components/v2/Model/cells";
 import {
+  pushNotification,
+  useGroupStore,
   useUserStore,
   useWorkspaceV1Store,
-  useGroupStore,
-  pushNotification,
 } from "@/store";
 import type { Group } from "@/types/proto-es/v1/group_service_pb";
 import {
-  type User,
   UpdateUserRequestSchema,
+  type User,
 } from "@/types/proto-es/v1/user_service_pb";
-import { toClipboard } from "@/utils";
 import GroupsCell from "./cells/GroupsCell.vue";
-import UserNameCell from "./cells/UserNameCell.vue";
 import UserOperationsCell from "./cells/UserOperationsCell.vue";
 import UserRolesCell from "./cells/UserRolesCell.vue";
 
@@ -68,19 +68,19 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const userStore = useUserStore();
-const groupStore = useGroupStore();
 const workspaceStore = useWorkspaceV1Store();
+const groupStore = useGroupStore();
+
+const { copy: copyTextToClipboard, isSupported } = useClipboard({
+  legacy: true,
+});
 
 watchEffect(async () => {
-  const groupNames = new Set<string>();
+  const groupNames: string[] = [];
   for (const user of props.userList) {
-    for (const groupName of user.groups) {
-      if (!groupStore.getGroupByIdentifier(groupName)) {
-        groupNames.add(groupName);
-      }
-    }
+    groupNames.push(...user.groups);
   }
-  await groupStore.batchFetchGroups([...groupNames]);
+  await groupStore.batchGetOrFetchGroups(groupNames);
 });
 
 const state = reactive<LocalState>({
@@ -171,8 +171,8 @@ const resetServiceKey = () => {
     )
     .then((updatedUser) => {
       emit("update-user", updatedUser);
-      if (updatedUser.serviceKey) {
-        toClipboard(updatedUser.serviceKey).then(() => {
+      if (updatedUser.serviceKey && isSupported.value) {
+        copyTextToClipboard(updatedUser.serviceKey).then(() => {
           pushNotification({
             module: "bytebase",
             style: "INFO",

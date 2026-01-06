@@ -1,145 +1,120 @@
 <template>
-  <ResourceSelect
+  <RemoteResourceSelector
     v-bind="$attrs"
-    :remote="true"
-    :value="validSelectedGroup"
-    :values="validSelectedGroups"
+    :value="value"
     :disabled="disabled"
     :multiple="multiple"
-    :options="options"
-    :custom-label="renderLabel"
-    :placeholder="$t('settings.members.select-group', multiple ? 2 : 1)"
-    @search="handleSearch"
-    @update:value="(val) => $emit('update:group', val)"
-    @update:values="(val) => $emit('update:groups', val)"
+    :size="size"
+    :render-label="renderLabel"
+    :render-tag="renderTag"
+    :additional-options="additionalOptions"
+    :search="handleSearch"
+    @update:value="(val) => $emit('update:value', val)"
   />
 </template>
 
 <script lang="tsx" setup>
-import { useDebounceFn } from "@vueuse/core";
-import { computed, onMounted, reactive } from "vue";
+import { computedAsync } from "@vueuse/core";
+import { computed } from "vue";
 import GroupNameCell from "@/components/User/Settings/UserDataTableByGroup/cells/GroupNameCell.vue";
 import { useGroupStore } from "@/store";
-import { DEBOUNCE_SEARCH_DELAY } from "@/types";
 import type { Group } from "@/types/proto-es/v1/group_service_pb";
-import { getDefaultPagination } from "@/utils";
-import ResourceSelect from "./ResourceSelect.vue";
+import RemoteResourceSelector from "./RemoteResourceSelector/index.vue";
+import type {
+  ResourceSelectOption,
+  SelectSize,
+} from "./RemoteResourceSelector/types";
+import {
+  getRenderLabelFunc,
+  getRenderTagFunc,
+} from "./RemoteResourceSelector/utils";
 
-const props = withDefaults(
-  defineProps<{
-    group?: string | undefined;
-    groups?: string[] | undefined;
-    disabled?: boolean;
-    multiple?: boolean;
-    projectName?: string;
-    selectFirstAsDefault?: boolean;
-    size?: "tiny" | "small" | "medium" | "large";
-  }>(),
-  {
-    group: undefined,
-    groups: undefined,
-    multiple: false,
-    projectName: undefined,
-    selectFirstAsDefault: true,
-    size: "medium",
-  }
-);
-
-defineEmits<{
-  (event: "update:group", val: string | undefined): void;
-  (event: "update:groups", val: string[]): void;
+const props = defineProps<{
+  value?: string[] | string | undefined;
+  disabled?: boolean;
+  multiple?: boolean;
+  projectName?: string;
+  size?: SelectSize;
 }>();
 
-interface LocalState {
-  loading: boolean;
-  rawList: Group[];
-}
-
-const state = reactive<LocalState>({
-  loading: false,
-  rawList: [],
-});
+defineEmits<{
+  (event: "update:value", val: string[] | string | undefined): void;
+}>();
 
 const groupStore = useGroupStore();
 
-const searchGroups = async (search: string) => {
-  const { groups } = await groupStore.fetchGroupList({
+const getOption = (group: Group): ResourceSelectOption<Group> => ({
+  resource: group,
+  value: group.name,
+  label: group.title,
+});
+
+const additionalOptions = computedAsync(async () => {
+  const options: ResourceSelectOption<Group>[] = [];
+
+  let groupNames: string[] = [];
+  if (Array.isArray(props.value)) {
+    groupNames = props.value;
+  } else if (props.value) {
+    groupNames = [props.value];
+  }
+
+  const groups = await groupStore.batchGetOrFetchGroups(groupNames);
+  for (const group of groups) {
+    if (group) {
+      options.push(getOption(group));
+    }
+  }
+
+  return options;
+}, []);
+
+const handleSearch = async (params: {
+  search: string;
+  pageToken: string;
+  pageSize: number;
+}) => {
+  const { groups, nextPageToken } = await groupStore.fetchGroupList({
     filter: {
-      query: search,
+      query: params.search,
       project: props.projectName,
     },
-    pageSize: getDefaultPagination(),
+    pageToken: params.pageToken,
+    pageSize: params.pageSize,
   });
-  return groups;
+
+  return {
+    nextPageToken,
+    options: groups.map(getOption),
+  };
 };
 
-const handleSearch = useDebounceFn(async (search: string) => {
-  state.loading = true;
-  try {
-    const groups = await searchGroups(search);
-    state.rawList = groups;
-    if (!search) {
-      if (props.group) {
-        await initSelectedGroups([props.group]);
-      }
-      if (props.groups) {
-        await initSelectedGroups(props.groups);
-      }
-    }
-  } finally {
-    state.loading = false;
-  }
-}, DEBOUNCE_SEARCH_DELAY);
-
-const initSelectedGroups = async (groupNames: string[]) => {
-  const groups = await groupStore.batchFetchGroups(groupNames);
-  for (const group of groups) {
-    if (!state.rawList.find((g) => g.name === group.name)) {
-      state.rawList.unshift(group);
-    }
-  }
-};
-
-onMounted(async () => {
-  await handleSearch("");
-});
-
-const options = computed(() => {
-  return state.rawList.map((group) => ({
-    value: group.name,
-    label: group.title,
-    resource: group,
-  }));
-});
-
-const validSelectedGroup = computed(() => {
-  if (props.multiple) {
-    return undefined;
-  }
-  if (options.value.findIndex((o) => o.value === props.group) >= 0) {
-    return props.group;
-  }
-  return undefined;
-});
-
-const validSelectedGroups = computed(() => {
-  if (!props.multiple) {
-    return undefined;
-  }
-
-  return props.groups?.filter((v) => {
-    return options.value.findIndex((o) => o.value === v) >= 0;
-  });
-});
-
-const renderLabel = (group: Group) => {
+const customLabel = (group: Group, keyword: string) => {
   return (
     <GroupNameCell
       showEmail={false}
       group={group}
       showIcon={false}
       link={false}
+      keyword={keyword}
     />
   );
 };
+
+const renderLabel = computed(() => {
+  return getRenderLabelFunc({
+    multiple: props.multiple,
+    customLabel,
+    showResourceName: true,
+  });
+});
+
+const renderTag = computed(() => {
+  return getRenderTagFunc({
+    multiple: props.multiple,
+    disabled: props.disabled,
+    size: props.size,
+    customLabel,
+  });
+});
 </script>

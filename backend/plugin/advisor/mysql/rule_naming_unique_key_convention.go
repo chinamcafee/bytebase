@@ -6,14 +6,16 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/bytebase/parser/mysql"
 	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -21,9 +23,9 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleUKNaming, &NamingUKConventionAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleUKNaming, &NamingUKConventionAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleUKNaming, &NamingUKConventionAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_NAMING_INDEX_UK, &NamingUKConventionAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_NAMING_INDEX_UK, &NamingUKConventionAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_NAMING_INDEX_UK, &NamingUKConventionAdvisor{})
 }
 
 // NamingUKConventionAdvisor is the advisor checking for unique key naming convention.
@@ -32,31 +34,47 @@ type NamingUKConventionAdvisor struct {
 
 // Check checks for index naming convention.
 func (*NamingUKConventionAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	format, templateList, maxLength, err := advisor.UnmarshalNamingRulePayloadAsTemplate(advisor.SQLReviewRuleType(checkCtx.Rule.Type), checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	namingPayload := checkCtx.Rule.GetNamingPayload()
+	if namingPayload == nil {
+		return nil, errors.New("naming_payload is required for this rule")
+	}
+
+	format := namingPayload.Format
+	templateList, _ := advisor.ParseTemplateTokens(format)
+
+	for _, key := range templateList {
+		if _, ok := advisor.TemplateNamingTokens[checkCtx.Rule.Type][key]; !ok {
+			return nil, errors.Errorf("invalid template %s for rule %s", key, checkCtx.Rule.Type)
+		}
+	}
+
+	maxLength := int(namingPayload.MaxLength)
+	if maxLength == 0 {
+		maxLength = advisor.DefaultNameLengthLimit
 	}
 
 	// Create the rule
-	rule := NewNamingUKConventionRule(level, string(checkCtx.Rule.Type), format, maxLength, templateList, checkCtx.Catalog)
+	rule := NewNamingUKConventionRule(level, checkCtx.Rule.Type.String(), format, maxLength, templateList, checkCtx.OriginalMetadata)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmtNode := range root {
-		rule.SetBaseLine(stmtNode.BaseLine)
-		checker.SetBaseLine(stmtNode.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmtNode.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -73,24 +91,24 @@ type ukIndexMetaData struct {
 // NamingUKConventionRule checks for unique key naming convention.
 type NamingUKConventionRule struct {
 	BaseRule
-	text         string
-	format       string
-	maxLength    int
-	templateList []string
-	catalog      *catalog.Finder
+	text             string
+	format           string
+	maxLength        int
+	templateList     []string
+	originalMetadata *model.DatabaseMetadata
 }
 
 // NewNamingUKConventionRule creates a new NamingUKConventionRule.
-func NewNamingUKConventionRule(level storepb.Advice_Status, title string, format string, maxLength int, templateList []string, catalog *catalog.Finder) *NamingUKConventionRule {
+func NewNamingUKConventionRule(level storepb.Advice_Status, title string, format string, maxLength int, templateList []string, originalMetadata *model.DatabaseMetadata) *NamingUKConventionRule {
 	return &NamingUKConventionRule{
 		BaseRule: BaseRule{
 			level: level,
 			title: title,
 		},
-		format:       format,
-		maxLength:    maxLength,
-		templateList: templateList,
-		catalog:      catalog,
+		format:           format,
+		maxLength:        maxLength,
+		templateList:     templateList,
+		originalMetadata: originalMetadata,
 	}
 }
 
@@ -187,21 +205,14 @@ func (r *NamingUKConventionRule) checkAlterTable(ctx *mysql.AlterTableContext) {
 		case alterListItem.RENAME_SYMBOL() != nil && alterListItem.KeyOrIndex() != nil && alterListItem.IndexRef() != nil && alterListItem.IndexName() != nil:
 			_, _, oldIndexName := mysqlparser.NormalizeIndexRef(alterListItem.IndexRef())
 			newIndexName := mysqlparser.NormalizeIndexName(alterListItem.IndexName())
-			indexStateMap := r.catalog.Origin.Index(&catalog.TableIndexFind{
-				SchemaName: "",
-				TableName:  tableName,
-			})
-			if indexStateMap == nil {
+			indexState := r.originalMetadata.GetSchemaMetadata("").GetTable(tableName).GetIndex(oldIndexName)
+			if indexState == nil {
 				continue
 			}
-			indexState, ok := (*indexStateMap)[oldIndexName]
-			if !ok {
+			if !indexState.GetProto().GetUnique() {
 				continue
 			}
-			if !indexState.Unique() {
-				continue
-			}
-			columnList := indexState.ExpressionList()
+			columnList := indexState.GetProto().GetExpressions()
 			metaData := map[string]string{
 				advisor.ColumnListTemplateToken: strings.Join(columnList, "_"),
 				advisor.TableNameTemplateToken:  tableName,
@@ -260,7 +271,7 @@ func (r *NamingUKConventionRule) handleIndexList(indexDataList []*ukIndexMetaDat
 		if err != nil {
 			r.AddAdvice(&storepb.Advice{
 				Status:  r.level,
-				Code:    advisor.Internal.Int32(),
+				Code:    code.Internal.Int32(),
 				Title:   "Internal error for unique key naming convention rule",
 				Content: fmt.Sprintf("%q meet internal error %q", r.text, err.Error()),
 			})
@@ -269,7 +280,7 @@ func (r *NamingUKConventionRule) handleIndexList(indexDataList []*ukIndexMetaDat
 		if !regex.MatchString(indexData.indexName) {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.NamingUKConventionMismatch.Int32(),
+				Code:          code.NamingUKConventionMismatch.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("Unique key in table `%s` mismatches the naming convention, expect %q but found `%s`", indexData.tableName, regex, indexData.indexName),
 				StartPosition: common.ConvertANTLRLineToPosition(indexData.line),
@@ -278,7 +289,7 @@ func (r *NamingUKConventionRule) handleIndexList(indexDataList []*ukIndexMetaDat
 		if r.maxLength > 0 && len(indexData.indexName) > r.maxLength {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.NamingUKConventionMismatch.Int32(),
+				Code:          code.NamingUKConventionMismatch.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("Unique key `%s` in table `%s` mismatches the naming convention, its length should be within %d characters", indexData.indexName, indexData.tableName, r.maxLength),
 				StartPosition: common.ConvertANTLRLineToPosition(indexData.line),

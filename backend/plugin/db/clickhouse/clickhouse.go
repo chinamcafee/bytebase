@@ -124,8 +124,9 @@ func (d *Driver) getVersion(ctx context.Context) (string, error) {
 // Execute executes a SQL statement.
 func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteOptions) (int64, error) {
 	// Parse transaction mode from the script
-	transactionMode, cleanedStatement := base.ParseTransactionMode(statement)
+	config, cleanedStatement := base.ParseTransactionConfig(statement)
 	statement = cleanedStatement
+	transactionMode := config.Mode
 
 	// Apply default when transaction mode is not specified
 	if transactionMode == common.TransactionModeUnspecified {
@@ -136,7 +137,7 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 	if err != nil {
 		return 0, err
 	}
-	singleSQLs = base.FilterEmptySQL(singleSQLs)
+	singleSQLs = base.FilterEmptyStatements(singleSQLs)
 	if len(singleSQLs) == 0 {
 		return 0, nil
 	}
@@ -148,7 +149,7 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 	return d.executeInTransactionMode(ctx, singleSQLs, opts)
 }
 
-func (d *Driver) executeInTransactionMode(ctx context.Context, singleSQLs []base.SingleSQL, opts db.ExecuteOptions) (int64, error) {
+func (d *Driver) executeInTransactionMode(ctx context.Context, singleSQLs []base.Statement, opts db.ExecuteOptions) (int64, error) {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -171,16 +172,12 @@ func (d *Driver) executeInTransactionMode(ctx context.Context, singleSQLs []base
 	opts.LogTransactionControl(storepb.TaskRunLog_TransactionControl_BEGIN, "")
 
 	totalRowsAffected := int64(0)
-	for i, singleSQL := range singleSQLs {
-		opts.LogCommandExecute([]int32{int32(i)}, singleSQL.Text)
+	for _, singleSQL := range singleSQLs {
+		opts.LogCommandExecute(singleSQL.Range, singleSQL.Text)
 		sqlResult, err := tx.ExecContext(ctx, singleSQL.Text)
 		if err != nil {
 			opts.LogCommandResponse(0, nil, err.Error())
-			return 0, &db.ErrorWithPosition{
-				Err:   errors.Wrapf(err, "failed to execute context in a transaction"),
-				Start: singleSQL.Start,
-				End:   singleSQL.End,
-			}
+			return 0, err
 		}
 		rowsAffected, err := sqlResult.RowsAffected()
 		if err != nil {
@@ -201,10 +198,10 @@ func (d *Driver) executeInTransactionMode(ctx context.Context, singleSQLs []base
 	return totalRowsAffected, nil
 }
 
-func (d *Driver) executeInAutoCommitMode(ctx context.Context, singleSQLs []base.SingleSQL, opts db.ExecuteOptions) (int64, error) {
+func (d *Driver) executeInAutoCommitMode(ctx context.Context, singleSQLs []base.Statement, opts db.ExecuteOptions) (int64, error) {
 	totalRowsAffected := int64(0)
-	for i, singleSQL := range singleSQLs {
-		opts.LogCommandExecute([]int32{int32(i)}, singleSQL.Text)
+	for _, singleSQL := range singleSQLs {
+		opts.LogCommandExecute(singleSQL.Range, singleSQL.Text)
 		sqlResult, err := d.db.ExecContext(ctx, singleSQL.Text)
 		if err != nil {
 			opts.LogCommandResponse(0, nil, err.Error())

@@ -3,7 +3,6 @@ syntax = "proto3";
 package bytebase.store;
 
 import "google/protobuf/timestamp.proto";
-import "store/common.proto";
 
 option go_package = "generated-go/store";
 
@@ -47,6 +46,10 @@ message DatabaseSchemaMetadata {
 
   // The search_path is the search path of a PostgreSQL database.
   string search_path = 10;
+
+  // The list of event triggers in a database (PostgreSQL specific).
+  // Event triggers are database-level objects, not schema-scoped.
+  repeated EventTriggerMetadata event_triggers = 11;
 }
 
 message LinkedDatabaseMetadata {
@@ -336,11 +339,7 @@ message TableMetadata {
   string create_options = 10;
 
   // The comment is the comment of a table.
-  // classification and user_comment is parsed from the comment.
   string comment = 11;
-
-  // The user_comment is the user comment of a table parsed from the comment.
-  string user_comment = 14;
 
   // The foreign_keys is the list of foreign keys in a table.
   repeated ForeignKeyMetadata foreign_keys = 12;
@@ -370,6 +369,9 @@ message TableMetadata {
   // https://docs.pingcap.com/tidb/stable/clustered-indexes/#clustered-indexes
   // CLUSTERED or NONCLUSTERED.
   string primary_key_type = 23;
+
+  // The exclude_constraints is the list of EXCLUDE constraints in a table (PostgreSQL specific).
+  repeated ExcludeConstraintMetadata exclude_constraints = 25;
 }
 
 message CheckConstraintMetadata {
@@ -377,6 +379,15 @@ message CheckConstraintMetadata {
   string name = 1;
 
   // The expression is the expression of a check constraint.
+  string expression = 2;
+}
+
+message ExcludeConstraintMetadata {
+  // The name of the EXCLUDE constraint.
+  string name = 1;
+
+  // The expression is the full EXCLUDE constraint definition including "EXCLUDE" keyword.
+  // Example: "EXCLUDE USING gist (room_id WITH =, during WITH &&)"
   string expression = 2;
 }
 
@@ -455,6 +466,8 @@ message TablePartitionMetadata {
   repeated IndexMetadata indexes = 7;
 
   repeated CheckConstraintMetadata check_constraints = 8;
+
+  repeated ExcludeConstraintMetadata exclude_constraints = 9;
 }
 
 // ColumnMetadata is the metadata for columns.
@@ -467,10 +480,6 @@ message ColumnMetadata {
 
   // The default value of the column.
   string default = 3;
-  // Deprecated.
-  bool default_null = 4;
-  // Deprecated.
-  string default_expression = 5;
 
   // Oracle specific metadata.
   // The default_on_null is the default on null of a column.
@@ -494,11 +503,7 @@ message ColumnMetadata {
   string collation = 9;
 
   // The comment is the comment of a column.
-  // classification and user_comment is parsed from the comment.
   string comment = 10;
-
-  // The user_comment is the user comment of a table parsed from the comment.
-  string user_comment = 12;
 
   // The generation is for generated columns.
   GenerationMetadata generation = 14;
@@ -854,6 +859,38 @@ message ExtensionMetadata {
   string description = 4;
 }
 
+// EventTriggerMetadata is the metadata for PostgreSQL event triggers.
+// Event triggers are database-level objects that fire on DDL events.
+message EventTriggerMetadata {
+  // The name of the event trigger.
+  string name = 1;
+
+  // The event type: DDL_COMMAND_START, DDL_COMMAND_END, SQL_DROP, TABLE_REWRITE.
+  string event = 2;
+
+  // The tags filter (e.g., ['CREATE TABLE', 'DROP TABLE']).
+  repeated string tags = 3;
+
+  // The schema of the function to execute.
+  string function_schema = 4;
+
+  // The name of the function to execute.
+  string function_name = 5;
+
+  // Whether the trigger is enabled.
+  bool enabled = 6;
+
+  // The full CREATE EVENT TRIGGER definition from pg_get_event_trigger_def().
+  // SDL output should prefer using this field.
+  string definition = 7;
+
+  // The comment on the event trigger.
+  string comment = 8;
+
+  // Skip dump flag (for extension-owned triggers).
+  bool skip_dump = 9;
+}
+
 // ForeignKeyMetadata is the metadata for foreign keys.
 message ForeignKeyMetadata {
   // The name of the foreign key.
@@ -936,13 +973,6 @@ message ColumnCatalog {
   string classification = 4;
 
   optional ObjectSchema object_schema = 5;
-
-  // Deprecated.
-  MaskingLevel masking_level = 6;
-  // Deprecated.
-  string full_masking_algorithm_id = 7;
-  // Deprecated.
-  string partial_masking_algorithm_id = 8;
 }
 
 message ObjectSchema {

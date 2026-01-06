@@ -1,27 +1,27 @@
 import { useDebounceFn } from "@vueuse/core";
 import { NCheckbox } from "naive-ui";
 import { storeToRefs } from "pinia";
-import { computed, ref, watch, h } from "vue";
 import type { ComputedRef, Ref } from "vue";
+import { computed, h, ref, watch } from "vue";
 import { t } from "@/plugins/i18n";
 import {
-  useSQLEditorStore,
+  buildTreeImpl,
+  type DatabaseFilter,
+  mapTreeNodeByType,
   useCurrentUserV1,
   useDatabaseV1Store,
   useEnvironmentV1Store,
-  type DatabaseFilter,
-  buildTreeImpl,
-  mapTreeNodeByType,
+  useSQLEditorStore,
 } from "@/store";
 import type {
   ComposedDatabase,
-  SQLEditorTreeNode as TreeNode,
   StatefulSQLEditorTreeFactor as StatefulFactor,
+  SQLEditorTreeNode as TreeNode,
 } from "@/types";
 import { DEBOUNCE_SEARCH_DELAY } from "@/types";
 import {
-  isDatabaseV1Queryable,
   getDefaultPagination,
+  isDatabaseV1Queryable,
   useDynamicLocalStorage,
 } from "@/utils";
 
@@ -54,6 +54,8 @@ export const useSQLEditorTreeByEnvironment = (
   const currentUser = useCurrentUserV1();
   const environmentStore = useEnvironmentV1Store();
 
+  const tree = ref<TreeNode[]>([]);
+  const showMissingQueryDatabases = ref<boolean>(false);
   const databaseList = ref<ComposedDatabase[]>([]);
   const fetchDataState = ref<{
     loading: boolean;
@@ -96,7 +98,6 @@ export const useSQLEditorTreeByEnvironment = (
           environment,
         },
       });
-
       if (pageToken) {
         databaseList.value.push(...databases);
       } else {
@@ -125,9 +126,6 @@ export const useSQLEditorTreeByEnvironment = (
     }
     return databaseList.value;
   });
-
-  const tree = ref<TreeNode[]>([]);
-  const showMissingQueryDatabases = ref<boolean>(false);
 
   const buildTree = () => {
     tree.value = buildTreeImpl(filteredDatabaseList.value, [

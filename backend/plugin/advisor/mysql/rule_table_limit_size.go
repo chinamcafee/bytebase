@@ -4,20 +4,23 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
 	"github.com/pkg/errors"
 
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleTableLimitSize, &MaximumTableSizeAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_TABLE_LIMIT_SIZE, &MaximumTableSizeAdvisor{})
 }
 
 type MaximumTableSizeAdvisor struct {
@@ -29,14 +32,9 @@ var (
 
 // If table size > xx bytes, then warning/error.
 func (*MaximumTableSizeAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	payload, err := advisor.UnmarshalNumberTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
-
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
+	numberPayload := checkCtx.Rule.GetNumberPayload()
+	if numberPayload == nil {
+		return nil, errors.New("number_payload is required for this rule")
 	}
 
 	// User defined rule level.
@@ -47,20 +45,28 @@ func (*MaximumTableSizeAdvisor) Check(_ context.Context, checkCtx advisor.Contex
 
 	var adviceList []*storepb.Advice
 
-	for _, parsedResult := range stmtList {
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+
 		statTypeChecker := &mysqlparser.StatementTypeChecker{}
-		antlr.ParseTreeWalkerDefault.Walk(statTypeChecker, parsedResult.Tree)
+		antlr.ParseTreeWalkerDefault.Walk(statTypeChecker, antlrAST.Tree)
 
 		if statTypeChecker.IsDDL {
 			// Create the rule
-			rule := NewTableLimitSizeRule(status, string(checkCtx.Rule.Type), payload.Number, checkCtx.DBSchema)
+			rule := NewTableLimitSizeRule(status, checkCtx.Rule.Type.String(), int(numberPayload.Number), checkCtx.DBSchema)
 
 			// Create the generic checker with the rule
 			checker := NewGenericChecker([]Rule{rule})
 
-			rule.SetBaseLine(parsedResult.BaseLine)
-			checker.SetBaseLine(parsedResult.BaseLine)
-			antlr.ParseTreeWalkerDefault.Walk(checker, parsedResult.Tree)
+			rule.SetBaseLine(stmt.BaseLine())
+			checker.SetBaseLine(stmt.BaseLine())
+			antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 
 			// Generate advice based on collected table information
 			rule.generateAdvice()
@@ -77,19 +83,19 @@ type TableLimitSizeRule struct {
 	BaseRule
 	affectedTabNames  []string
 	maxRows           int
-	dbSchema          *storepb.DatabaseSchemaMetadata
+	dbMetadata        *storepb.DatabaseSchemaMetadata
 	statementBaseLine int
 }
 
 // NewTableLimitSizeRule creates a new TableLimitSizeRule.
-func NewTableLimitSizeRule(level storepb.Advice_Status, title string, maxRows int, dbSchema *storepb.DatabaseSchemaMetadata) *TableLimitSizeRule {
+func NewTableLimitSizeRule(level storepb.Advice_Status, title string, maxRows int, dbMetadata *storepb.DatabaseSchemaMetadata) *TableLimitSizeRule {
 	return &TableLimitSizeRule{
 		BaseRule: BaseRule{
 			level: level,
 			title: title,
 		},
-		maxRows:  maxRows,
-		dbSchema: dbSchema,
+		maxRows:    maxRows,
+		dbMetadata: dbMetadata,
 	}
 }
 
@@ -138,14 +144,14 @@ func (r *TableLimitSizeRule) checkDropTable(ctx *mysql.DropTableContext) {
 }
 
 func (r *TableLimitSizeRule) generateAdvice() {
-	if r.dbSchema != nil && len(r.dbSchema.Schemas) != 0 {
+	if r.dbMetadata != nil && len(r.dbMetadata.Schemas) != 0 {
 		// Check all table size.
 		for _, tabName := range r.affectedTabNames {
-			tableRows := getTabRowsByName(tabName, r.dbSchema.Schemas[0].Tables)
+			tableRows := getTabRowsByName(tabName, r.dbMetadata.Schemas[0].Tables)
 			if tableRows >= int64(r.maxRows) {
 				r.AddAdvice(&storepb.Advice{
 					Status:        r.level,
-					Code:          advisor.TableExceedLimitSize.Int32(),
+					Code:          code.TableExceedLimitSize.Int32(),
 					Title:         r.title,
 					Content:       fmt.Sprintf("Apply DDL on large table '%s' ( %d rows ) will lock table for a long time", tabName, tableRows),
 					StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + r.statementBaseLine),

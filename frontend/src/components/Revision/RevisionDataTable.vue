@@ -28,22 +28,16 @@
 
 <script lang="tsx" setup>
 import { TrashIcon } from "lucide-vue-next";
-import { type DataTableColumn, NDataTable, NButton, useDialog } from "naive-ui";
+import { type DataTableColumn, NButton, NDataTable, useDialog } from "naive-ui";
 import { computed, reactive } from "vue";
 import { useI18n } from "vue-i18n";
-import { RouterLink, useRouter } from "vue-router";
-import { PROJECT_V1_ROUTE_ISSUE_DETAIL } from "@/router/dashboard/projectV1";
+import { useRouter } from "vue-router";
 import { useRevisionStore } from "@/store";
 import { getDateForPbTimestampProtoEs } from "@/types";
 import {
-  Revision_Type,
   type Revision,
+  Revision_Type,
 } from "@/types/proto-es/v1/revision_service_pb";
-import {
-  extractIssueUID,
-  extractProjectResourceName,
-  issueV1Slug,
-} from "@/utils";
 import { useDatabaseDetailContext } from "../Database/context";
 import HumanizeDate from "../misc/HumanizeDate.vue";
 
@@ -86,13 +80,6 @@ const columnList = computed(() => {
       hide: !props.showSelection,
     },
     {
-      key: "type",
-      title: t("common.type"),
-      width: 128,
-      resizable: true,
-      render: (revision) => Revision_Type[revision.type],
-    },
-    {
       key: "version",
       title: t("common.version"),
       width: 160,
@@ -100,47 +87,11 @@ const columnList = computed(() => {
       render: (revision) => revision.version,
     },
     {
-      key: "statement",
-      title: t("common.statement"),
+      key: "type",
+      title: t("common.type"),
+      width: 128,
       resizable: true,
-      minWidth: "13rem",
-      ellipsis: true,
-      render: (revision) => {
-        return <p class="truncate whitespace-nowrap">{revision.statement}</p>;
-      },
-    },
-    {
-      key: "issue",
-      title: t("common.issue"),
-      width: 96,
-      render: (revision) => {
-        const uid = extractIssueUID(revision.issue);
-        if (!uid) return <span class="text-control-light">-</span>;
-        return (
-          <RouterLink
-            to={{
-              name: PROJECT_V1_ROUTE_ISSUE_DETAIL,
-              params: {
-                projectId: extractProjectResourceName(revision.issue),
-                issueSlug: issueV1Slug(revision.issue),
-              },
-            }}
-            custom={true}
-          >
-            {{
-              default: ({ href }: { href: string }) => (
-                <a
-                  href={href}
-                  class="normal-link"
-                  onClick={(e: MouseEvent) => e.stopPropagation()}
-                >
-                  #{uid}
-                </a>
-              ),
-            }}
-          </RouterLink>
-        );
-      },
+      render: (revision) => Revision_Type[revision.type],
     },
     {
       key: "created-at",
@@ -176,8 +127,8 @@ const rowProps = (revision: Revision) => {
 
 const onDelete = () => {
   dialog.warning({
-    title: t("database.revision.delete-confirm-dialog.title"),
-    content: t("database.revision.delete-confirm-dialog.content"),
+    title: t("bbkit.confirm-button.sure-to-delete"),
+    content: t("database.revision.delete-confirm-dialog"),
     negativeText: t("common.cancel"),
     positiveText: t("common.confirm"),
     onPositiveClick: async () => {

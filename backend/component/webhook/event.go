@@ -6,19 +6,15 @@ import (
 )
 
 type Event struct {
-	Actor   *store.UserMessage
-	Type    storepb.Activity_Type
-	Comment string
-	// nullable
-	Issue   *Issue
 	Project *Project
-	Rollout *Rollout
+	Type    storepb.Activity_Type
 
-	IssueUpdate         *EventIssueUpdate
-	IssueApprovalCreate *EventIssueApprovalCreate
-	IssueRolloutReady   *EventIssueRolloutReady
-	StageStatusUpdate   *EventStageStatusUpdate
-	TaskRunStatusUpdate *EventTaskRunStatusUpdate
+	// Focused event types (only one is set)
+	IssueCreated      *EventIssueCreated
+	ApprovalRequested *EventIssueApprovalRequested
+	SentBack          *EventIssueSentBack
+	RolloutFailed     *EventRolloutFailed
+	RolloutCompleted  *EventRolloutCompleted
 }
 
 func NewIssue(i *store.IssueMessage) *Issue {
@@ -26,13 +22,13 @@ func NewIssue(i *store.IssueMessage) *Issue {
 		return nil
 	}
 	return &Issue{
-		UID:         i.UID,
-		Status:      i.Status.String(),
-		Type:        i.Type.String(),
-		Title:       i.Title,
-		Description: i.Description,
-		Creator:     i.Creator,
-		Approval:    i.Payload.GetApproval(),
+		UID:          i.UID,
+		Status:       i.Status.String(),
+		Type:         i.Type.String(),
+		Title:        i.Title,
+		Description:  i.Description,
+		CreatorEmail: i.CreatorEmail,
+		Approval:     i.Payload.GetApproval(),
 	}
 }
 
@@ -43,20 +39,21 @@ func NewProject(p *store.ProjectMessage) *Project {
 	}
 }
 
-func NewRollout(r *store.PipelineMessage) *Rollout {
+func NewRollout(r *store.PlanMessage) *Rollout {
 	return &Rollout{
-		UID: r.ID,
+		UID:   int(r.UID),
+		Title: r.Name,
 	}
 }
 
 type Issue struct {
-	UID         int
-	Status      string
-	Type        string
-	Title       string
-	Description string
-	Creator     *store.UserMessage
-	Approval    *storepb.IssuePayloadApproval
+	UID          int
+	Status       string
+	Type         string
+	Title        string
+	Description  string
+	CreatorEmail string
+	Approval     *storepb.IssuePayloadApproval
 }
 
 type Project struct {
@@ -65,30 +62,37 @@ type Project struct {
 }
 
 type Rollout struct {
-	UID int
+	UID   int
+	Title string
 }
 
-type EventIssueUpdate struct {
-	Path string
+type EventIssueCreated struct {
+	Creator *User
+	Issue   *Issue
 }
 
-type EventIssueApprovalCreate struct {
-	Role string
+type EventIssueApprovalRequested struct {
+	Creator   *User
+	Issue     *Issue
+	Approvers []User
 }
 
-type EventIssueRolloutReady struct {
-	RolloutPolicy *storepb.RolloutPolicy
-	StageName     string
+type EventIssueSentBack struct {
+	Approver *User
+	Creator  *User
+	Issue    *Issue
+	Reason   string
 }
 
-type EventStageStatusUpdate struct {
-	StageTitle string
-	StageID    string
+type EventRolloutFailed struct {
+	Rollout *Rollout
 }
 
-type EventTaskRunStatusUpdate struct {
-	Title         string
-	Status        string
-	Detail        string
-	SkippedReason string
+type EventRolloutCompleted struct {
+	Rollout *Rollout
+}
+
+type User struct {
+	Name  string
+	Email string
 }

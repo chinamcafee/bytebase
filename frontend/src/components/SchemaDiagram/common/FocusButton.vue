@@ -1,7 +1,7 @@
 <template>
   <button
-    class="p-0.5 rounded hover:bg-gray-200"
-    :class="[isFocused && focusedClass, isFocused ? '!visible' : 'invisible']"
+    class="p-0.5 rounded-sm hover:bg-gray-200"
+    :class="[isFocused && focusedClass, isFocused ? 'visible!' : 'invisible']"
     @click="toggleFocus"
   >
     <!-- TODO(Jim): replace this raw SVG with heroicons-outline:viewfinder-circle when supported -->
@@ -14,8 +14,8 @@ import { computed } from "vue";
 import type { TableMetadata } from "@/types/proto-es/v1/database_service_pb";
 import type { VueClass } from "@/utils";
 import { expectedZoomRange, useSchemaDiagramContext } from ".";
-import FocusIcon from "./FocusIcon.vue";
 import { DEFAULT_PADDINGS } from "./const";
+import FocusIcon from "./FocusIcon.vue";
 
 const props = withDefaults(
   defineProps<{

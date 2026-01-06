@@ -14,6 +14,7 @@ import (
 	"github.com/bytebase/bytebase/backend/common/log"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 )
 
 const (
@@ -25,7 +26,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.BuiltinRulePriorBackupCheck, &StatementPriorBackupCheckAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_BUILTIN_PRIOR_BACKUP_CHECK, &StatementPriorBackupCheckAdvisor{})
 }
 
 // StatementPriorBackupCheckAdvisor is the advisor checking for no mixed DDL and DML.
@@ -34,21 +35,22 @@ type StatementPriorBackupCheckAdvisor struct {
 
 // Check checks for no mixed DDL and DML.
 func (*StatementPriorBackupCheckAdvisor) Check(ctx context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	if !checkCtx.EnablePriorBackup || checkCtx.ChangeType != storepb.PlanCheckRunConfig_DML {
+	if !checkCtx.EnablePriorBackup {
 		return nil, nil
 	}
 
 	var adviceList []*storepb.Advice
-	root, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	root, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	title := string(checkCtx.Rule.Type)
+	title := checkCtx.Rule.Type.String()
 
 	var updateStatements []*ast.UpdateStmt
 	var deleteStatements []*ast.DeleteStmt
@@ -72,7 +74,7 @@ func (*StatementPriorBackupCheckAdvisor) Check(ctx context.Context, checkCtx adv
 				Status:        level,
 				Title:         title,
 				Content:       "Prior backup cannot deal with mixed DDL and DML statements",
-				Code:          advisor.BuiltinPriorBackupCheck.Int32(),
+				Code:          code.BuiltinPriorBackupCheck.Int32(),
 				StartPosition: common.ConvertANTLRLineToPosition(stmtNode.OriginTextPosition()),
 			})
 		}
@@ -83,8 +85,8 @@ func (*StatementPriorBackupCheckAdvisor) Check(ctx context.Context, checkCtx adv
 		adviceList = append(adviceList, &storepb.Advice{
 			Status:        level,
 			Title:         title,
-			Content:       fmt.Sprintf("Need database %q to do prior backup but it does not exist", databaseName),
-			Code:          advisor.DatabaseNotExists.Int32(),
+			Content:       fmt.Sprintf("Prior backup check failed: need database %q to do prior backup but it does not exist", databaseName),
+			Code:          code.BuiltinPriorBackupCheck.Int32(),
 			StartPosition: nil,
 		})
 	}
@@ -94,7 +96,7 @@ func (*StatementPriorBackupCheckAdvisor) Check(ctx context.Context, checkCtx adv
 			Status:        level,
 			Title:         title,
 			Content:       fmt.Sprintf("Prior backup is feasible only with up to %d statements that are either UPDATE or DELETE, or if all UPDATEs target the same table with a PRIMARY or UNIQUE KEY in the WHERE clause", maxMixedDMLCount),
-			Code:          advisor.BuiltinPriorBackupCheck.Int32(),
+			Code:          code.BuiltinPriorBackupCheck.Int32(),
 			StartPosition: nil,
 		})
 	}
@@ -102,7 +104,7 @@ func (*StatementPriorBackupCheckAdvisor) Check(ctx context.Context, checkCtx adv
 	return adviceList, nil
 }
 
-func updateForOneTableWithUnique(dbSchema *storepb.DatabaseSchemaMetadata, updates []*ast.UpdateStmt, deletes []*ast.DeleteStmt) bool {
+func updateForOneTableWithUnique(dbMetadata *storepb.DatabaseSchemaMetadata, updates []*ast.UpdateStmt, deletes []*ast.DeleteStmt) bool {
 	if len(deletes) > 0 {
 		return false
 	}
@@ -122,7 +124,7 @@ func updateForOneTableWithUnique(dbSchema *storepb.DatabaseSchemaMetadata, updat
 		} else if !equalTable(table, &tables[0]) {
 			return false
 		}
-		if !hasUniqueInWhereClause(dbSchema, update, table) {
+		if !hasUniqueInWhereClause(dbMetadata, update, table) {
 			return false
 		}
 	}
@@ -130,7 +132,7 @@ func updateForOneTableWithUnique(dbSchema *storepb.DatabaseSchemaMetadata, updat
 	return true
 }
 
-func hasUniqueInWhereClause(dbSchema *storepb.DatabaseSchemaMetadata, update *ast.UpdateStmt, table *table) bool {
+func hasUniqueInWhereClause(dbMetadata *storepb.DatabaseSchemaMetadata, update *ast.UpdateStmt, table *table) bool {
 	if update.Where == nil {
 		return false
 	}
@@ -140,8 +142,8 @@ func hasUniqueInWhereClause(dbSchema *storepb.DatabaseSchemaMetadata, update *as
 		columnMap[strings.ToLower(column)] = true
 	}
 
-	if dbSchema != nil {
-		for _, schema := range dbSchema.Schemas {
+	if dbMetadata != nil {
+		for _, schema := range dbMetadata.Schemas {
 			for _, tableSchema := range schema.Tables {
 				if strings.EqualFold(tableSchema.Name, table.table) {
 					for _, index := range tableSchema.Indexes {

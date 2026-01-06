@@ -50,7 +50,7 @@
 </template>
 
 <script setup lang="ts">
-import { NPopselect, NPopover, type SelectOption, NButton } from "naive-ui";
+import { NButton, NPopover, NPopselect, type SelectOption } from "naive-ui";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
@@ -84,7 +84,7 @@ const settingV1Store = useSettingV1Store();
 
 const openAIEnabled = computed(() => {
   const setting = settingV1Store.getSettingByName(Setting_SettingName.AI);
-  return setting?.value?.value?.case === "aiSetting"
+  return setting?.value?.value?.case === "ai"
     ? setting.value.value.value.enabled
     : false;
 });

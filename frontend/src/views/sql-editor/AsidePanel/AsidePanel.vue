@@ -19,11 +19,12 @@
           style="width: 100%"
           class="project-select"
           :menu-props="{ class: 'project-select-menu' }"
-          :project-name="project"
+          :value="project"
           :include-all="false"
+          :clearable="false"
           :include-default-project="allowAccessDefaultProject"
           :loading="!projectContextReady"
-          @update:project-name="handleSwitchProject"
+          @update:value="handleSwitchProject($event as (string | undefined))"
         >
           <template #empty>
             <div class="text-sm text-control-placeholder flex flex-col gap-1">
@@ -77,7 +78,7 @@ import SchemaPane from "./SchemaPane";
 import WorksheetPane from "./WorksheetPane";
 
 const editorStore = useSQLEditorStore();
-const { asidePanelTab } = useSQLEditorContext();
+const { asidePanelTab, maybeSwitchProject } = useSQLEditorContext();
 const { isDisconnected } = storeToRefs(useSQLEditorTabStore());
 
 const { project, projectContextReady } = storeToRefs(editorStore);
@@ -93,9 +94,9 @@ const allowCreateProject = computed(() => {
 
 const handleSwitchProject = (name: string | undefined) => {
   if (!name || !isValidProjectName(name)) {
-    project.value = "";
+    editorStore.setProject("");
   } else {
-    project.value = name;
+    maybeSwitchProject(name);
   }
 };
 </script>

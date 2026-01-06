@@ -30,7 +30,7 @@
 
       <template v-if="tab === 'ddl'">
         <div class="w-full flex flex-col justify-start">
-          <div class="flex flex-row justify-start items-center space-x-2">
+          <div class="flex flex-row justify-start items-center gap-x-2">
             <span>{{ $t("database.sync-schema.synchronize-statements") }}</span>
             <CopyButton size="small" :content="statement" />
           </div>
@@ -51,7 +51,7 @@
 </template>
 
 <script lang="ts" setup>
-import { NTabs, NTab } from "naive-ui";
+import { NTab, NTabs } from "naive-ui";
 import { ref } from "vue";
 import { MonacoEditor } from "@/components/MonacoEditor";
 import { CopyButton } from "@/components/v2";

@@ -6,12 +6,13 @@ import (
 	"fmt"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/plsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	plsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/plsql"
 )
 
@@ -20,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_ORACLE, advisor.SchemaRuleColumnTypeDisallowList, &ColumnTypeDisallowListAdvisor{})
+	advisor.Register(storepb.Engine_ORACLE, storepb.SQLReviewRule_COLUMN_TYPE_DISALLOW_LIST, &ColumnTypeDisallowListAdvisor{})
 }
 
 // ColumnTypeDisallowListAdvisor is the advisor checking for column type disallow list.
@@ -29,25 +30,28 @@ type ColumnTypeDisallowListAdvisor struct {
 
 // Check checks for column type disallow list.
 func (*ColumnTypeDisallowListAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	payload, err := advisor.UnmarshalStringArrayTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
+	stringArrayPayload := checkCtx.Rule.GetStringArrayPayload()
 
-	rule := NewColumnTypeDisallowListRule(level, string(checkCtx.Rule.Type), checkCtx.CurrentDatabase, payload.List)
+	rule := NewColumnTypeDisallowListRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase, stringArrayPayload.List)
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList()
 }
@@ -108,9 +112,9 @@ func (r *ColumnTypeDisallowListRule) handleColumnDefinition(ctx *parser.Column_d
 	if r.isDisallowType(ctx.Datatype()) {
 		r.AddAdvice(
 			r.level,
-			advisor.DisabledColumnType.Int32(),
+			code.DisabledColumnType.Int32(),
 			fmt.Sprintf("Disallow column type %s but column \"%s\" is", ctx.Datatype().GetText(), normalizeIdentifier(ctx.Column_name(), r.currentDatabase)),
-			common.ConvertANTLRLineToPosition(ctx.Datatype().GetStart().GetLine()),
+			common.ConvertANTLRLineToPosition(r.baseLine+ctx.Datatype().GetStart().GetLine()),
 		)
 	}
 	if ctx.Regular_id() != nil {
@@ -118,9 +122,9 @@ func (r *ColumnTypeDisallowListRule) handleColumnDefinition(ctx *parser.Column_d
 			if ctx.Regular_id().GetText() == tp {
 				r.AddAdvice(
 					r.level,
-					advisor.DisabledColumnType.Int32(),
+					code.DisabledColumnType.Int32(),
 					fmt.Sprintf("Disallow column type %s but column \"%s\" is", ctx.Regular_id().GetText(), normalizeIdentifier(ctx.Column_name(), r.currentDatabase)),
-					common.ConvertANTLRLineToPosition(ctx.Regular_id().GetStart().GetLine()),
+					common.ConvertANTLRLineToPosition(r.baseLine+ctx.Regular_id().GetStart().GetLine()),
 				)
 				break
 			}
@@ -132,9 +136,9 @@ func (r *ColumnTypeDisallowListRule) handleModifyColProperties(ctx *parser.Modif
 	if r.isDisallowType(ctx.Datatype()) {
 		r.AddAdvice(
 			r.level,
-			advisor.DisabledColumnType.Int32(),
+			code.DisabledColumnType.Int32(),
 			fmt.Sprintf("Disallow column type %s but column \"%s\" is", ctx.Datatype().GetText(), normalizeIdentifier(ctx.Column_name(), r.currentDatabase)),
-			common.ConvertANTLRLineToPosition(ctx.Datatype().GetStart().GetLine()),
+			common.ConvertANTLRLineToPosition(r.baseLine+ctx.Datatype().GetStart().GetLine()),
 		)
 	}
 }

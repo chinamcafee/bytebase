@@ -2,10 +2,10 @@
 // @generated from file v1/review_config_service.proto (package bytebase.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 import type { EmptySchema, FieldMask } from "@bufbuild/protobuf/wkt";
-import type { SQLReviewRule } from "./org_policy_service_pb";
+import type { Engine } from "./common_pb";
 
 /**
  * Describes the file v1/review_config_service.proto.
@@ -162,7 +162,7 @@ export declare type ReviewConfig = Message<"bytebase.v1.ReviewConfig"> & {
   /**
    * The SQL review rules to enforce.
    *
-   * @generated from field: repeated bytebase.v1.SQLReviewRule rules = 7;
+   * @generated from field: repeated bytebase.v1.SQLReviewRule rules = 4;
    */
   rules: SQLReviewRule[];
 
@@ -170,7 +170,7 @@ export declare type ReviewConfig = Message<"bytebase.v1.ReviewConfig"> & {
    * Resources using the config.
    * Format: {resource}/{resource id}, e.g., environments/test.
    *
-   * @generated from field: repeated string resources = 8;
+   * @generated from field: repeated string resources = 5;
    */
   resources: string[];
 };
@@ -180,6 +180,784 @@ export declare type ReviewConfig = Message<"bytebase.v1.ReviewConfig"> & {
  * Use `create(ReviewConfigSchema)` to create a new message.
  */
 export declare const ReviewConfigSchema: GenMessage<ReviewConfig>;
+
+/**
+ * SQL review rule configuration. Check the SQL_REVIEW_RULES_DOCUMENTATION.md for details.
+ *
+ * @generated from message bytebase.v1.SQLReviewRule
+ */
+export declare type SQLReviewRule = Message<"bytebase.v1.SQLReviewRule"> & {
+  /**
+   * The type of SQL review rule.
+   *
+   * @generated from field: bytebase.v1.SQLReviewRule.Type type = 1;
+   */
+  type: SQLReviewRule_Type;
+
+  /**
+   * The severity level of the rule.
+   *
+   * @generated from field: bytebase.v1.SQLReviewRule.Level level = 2;
+   */
+  level: SQLReviewRule_Level;
+
+  /**
+   * The payload is a typed message that varies by rule type.
+   *
+   * @generated from oneof bytebase.v1.SQLReviewRule.payload
+   */
+  payload: {
+    /**
+     * @generated from field: bytebase.v1.SQLReviewRule.NamingRulePayload naming_payload = 3;
+     */
+    value: SQLReviewRule_NamingRulePayload;
+    case: "namingPayload";
+  } | {
+    /**
+     * @generated from field: bytebase.v1.SQLReviewRule.NumberRulePayload number_payload = 4;
+     */
+    value: SQLReviewRule_NumberRulePayload;
+    case: "numberPayload";
+  } | {
+    /**
+     * @generated from field: bytebase.v1.SQLReviewRule.StringArrayRulePayload string_array_payload = 5;
+     */
+    value: SQLReviewRule_StringArrayRulePayload;
+    case: "stringArrayPayload";
+  } | {
+    /**
+     * @generated from field: bytebase.v1.SQLReviewRule.CommentConventionRulePayload comment_convention_payload = 6;
+     */
+    value: SQLReviewRule_CommentConventionRulePayload;
+    case: "commentConventionPayload";
+  } | {
+    /**
+     * @generated from field: bytebase.v1.SQLReviewRule.StringRulePayload string_payload = 7;
+     */
+    value: SQLReviewRule_StringRulePayload;
+    case: "stringPayload";
+  } | {
+    /**
+     * @generated from field: bytebase.v1.SQLReviewRule.NamingCaseRulePayload naming_case_payload = 8;
+     */
+    value: SQLReviewRule_NamingCaseRulePayload;
+    case: "namingCasePayload";
+  } | { case: undefined; value?: undefined };
+
+  /**
+   * The database engine this rule applies to.
+   *
+   * @generated from field: bytebase.v1.Engine engine = 9;
+   */
+  engine: Engine;
+};
+
+/**
+ * Describes the message bytebase.v1.SQLReviewRule.
+ * Use `create(SQLReviewRuleSchema)` to create a new message.
+ */
+export declare const SQLReviewRuleSchema: GenMessage<SQLReviewRule>;
+
+/**
+ * Payload message types for SQL review rules
+ *
+ * @generated from message bytebase.v1.SQLReviewRule.NamingRulePayload
+ */
+export declare type SQLReviewRule_NamingRulePayload = Message<"bytebase.v1.SQLReviewRule.NamingRulePayload"> & {
+  /**
+   * @generated from field: int32 max_length = 1;
+   */
+  maxLength: number;
+
+  /**
+   * @generated from field: string format = 2;
+   */
+  format: string;
+};
+
+/**
+ * Describes the message bytebase.v1.SQLReviewRule.NamingRulePayload.
+ * Use `create(SQLReviewRule_NamingRulePayloadSchema)` to create a new message.
+ */
+export declare const SQLReviewRule_NamingRulePayloadSchema: GenMessage<SQLReviewRule_NamingRulePayload>;
+
+/**
+ * @generated from message bytebase.v1.SQLReviewRule.NumberRulePayload
+ */
+export declare type SQLReviewRule_NumberRulePayload = Message<"bytebase.v1.SQLReviewRule.NumberRulePayload"> & {
+  /**
+   * @generated from field: int32 number = 1;
+   */
+  number: number;
+};
+
+/**
+ * Describes the message bytebase.v1.SQLReviewRule.NumberRulePayload.
+ * Use `create(SQLReviewRule_NumberRulePayloadSchema)` to create a new message.
+ */
+export declare const SQLReviewRule_NumberRulePayloadSchema: GenMessage<SQLReviewRule_NumberRulePayload>;
+
+/**
+ * @generated from message bytebase.v1.SQLReviewRule.StringArrayRulePayload
+ */
+export declare type SQLReviewRule_StringArrayRulePayload = Message<"bytebase.v1.SQLReviewRule.StringArrayRulePayload"> & {
+  /**
+   * @generated from field: repeated string list = 1;
+   */
+  list: string[];
+};
+
+/**
+ * Describes the message bytebase.v1.SQLReviewRule.StringArrayRulePayload.
+ * Use `create(SQLReviewRule_StringArrayRulePayloadSchema)` to create a new message.
+ */
+export declare const SQLReviewRule_StringArrayRulePayloadSchema: GenMessage<SQLReviewRule_StringArrayRulePayload>;
+
+/**
+ * @generated from message bytebase.v1.SQLReviewRule.CommentConventionRulePayload
+ */
+export declare type SQLReviewRule_CommentConventionRulePayload = Message<"bytebase.v1.SQLReviewRule.CommentConventionRulePayload"> & {
+  /**
+   * @generated from field: bool required = 1;
+   */
+  required: boolean;
+
+  /**
+   * @generated from field: int32 max_length = 2;
+   */
+  maxLength: number;
+};
+
+/**
+ * Describes the message bytebase.v1.SQLReviewRule.CommentConventionRulePayload.
+ * Use `create(SQLReviewRule_CommentConventionRulePayloadSchema)` to create a new message.
+ */
+export declare const SQLReviewRule_CommentConventionRulePayloadSchema: GenMessage<SQLReviewRule_CommentConventionRulePayload>;
+
+/**
+ * @generated from message bytebase.v1.SQLReviewRule.StringRulePayload
+ */
+export declare type SQLReviewRule_StringRulePayload = Message<"bytebase.v1.SQLReviewRule.StringRulePayload"> & {
+  /**
+   * @generated from field: string value = 1;
+   */
+  value: string;
+};
+
+/**
+ * Describes the message bytebase.v1.SQLReviewRule.StringRulePayload.
+ * Use `create(SQLReviewRule_StringRulePayloadSchema)` to create a new message.
+ */
+export declare const SQLReviewRule_StringRulePayloadSchema: GenMessage<SQLReviewRule_StringRulePayload>;
+
+/**
+ * @generated from message bytebase.v1.SQLReviewRule.NamingCaseRulePayload
+ */
+export declare type SQLReviewRule_NamingCaseRulePayload = Message<"bytebase.v1.SQLReviewRule.NamingCaseRulePayload"> & {
+  /**
+   * @generated from field: bool upper = 1;
+   */
+  upper: boolean;
+};
+
+/**
+ * Describes the message bytebase.v1.SQLReviewRule.NamingCaseRulePayload.
+ * Use `create(SQLReviewRule_NamingCaseRulePayloadSchema)` to create a new message.
+ */
+export declare const SQLReviewRule_NamingCaseRulePayloadSchema: GenMessage<SQLReviewRule_NamingCaseRulePayload>;
+
+/**
+ * The severity level for SQL review rules.
+ *
+ * @generated from enum bytebase.v1.SQLReviewRule.Level
+ */
+export enum SQLReviewRule_Level {
+  /**
+   * Unspecified level.
+   *
+   * @generated from enum value: LEVEL_UNSPECIFIED = 0;
+   */
+  LEVEL_UNSPECIFIED = 0,
+
+  /**
+   * Rule violation is an error.
+   *
+   * @generated from enum value: ERROR = 1;
+   */
+  ERROR = 1,
+
+  /**
+   * Rule violation is a warning.
+   *
+   * @generated from enum value: WARNING = 2;
+   */
+  WARNING = 2,
+}
+
+/**
+ * Describes the enum bytebase.v1.SQLReviewRule.Level.
+ */
+export declare const SQLReviewRule_LevelSchema: GenEnum<SQLReviewRule_Level>;
+
+/**
+ * @generated from enum bytebase.v1.SQLReviewRule.Type
+ */
+export enum SQLReviewRule_Type {
+  /**
+   * @generated from enum value: TYPE_UNSPECIFIED = 0;
+   */
+  TYPE_UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: ENGINE_MYSQL_USE_INNODB = 1;
+   */
+  ENGINE_MYSQL_USE_INNODB = 1,
+
+  /**
+   * @generated from enum value: NAMING_FULLY_QUALIFIED = 2;
+   */
+  NAMING_FULLY_QUALIFIED = 2,
+
+  /**
+   * @generated from enum value: NAMING_TABLE = 3;
+   */
+  NAMING_TABLE = 3,
+
+  /**
+   * @generated from enum value: NAMING_COLUMN = 4;
+   */
+  NAMING_COLUMN = 4,
+
+  /**
+   * @generated from enum value: NAMING_INDEX_PK = 5;
+   */
+  NAMING_INDEX_PK = 5,
+
+  /**
+   * @generated from enum value: NAMING_INDEX_UK = 6;
+   */
+  NAMING_INDEX_UK = 6,
+
+  /**
+   * @generated from enum value: NAMING_INDEX_FK = 7;
+   */
+  NAMING_INDEX_FK = 7,
+
+  /**
+   * @generated from enum value: NAMING_INDEX_IDX = 8;
+   */
+  NAMING_INDEX_IDX = 8,
+
+  /**
+   * @generated from enum value: NAMING_COLUMN_AUTO_INCREMENT = 9;
+   */
+  NAMING_COLUMN_AUTO_INCREMENT = 9,
+
+  /**
+   * @generated from enum value: NAMING_TABLE_NO_KEYWORD = 10;
+   */
+  NAMING_TABLE_NO_KEYWORD = 10,
+
+  /**
+   * @generated from enum value: NAMING_IDENTIFIER_NO_KEYWORD = 11;
+   */
+  NAMING_IDENTIFIER_NO_KEYWORD = 11,
+
+  /**
+   * @generated from enum value: NAMING_IDENTIFIER_CASE = 12;
+   */
+  NAMING_IDENTIFIER_CASE = 12,
+
+  /**
+   * @generated from enum value: STATEMENT_SELECT_NO_SELECT_ALL = 13;
+   */
+  STATEMENT_SELECT_NO_SELECT_ALL = 13,
+
+  /**
+   * @generated from enum value: STATEMENT_WHERE_REQUIRE_SELECT = 14;
+   */
+  STATEMENT_WHERE_REQUIRE_SELECT = 14,
+
+  /**
+   * @generated from enum value: STATEMENT_WHERE_REQUIRE_UPDATE_DELETE = 15;
+   */
+  STATEMENT_WHERE_REQUIRE_UPDATE_DELETE = 15,
+
+  /**
+   * @generated from enum value: STATEMENT_WHERE_NO_LEADING_WILDCARD_LIKE = 16;
+   */
+  STATEMENT_WHERE_NO_LEADING_WILDCARD_LIKE = 16,
+
+  /**
+   * @generated from enum value: STATEMENT_DISALLOW_ON_DEL_CASCADE = 17;
+   */
+  STATEMENT_DISALLOW_ON_DEL_CASCADE = 17,
+
+  /**
+   * @generated from enum value: STATEMENT_DISALLOW_RM_TBL_CASCADE = 18;
+   */
+  STATEMENT_DISALLOW_RM_TBL_CASCADE = 18,
+
+  /**
+   * @generated from enum value: STATEMENT_DISALLOW_COMMIT = 19;
+   */
+  STATEMENT_DISALLOW_COMMIT = 19,
+
+  /**
+   * @generated from enum value: STATEMENT_DISALLOW_LIMIT = 20;
+   */
+  STATEMENT_DISALLOW_LIMIT = 20,
+
+  /**
+   * @generated from enum value: STATEMENT_DISALLOW_ORDER_BY = 21;
+   */
+  STATEMENT_DISALLOW_ORDER_BY = 21,
+
+  /**
+   * @generated from enum value: STATEMENT_MERGE_ALTER_TABLE = 22;
+   */
+  STATEMENT_MERGE_ALTER_TABLE = 22,
+
+  /**
+   * @generated from enum value: STATEMENT_INSERT_ROW_LIMIT = 23;
+   */
+  STATEMENT_INSERT_ROW_LIMIT = 23,
+
+  /**
+   * @generated from enum value: STATEMENT_INSERT_MUST_SPECIFY_COLUMN = 24;
+   */
+  STATEMENT_INSERT_MUST_SPECIFY_COLUMN = 24,
+
+  /**
+   * @generated from enum value: STATEMENT_INSERT_DISALLOW_ORDER_BY_RAND = 25;
+   */
+  STATEMENT_INSERT_DISALLOW_ORDER_BY_RAND = 25,
+
+  /**
+   * @generated from enum value: STATEMENT_AFFECTED_ROW_LIMIT = 26;
+   */
+  STATEMENT_AFFECTED_ROW_LIMIT = 26,
+
+  /**
+   * @generated from enum value: STATEMENT_DML_DRY_RUN = 27;
+   */
+  STATEMENT_DML_DRY_RUN = 27,
+
+  /**
+   * @generated from enum value: STATEMENT_DISALLOW_ADD_COLUMN_WITH_DEFAULT = 28;
+   */
+  STATEMENT_DISALLOW_ADD_COLUMN_WITH_DEFAULT = 28,
+
+  /**
+   * @generated from enum value: STATEMENT_ADD_CHECK_NOT_VALID = 29;
+   */
+  STATEMENT_ADD_CHECK_NOT_VALID = 29,
+
+  /**
+   * @generated from enum value: STATEMENT_ADD_FOREIGN_KEY_NOT_VALID = 30;
+   */
+  STATEMENT_ADD_FOREIGN_KEY_NOT_VALID = 30,
+
+  /**
+   * @generated from enum value: STATEMENT_DISALLOW_ADD_NOT_NULL = 31;
+   */
+  STATEMENT_DISALLOW_ADD_NOT_NULL = 31,
+
+  /**
+   * @generated from enum value: STATEMENT_SELECT_FULL_TABLE_SCAN = 32;
+   */
+  STATEMENT_SELECT_FULL_TABLE_SCAN = 32,
+
+  /**
+   * @generated from enum value: STATEMENT_CREATE_SPECIFY_SCHEMA = 33;
+   */
+  STATEMENT_CREATE_SPECIFY_SCHEMA = 33,
+
+  /**
+   * @generated from enum value: STATEMENT_CHECK_SET_ROLE_VARIABLE = 34;
+   */
+  STATEMENT_CHECK_SET_ROLE_VARIABLE = 34,
+
+  /**
+   * @generated from enum value: STATEMENT_DISALLOW_USING_FILESORT = 35;
+   */
+  STATEMENT_DISALLOW_USING_FILESORT = 35,
+
+  /**
+   * @generated from enum value: STATEMENT_DISALLOW_USING_TEMPORARY = 36;
+   */
+  STATEMENT_DISALLOW_USING_TEMPORARY = 36,
+
+  /**
+   * @generated from enum value: STATEMENT_WHERE_NO_EQUAL_NULL = 37;
+   */
+  STATEMENT_WHERE_NO_EQUAL_NULL = 37,
+
+  /**
+   * @generated from enum value: STATEMENT_WHERE_DISALLOW_FUNCTIONS_AND_CALCULATIONS = 38;
+   */
+  STATEMENT_WHERE_DISALLOW_FUNCTIONS_AND_CALCULATIONS = 38,
+
+  /**
+   * @generated from enum value: STATEMENT_QUERY_MINIMUM_PLAN_LEVEL = 39;
+   */
+  STATEMENT_QUERY_MINIMUM_PLAN_LEVEL = 39,
+
+  /**
+   * @generated from enum value: STATEMENT_WHERE_MAXIMUM_LOGICAL_OPERATOR_COUNT = 40;
+   */
+  STATEMENT_WHERE_MAXIMUM_LOGICAL_OPERATOR_COUNT = 40,
+
+  /**
+   * @generated from enum value: STATEMENT_MAXIMUM_LIMIT_VALUE = 41;
+   */
+  STATEMENT_MAXIMUM_LIMIT_VALUE = 41,
+
+  /**
+   * @generated from enum value: STATEMENT_MAXIMUM_JOIN_TABLE_COUNT = 42;
+   */
+  STATEMENT_MAXIMUM_JOIN_TABLE_COUNT = 42,
+
+  /**
+   * @generated from enum value: STATEMENT_MAXIMUM_STATEMENTS_IN_TRANSACTION = 43;
+   */
+  STATEMENT_MAXIMUM_STATEMENTS_IN_TRANSACTION = 43,
+
+  /**
+   * @generated from enum value: STATEMENT_JOIN_STRICT_COLUMN_ATTRS = 44;
+   */
+  STATEMENT_JOIN_STRICT_COLUMN_ATTRS = 44,
+
+  /**
+   * @generated from enum value: STATEMENT_NON_TRANSACTIONAL = 45;
+   */
+  STATEMENT_NON_TRANSACTIONAL = 45,
+
+  /**
+   * @generated from enum value: STATEMENT_ADD_COLUMN_WITHOUT_POSITION = 46;
+   */
+  STATEMENT_ADD_COLUMN_WITHOUT_POSITION = 46,
+
+  /**
+   * @generated from enum value: STATEMENT_DISALLOW_OFFLINE_DDL = 47;
+   */
+  STATEMENT_DISALLOW_OFFLINE_DDL = 47,
+
+  /**
+   * @generated from enum value: STATEMENT_DISALLOW_CROSS_DB_QUERIES = 48;
+   */
+  STATEMENT_DISALLOW_CROSS_DB_QUERIES = 48,
+
+  /**
+   * @generated from enum value: STATEMENT_MAX_EXECUTION_TIME = 49;
+   */
+  STATEMENT_MAX_EXECUTION_TIME = 49,
+
+  /**
+   * @generated from enum value: STATEMENT_REQUIRE_ALGORITHM_OPTION = 50;
+   */
+  STATEMENT_REQUIRE_ALGORITHM_OPTION = 50,
+
+  /**
+   * @generated from enum value: STATEMENT_REQUIRE_LOCK_OPTION = 51;
+   */
+  STATEMENT_REQUIRE_LOCK_OPTION = 51,
+
+  /**
+   * @generated from enum value: STATEMENT_OBJECT_OWNER_CHECK = 52;
+   */
+  STATEMENT_OBJECT_OWNER_CHECK = 52,
+
+  /**
+   * @generated from enum value: TABLE_REQUIRE_PK = 53;
+   */
+  TABLE_REQUIRE_PK = 53,
+
+  /**
+   * @generated from enum value: TABLE_NO_FOREIGN_KEY = 54;
+   */
+  TABLE_NO_FOREIGN_KEY = 54,
+
+  /**
+   * @generated from enum value: TABLE_DROP_NAMING_CONVENTION = 55;
+   */
+  TABLE_DROP_NAMING_CONVENTION = 55,
+
+  /**
+   * @generated from enum value: TABLE_COMMENT = 56;
+   */
+  TABLE_COMMENT = 56,
+
+  /**
+   * @generated from enum value: TABLE_DISALLOW_PARTITION = 57;
+   */
+  TABLE_DISALLOW_PARTITION = 57,
+
+  /**
+   * @generated from enum value: TABLE_DISALLOW_TRIGGER = 58;
+   */
+  TABLE_DISALLOW_TRIGGER = 58,
+
+  /**
+   * @generated from enum value: TABLE_NO_DUPLICATE_INDEX = 59;
+   */
+  TABLE_NO_DUPLICATE_INDEX = 59,
+
+  /**
+   * @generated from enum value: TABLE_TEXT_FIELDS_TOTAL_LENGTH = 60;
+   */
+  TABLE_TEXT_FIELDS_TOTAL_LENGTH = 60,
+
+  /**
+   * @generated from enum value: TABLE_DISALLOW_SET_CHARSET = 61;
+   */
+  TABLE_DISALLOW_SET_CHARSET = 61,
+
+  /**
+   * @generated from enum value: TABLE_DISALLOW_DDL = 62;
+   */
+  TABLE_DISALLOW_DDL = 62,
+
+  /**
+   * @generated from enum value: TABLE_DISALLOW_DML = 63;
+   */
+  TABLE_DISALLOW_DML = 63,
+
+  /**
+   * @generated from enum value: TABLE_LIMIT_SIZE = 64;
+   */
+  TABLE_LIMIT_SIZE = 64,
+
+  /**
+   * @generated from enum value: TABLE_REQUIRE_CHARSET = 65;
+   */
+  TABLE_REQUIRE_CHARSET = 65,
+
+  /**
+   * @generated from enum value: TABLE_REQUIRE_COLLATION = 66;
+   */
+  TABLE_REQUIRE_COLLATION = 66,
+
+  /**
+   * @generated from enum value: COLUMN_REQUIRED = 67;
+   */
+  COLUMN_REQUIRED = 67,
+
+  /**
+   * @generated from enum value: COLUMN_NO_NULL = 68;
+   */
+  COLUMN_NO_NULL = 68,
+
+  /**
+   * @generated from enum value: COLUMN_DISALLOW_CHANGE_TYPE = 69;
+   */
+  COLUMN_DISALLOW_CHANGE_TYPE = 69,
+
+  /**
+   * @generated from enum value: COLUMN_SET_DEFAULT_FOR_NOT_NULL = 70;
+   */
+  COLUMN_SET_DEFAULT_FOR_NOT_NULL = 70,
+
+  /**
+   * @generated from enum value: COLUMN_DISALLOW_CHANGE = 71;
+   */
+  COLUMN_DISALLOW_CHANGE = 71,
+
+  /**
+   * @generated from enum value: COLUMN_DISALLOW_CHANGING_ORDER = 72;
+   */
+  COLUMN_DISALLOW_CHANGING_ORDER = 72,
+
+  /**
+   * @generated from enum value: COLUMN_DISALLOW_DROP = 73;
+   */
+  COLUMN_DISALLOW_DROP = 73,
+
+  /**
+   * @generated from enum value: COLUMN_DISALLOW_DROP_IN_INDEX = 74;
+   */
+  COLUMN_DISALLOW_DROP_IN_INDEX = 74,
+
+  /**
+   * @generated from enum value: COLUMN_COMMENT = 75;
+   */
+  COLUMN_COMMENT = 75,
+
+  /**
+   * @generated from enum value: COLUMN_AUTO_INCREMENT_MUST_INTEGER = 76;
+   */
+  COLUMN_AUTO_INCREMENT_MUST_INTEGER = 76,
+
+  /**
+   * @generated from enum value: COLUMN_TYPE_DISALLOW_LIST = 77;
+   */
+  COLUMN_TYPE_DISALLOW_LIST = 77,
+
+  /**
+   * @generated from enum value: COLUMN_DISALLOW_SET_CHARSET = 78;
+   */
+  COLUMN_DISALLOW_SET_CHARSET = 78,
+
+  /**
+   * @generated from enum value: COLUMN_MAXIMUM_CHARACTER_LENGTH = 79;
+   */
+  COLUMN_MAXIMUM_CHARACTER_LENGTH = 79,
+
+  /**
+   * @generated from enum value: COLUMN_MAXIMUM_VARCHAR_LENGTH = 80;
+   */
+  COLUMN_MAXIMUM_VARCHAR_LENGTH = 80,
+
+  /**
+   * @generated from enum value: COLUMN_AUTO_INCREMENT_INITIAL_VALUE = 81;
+   */
+  COLUMN_AUTO_INCREMENT_INITIAL_VALUE = 81,
+
+  /**
+   * @generated from enum value: COLUMN_AUTO_INCREMENT_MUST_UNSIGNED = 82;
+   */
+  COLUMN_AUTO_INCREMENT_MUST_UNSIGNED = 82,
+
+  /**
+   * @generated from enum value: COLUMN_CURRENT_TIME_COUNT_LIMIT = 83;
+   */
+  COLUMN_CURRENT_TIME_COUNT_LIMIT = 83,
+
+  /**
+   * @generated from enum value: COLUMN_REQUIRE_DEFAULT = 84;
+   */
+  COLUMN_REQUIRE_DEFAULT = 84,
+
+  /**
+   * @generated from enum value: COLUMN_DEFAULT_DISALLOW_VOLATILE = 85;
+   */
+  COLUMN_DEFAULT_DISALLOW_VOLATILE = 85,
+
+  /**
+   * @generated from enum value: COLUMN_ADD_NOT_NULL_REQUIRE_DEFAULT = 86;
+   */
+  COLUMN_ADD_NOT_NULL_REQUIRE_DEFAULT = 86,
+
+  /**
+   * @generated from enum value: COLUMN_REQUIRE_CHARSET = 87;
+   */
+  COLUMN_REQUIRE_CHARSET = 87,
+
+  /**
+   * @generated from enum value: COLUMN_REQUIRE_COLLATION = 88;
+   */
+  COLUMN_REQUIRE_COLLATION = 88,
+
+  /**
+   * @generated from enum value: SCHEMA_BACKWARD_COMPATIBILITY = 89;
+   */
+  SCHEMA_BACKWARD_COMPATIBILITY = 89,
+
+  /**
+   * @generated from enum value: DATABASE_DROP_EMPTY_DATABASE = 90;
+   */
+  DATABASE_DROP_EMPTY_DATABASE = 90,
+
+  /**
+   * @generated from enum value: INDEX_NO_DUPLICATE_COLUMN = 91;
+   */
+  INDEX_NO_DUPLICATE_COLUMN = 91,
+
+  /**
+   * @generated from enum value: INDEX_KEY_NUMBER_LIMIT = 92;
+   */
+  INDEX_KEY_NUMBER_LIMIT = 92,
+
+  /**
+   * @generated from enum value: INDEX_PK_TYPE_LIMIT = 93;
+   */
+  INDEX_PK_TYPE_LIMIT = 93,
+
+  /**
+   * @generated from enum value: INDEX_TYPE_NO_BLOB = 94;
+   */
+  INDEX_TYPE_NO_BLOB = 94,
+
+  /**
+   * @generated from enum value: INDEX_TOTAL_NUMBER_LIMIT = 95;
+   */
+  INDEX_TOTAL_NUMBER_LIMIT = 95,
+
+  /**
+   * @generated from enum value: INDEX_PRIMARY_KEY_TYPE_ALLOWLIST = 96;
+   */
+  INDEX_PRIMARY_KEY_TYPE_ALLOWLIST = 96,
+
+  /**
+   * @generated from enum value: INDEX_CREATE_CONCURRENTLY = 97;
+   */
+  INDEX_CREATE_CONCURRENTLY = 97,
+
+  /**
+   * @generated from enum value: INDEX_TYPE_ALLOW_LIST = 98;
+   */
+  INDEX_TYPE_ALLOW_LIST = 98,
+
+  /**
+   * @generated from enum value: INDEX_NOT_REDUNDANT = 99;
+   */
+  INDEX_NOT_REDUNDANT = 99,
+
+  /**
+   * @generated from enum value: SYSTEM_CHARSET_ALLOWLIST = 100;
+   */
+  SYSTEM_CHARSET_ALLOWLIST = 100,
+
+  /**
+   * @generated from enum value: SYSTEM_COLLATION_ALLOWLIST = 101;
+   */
+  SYSTEM_COLLATION_ALLOWLIST = 101,
+
+  /**
+   * @generated from enum value: SYSTEM_COMMENT_LENGTH = 102;
+   */
+  SYSTEM_COMMENT_LENGTH = 102,
+
+  /**
+   * @generated from enum value: SYSTEM_PROCEDURE_DISALLOW_CREATE = 103;
+   */
+  SYSTEM_PROCEDURE_DISALLOW_CREATE = 103,
+
+  /**
+   * @generated from enum value: SYSTEM_EVENT_DISALLOW_CREATE = 104;
+   */
+  SYSTEM_EVENT_DISALLOW_CREATE = 104,
+
+  /**
+   * @generated from enum value: SYSTEM_VIEW_DISALLOW_CREATE = 105;
+   */
+  SYSTEM_VIEW_DISALLOW_CREATE = 105,
+
+  /**
+   * @generated from enum value: SYSTEM_FUNCTION_DISALLOW_CREATE = 106;
+   */
+  SYSTEM_FUNCTION_DISALLOW_CREATE = 106,
+
+  /**
+   * @generated from enum value: SYSTEM_FUNCTION_DISALLOWED_LIST = 107;
+   */
+  SYSTEM_FUNCTION_DISALLOWED_LIST = 107,
+
+  /**
+   * @generated from enum value: ADVICE_ONLINE_MIGRATION = 108;
+   */
+  ADVICE_ONLINE_MIGRATION = 108,
+
+  /**
+   * @generated from enum value: BUILTIN_PRIOR_BACKUP_CHECK = 109;
+   */
+  BUILTIN_PRIOR_BACKUP_CHECK = 109,
+}
+
+/**
+ * Describes the enum bytebase.v1.SQLReviewRule.Type.
+ */
+export declare const SQLReviewRule_TypeSchema: GenEnum<SQLReviewRule_Type>;
 
 /**
  * ReviewConfigService manages approval flow configurations.

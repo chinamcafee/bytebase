@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	advisorcode "github.com/bytebase/bytebase/backend/plugin/advisor/code"
 )
 
 var (
@@ -21,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleCollationAllowlist, &CollationAllowlistAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_SYSTEM_COLLATION_ALLOWLIST, &CollationAllowlistAdvisor{})
 }
 
 // CollationAllowlistAdvisor is the advisor checking for collation allowlist.
@@ -30,25 +30,23 @@ type CollationAllowlistAdvisor struct {
 
 // Check checks for collation allowlist.
 func (*CollationAllowlistAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalStringArrayTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
+	stringArrayPayload := checkCtx.Rule.GetStringArrayPayload()
 	checker := &collationAllowlistChecker{
 		level:     level,
-		title:     string(checkCtx.Rule.Type),
+		title:     checkCtx.Rule.Type.String(),
 		allowlist: make(map[string]bool),
 	}
-	for _, collation := range payload.List {
+	for _, collation := range stringArrayPayload.List {
 		checker.allowlist[strings.ToLower(collation)] = true
 	}
 
@@ -72,27 +70,27 @@ type collationAllowlistChecker struct {
 
 // Enter implements the ast.Visitor interface.
 func (checker *collationAllowlistChecker) Enter(in ast.Node) (ast.Node, bool) {
-	code := advisor.Ok
+	code := advisorcode.Ok
 	var disabledCollation string
 	line := checker.line
 	switch node := in.(type) {
 	case *ast.CreateDatabaseStmt:
 		collation := getDatabaseCollation(node.Options)
 		if _, exists := checker.allowlist[collation]; collation != "" && !exists {
-			code = advisor.DisabledCollation
+			code = advisorcode.DisabledCollation
 			disabledCollation = collation
 		}
 	case *ast.CreateTableStmt:
 		collation := getTableCollation(node.Options)
 		if _, exist := checker.allowlist[collation]; collation != "" && !exist {
-			code = advisor.DisabledCollation
+			code = advisorcode.DisabledCollation
 			disabledCollation = collation
 			break
 		}
 		for _, column := range node.Cols {
 			collation := getColumnCollation(column)
 			if _, exist := checker.allowlist[collation]; collation != "" && !exist {
-				code = advisor.DisabledCollation
+				code = advisorcode.DisabledCollation
 				disabledCollation = collation
 				line = column.OriginTextPosition()
 				break
@@ -101,7 +99,7 @@ func (checker *collationAllowlistChecker) Enter(in ast.Node) (ast.Node, bool) {
 	case *ast.AlterDatabaseStmt:
 		collation := getDatabaseCollation(node.Options)
 		if _, exist := checker.allowlist[collation]; collation != "" && !exist {
-			code = advisor.DisabledCollation
+			code = advisorcode.DisabledCollation
 			disabledCollation = collation
 		}
 	case *ast.AlterTableStmt:
@@ -110,14 +108,14 @@ func (checker *collationAllowlistChecker) Enter(in ast.Node) (ast.Node, bool) {
 			case ast.AlterTableOption:
 				collation := getTableCollation(spec.Options)
 				if _, exist := checker.allowlist[collation]; collation != "" && !exist {
-					code = advisor.DisabledCollation
+					code = advisorcode.DisabledCollation
 					disabledCollation = collation
 				}
 			case ast.AlterTableAddColumns:
 				for _, column := range spec.NewColumns {
 					collation := getColumnCollation(column)
 					if _, exist := checker.allowlist[collation]; collation != "" && !exist {
-						code = advisor.DisabledCollation
+						code = advisorcode.DisabledCollation
 						disabledCollation = collation
 						break
 					}
@@ -125,7 +123,7 @@ func (checker *collationAllowlistChecker) Enter(in ast.Node) (ast.Node, bool) {
 			case ast.AlterTableChangeColumn, ast.AlterTableModifyColumn:
 				collation := getColumnCollation(spec.NewColumns[0])
 				if _, exist := checker.allowlist[collation]; collation != "" && !exist {
-					code = advisor.DisabledCollation
+					code = advisorcode.DisabledCollation
 					disabledCollation = collation
 				}
 			default:
@@ -134,7 +132,7 @@ func (checker *collationAllowlistChecker) Enter(in ast.Node) (ast.Node, bool) {
 		}
 	}
 
-	if code != advisor.Ok {
+	if code != advisorcode.Ok {
 		checker.adviceList = append(checker.adviceList, &storepb.Advice{
 			Status:        checker.level,
 			Code:          code.Int32(),

@@ -24,9 +24,7 @@
       </div>
     </template>
     <template v-else-if="mode === 'CHAT'">
-      <div
-        class="w-full h-full flex flex-col justify-end items-center pb-[2rem]"
-      >
+      <div class="w-full h-full flex flex-col justify-end items-center pb-8">
         <i18n-t
           keypath="plugin.ai.conversation.select-or-create"
           tag="p"
@@ -52,10 +50,10 @@ import { ref, toRef, watch } from "vue";
 import { useAIContext } from "../../logic";
 import type { Conversation } from "../../types";
 import AIMessageView from "./AIMessageView.vue";
-import EmptyView from "./EmptyView.vue";
-import UserMessageView from "./UserMessageView.vue";
 import { provideChatViewContext } from "./context";
+import EmptyView from "./EmptyView.vue";
 import type { Mode } from "./types";
+import UserMessageView from "./UserMessageView.vue";
 
 const props = withDefaults(
   defineProps<{

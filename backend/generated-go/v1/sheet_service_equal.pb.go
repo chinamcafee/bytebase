@@ -3,11 +3,6 @@
 
 package v1
 
-import (
-	proto "google.golang.org/protobuf/proto"
-	fieldmaskpb "google.golang.org/protobuf/types/known/fieldmaskpb"
-)
-
 func (x *CreateSheetRequest) Equal(y *CreateSheetRequest) bool {
 	if x == y {
 		return true
@@ -79,29 +74,6 @@ func (x *GetSheetRequest) Equal(y *GetSheetRequest) bool {
 	return true
 }
 
-func (x *UpdateSheetRequest) Equal(y *UpdateSheetRequest) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if !x.Sheet.Equal(y.Sheet) {
-		return false
-	}
-	if equal, ok := interface{}(x.UpdateMask).(interface {
-		Equal(*fieldmaskpb.FieldMask) bool
-	}); !ok || !equal.Equal(y.UpdateMask) {
-		return false
-	} else if !proto.Equal(x.UpdateMask, y.UpdateMask) {
-		return false
-	}
-	if x.AllowMissing != y.AllowMissing {
-		return false
-	}
-	return true
-}
-
 func (x *Sheet) Equal(y *Sheet) bool {
 	if x == y {
 		return true
@@ -112,62 +84,10 @@ func (x *Sheet) Equal(y *Sheet) bool {
 	if x.Name != y.Name {
 		return false
 	}
-	if x.Title != y.Title {
-		return false
-	}
-	if x.Creator != y.Creator {
-		return false
-	}
-	if p, q := x.CreateTime, y.CreateTime; (p == nil && q != nil) || (p != nil && (q == nil || p.Seconds != q.Seconds || p.Nanos != q.Nanos)) {
-		return false
-	}
 	if string(x.Content) != string(y.Content) {
 		return false
 	}
 	if x.ContentSize != y.ContentSize {
-		return false
-	}
-	if !x.Payload.Equal(y.Payload) {
-		return false
-	}
-	if x.Engine != y.Engine {
-		return false
-	}
-	return true
-}
-
-func (x *SheetPayload) Equal(y *SheetPayload) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Type != y.Type {
-		return false
-	}
-	if len(x.Commands) != len(y.Commands) {
-		return false
-	}
-	for i := 0; i < len(x.Commands); i++ {
-		if !x.Commands[i].Equal(y.Commands[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func (x *SheetCommand) Equal(y *SheetCommand) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Start != y.Start {
-		return false
-	}
-	if x.End != y.End {
 		return false
 	}
 	return true

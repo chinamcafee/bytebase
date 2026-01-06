@@ -1,6 +1,6 @@
 <template>
   <div
-    class="w-full overflow-hidden space-y-2 py-0.5"
+    class="w-full overflow-hidden flex flex-col gap-y-2 py-0.5"
     :class="[root ? '' : 'border rounded-[3px] bg-gray-50']"
   >
     <div v-if="!root" class="pl-2.5 pr-1 text-gray-500 flex items-center">
@@ -25,12 +25,13 @@
           </i18n-t>
         </template>
       </div>
-      <div v-if="allowAdmin" class="flex items-center justify-end">
+      <div class="flex items-center justify-end">
         <NButton
           size="tiny"
           quaternary
           type="default"
-          :style="`flex-shrink: 0; padding-left: 0; padding-right: 0; --n-width: 22px;`"
+          :style="`shrink: 0; padding-left: 0; padding-right: 0; --n-width: 22px;`"
+          :disabled="readonly"
           @click="emit('remove')"
         >
           <heroicons:trash class="w-3.5 h-3.5" />
@@ -38,7 +39,7 @@
       </div>
     </div>
 
-    <div v-if="root && args.length === 0" class="px-1.5 text-gray-500">
+    <div v-if="root && args.length === 0" class="text-gray-500">
       {{ $t("cel.condition.add-root-condition-placeholder") }}
     </div>
     <div
@@ -50,10 +51,11 @@
       <div class="w-14 shrink-0">
         <div v-if="i === 0" class="pl-1.5 pt-1 text-control">Where</div>
         <NSelect
-          v-else-if="i === 1 && allowAdmin"
+          v-else-if="i === 1"
           v-model:value="operator"
           :options="OPERATORS"
           :consistent-menu-width="false"
+          :disabled="readonly"
           size="small"
           @update:value="$emit('update')"
         />
@@ -61,7 +63,7 @@
           {{ operatorLabel(operator) }}
         </div>
       </div>
-      <div class="flex-1 space-y-1 overflow-x-hidden">
+      <div class="flex-1 flex flex-col gap-y-1 overflow-x-hidden">
         <ConditionGroup
           v-if="isConditionGroupExpr(operand)"
           :key="i"
@@ -84,14 +86,14 @@
       </div>
     </div>
 
-    <div v-if="!root && allowAdmin" class="pl-1.5 pb-1">
-      <NButton size="small" quaternary @click="addCondition">
+    <div v-if="!root" class="pl-1.5 pb-1">
+      <NButton size="small" quaternary :disabled="readonly" @click="addCondition">
         <template #icon
           ><heroicons:plus class="w-4 h-4 text-gray-500"
         /></template>
         <span class="text-gray-500">{{ $t("cel.condition.add") }}</span>
       </NButton>
-      <NButton size="small" quaternary @click="addRawString">
+      <NButton size="small" quaternary :disabled="readonly" @click="addRawString">
         <template #icon
           ><heroicons:plus class="w-4 h-4 text-gray-500"
         /></template>
@@ -101,12 +103,12 @@
       </NButton>
     </div>
 
-    <div v-if="root && allowAdmin" class="space-x-1">
-      <NButton size="small" quaternary @click="addCondition">
+    <div v-if="root" class="flex gap-x-1">
+      <NButton size="small" quaternary :disabled="readonly" @click="addCondition">
         <template #icon><heroicons:plus class="w-4 h-4" /></template>
         <span>{{ $t("cel.condition.add") }}</span>
       </NButton>
-      <NButton size="small" quaternary @click="addConditionGroup">
+      <NButton size="small" quaternary :disabled="readonly" @click="addConditionGroup">
         <template #icon><heroicons:plus class="w-4 h-4" /></template>
         <span>{{ $t("cel.condition.add-group") }}</span>
         <NTooltip>
@@ -122,6 +124,7 @@
         v-if="enableRawExpression"
         size="small"
         quaternary
+        :disabled="readonly"
         @click="addRawString"
       >
         <template #icon><heroicons:plus class="w-4 h-4" /></template>
@@ -138,22 +141,22 @@ import { computed } from "vue";
 import {
   type ConditionExpr,
   type ConditionGroupExpr,
-  type LogicalOperator,
-  LogicalOperatorList,
-  isConditionGroupExpr,
-  isConditionExpr,
-  isRawStringExpr,
   ExprType,
-  type RawStringExpr,
-  isNumberFactor,
   type Factor,
+  isConditionExpr,
+  isConditionGroupExpr,
+  isNumberFactor,
+  isRawStringExpr,
   isStringFactor,
   isTimestampFactor,
+  type LogicalOperator,
+  LogicalOperatorList,
+  type RawStringExpr,
 } from "@/plugins/cel";
 import Condition from "./Condition.vue";
-import RawString from "./RawString.vue";
 import { getOperatorListByFactor } from "./components/common";
 import { useExprEditorContext } from "./context";
+import RawString from "./RawString.vue";
 
 const props = defineProps<{
   expr: ConditionGroupExpr;
@@ -165,12 +168,8 @@ const emit = defineEmits<{
   (event: "update"): void;
 }>();
 
-const {
-  allowAdmin,
-  enableRawExpression,
-  factorList,
-  factorOperatorOverrideMap,
-} = useExprEditorContext();
+const { readonly, enableRawExpression, factorList, factorOperatorOverrideMap } =
+  useExprEditorContext();
 
 const operator = computed({
   get() {
@@ -193,6 +192,13 @@ const OPERATORS: SelectOption[] = [
   { label: operatorLabel("_||_"), value: "_||_" },
 ];
 
+const getDefaultValue = (factor: Factor): string | number | Date => {
+  if (isNumberFactor(factor)) return 0;
+  if (isStringFactor(factor)) return "";
+  if (isTimestampFactor(factor)) return new Date();
+  return "";
+};
+
 const addCondition = () => {
   const factor = factorList.value[0];
   const operators = getOperatorListByFactor(
@@ -200,11 +206,16 @@ const addCondition = () => {
     factorOperatorOverrideMap.value
   );
 
+  const operator = operators[0];
+  if (!operator) {
+    return;
+  }
+
   args.value.push({
     type: ExprType.Condition,
-    operator: operators[0] ?? "",
+    operator,
     args: [factor, getDefaultValue(factor)],
-  } as any);
+  } as ConditionExpr);
   emit("update");
 };
 
@@ -247,13 +258,5 @@ const removeRawString = (rawString: RawStringExpr) => {
     args.value.splice(index, 1);
     emit("update");
   }
-};
-
-const getDefaultValue = (factor: Factor): any => {
-  if (isNumberFactor(factor)) return 0;
-  if (isStringFactor(factor)) return "";
-  if (isTimestampFactor(factor)) return new Date();
-  // Fall back to empty string.
-  return "";
 };
 </script>

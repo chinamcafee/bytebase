@@ -37,7 +37,7 @@
     </div>
 
     <div v-if="release" class="border rounded-md px-4 py-3 bg-gray-50">
-      <div class="space-y-3">
+      <div class="flex flex-col gap-y-3">
         <div class="flex items-start justify-between">
           <div>
             <h3 class="text-sm font-medium text-gray-900">
@@ -49,7 +49,10 @@
           </div>
         </div>
 
-        <div v-if="release.files && release.files.length > 0" class="space-y-2">
+        <div
+          v-if="release.files && release.files.length > 0"
+          class="flex flex-col gap-y-2"
+        >
           <div class="flex items-center justify-between">
             <h4 class="text-sm font-medium text-gray-700">
               {{ $t("release.files") }} ({{ release.files.length }})
@@ -70,24 +73,24 @@
           >
             <div
               v-for="file in displayedFiles"
-              :key="file.id"
-              class="w-full flex items-center justify-between text-xs bg-white rounded p-2"
+              :key="file.path"
+              class="w-full flex items-center justify-between text-xs bg-white rounded-sm p-2"
             >
               <div class="flex-1 min-w-0 mr-2">
                 <div class="font-medium truncate">{{ file.path }}</div>
                 <div class="text-gray-500">
                   {{ file.version }} •
-                  {{ getChangeTypeText(file.migrationType) }}
+                  {{ getChangeTypeText(file.enableGhost) }}
                 </div>
               </div>
               <div
-                v-if="file.type"
+                v-if="release.type"
                 :class="[
-                  'inline-flex items-center px-1.5 py-0.5 rounded text-xs flex-shrink-0',
+                  'inline-flex items-center px-1.5 py-0.5 rounded-sm text-xs shrink-0',
                   'bg-blue-100 text-blue-800 ',
                 ]"
               >
-                {{ getReleaseFileTypeText(file.type) }}
+                {{ getReleaseFileTypeText(release.type) }}
               </div>
             </div>
             <div
@@ -103,7 +106,7 @@
           </div>
         </div>
 
-        <div v-if="release.vcsSource" class="space-y-1">
+        <div v-if="release.vcsSource" class="flex flex-col gap-y-1">
           <h4 class="text-sm font-medium text-gray-700">
             {{ $t("release.vcs-source") }}
           </h4>
@@ -133,7 +136,7 @@
     </div>
 
     <div v-else-if="loading" class="border rounded-md p-4 bg-gray-50">
-      <div class="flex items-center space-x-2">
+      <div class="flex items-center gap-x-2">
         <BBSpin />
         <span class="text-sm text-gray-600">
           {{ $t("common.loading") }}
@@ -151,20 +154,19 @@
 
 <script setup lang="ts">
 import dayjs from "dayjs";
-import { PackageIcon, ExternalLinkIcon } from "lucide-vue-next";
+import { ExternalLinkIcon, PackageIcon } from "lucide-vue-next";
 import { NAlert, NButton } from "naive-ui";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { BBSpin } from "@/bbkit";
 import { useReleaseByName } from "@/store";
-import { isValidReleaseName, getDateForPbTimestampProtoEs } from "@/types";
+import { getDateForPbTimestampProtoEs, isValidReleaseName } from "@/types";
 import { VCSType } from "@/types/proto-es/v1/common_pb";
-import { Release_File_Type } from "@/types/proto-es/v1/release_service_pb";
-import { Release_File_MigrationType } from "@/types/proto-es/v1/release_service_pb";
+import { Release_Type } from "@/types/proto-es/v1/release_service_pb";
 import { useSelectedSpec } from "../../SpecDetailView/context";
 
 const { t } = useI18n();
-const selectedSpec = useSelectedSpec();
+const { selectedSpec } = useSelectedSpec();
 
 const releaseName = computed(() => {
   if (selectedSpec.value?.config?.case === "changeDatabaseConfig") {
@@ -194,29 +196,19 @@ const displayedFiles = computed(() => {
   return release.value.files.slice(0, maxDisplayedFiles);
 });
 
-const getChangeTypeText = (migrationType: Release_File_MigrationType) => {
-  switch (migrationType) {
-    case Release_File_MigrationType.DDL:
-      return t("release.change-type.ddl");
-    case Release_File_MigrationType.DDL_GHOST:
-      return t("release.change-type.ddl-ghost");
-    case Release_File_MigrationType.DML:
-      return t("release.change-type.dml");
-    case Release_File_MigrationType.MIGRATION_TYPE_UNSPECIFIED:
-      return t("release.change-type.unspecified");
-    default:
-      migrationType satisfies never;
-      return t("release.change-type.unspecified");
-  }
+const getChangeTypeText = (enableGhost: boolean) => {
+  return enableGhost
+    ? t("release.change-type.ddl-ghost")
+    : t("release.change-type.ddl");
 };
 
-const getReleaseFileTypeText = (fileType: Release_File_Type) => {
+const getReleaseFileTypeText = (fileType: Release_Type) => {
   switch (fileType) {
-    case Release_File_Type.VERSIONED:
+    case Release_Type.VERSIONED:
       return t("release.file-type.versioned");
-    case Release_File_Type.DECLARATIVE:
+    case Release_Type.DECLARATIVE:
       return t("release.file-type.declarative");
-    case Release_File_Type.TYPE_UNSPECIFIED:
+    case Release_Type.TYPE_UNSPECIFIED:
       return t("release.file-type.unspecified");
     default:
       fileType satisfies never;

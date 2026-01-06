@@ -59,7 +59,6 @@ import { useRouter } from "vue-router";
 import {
   pushNotification,
   useDatabaseV1Store,
-  useGracefulRequest,
   useInstanceV1Store,
   useSubscriptionV1Store,
 } from "@/store";
@@ -73,15 +72,15 @@ import {
   InstanceSchema,
 } from "@/types/proto-es/v1/instance_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
-import { defer, isValidSpannerHost, convertKVListToLabels } from "@/utils";
-import ScanIntervalInput from "./ScanIntervalInput.vue";
+import { convertKVListToLabels, defer, isValidSpannerHost } from "@/utils";
 import {
   calcDataSourceUpdateMask,
+  type EditDataSource,
   extractBasicInfo,
   extractDataSourceEditState,
-  type EditDataSource,
 } from "./common";
 import { useInstanceFormContext } from "./context";
+import ScanIntervalInput from "./ScanIntervalInput.vue";
 
 const props = withDefaults(
   defineProps<{
@@ -249,7 +248,7 @@ const checkRODataSourceFeature = (instance: Instance) => {
       // Disallowed to create any new RO data sources
       return false;
     } else {
-      const editing = extractDataSourceFromEdit(instance, ds);
+      const editing = extractDataSourceFromEdit(instance.engine, ds);
       const original = instance.dataSources.find((d) => d.id === ds.id);
       if (original) {
         const updateMask = calcDataSourceUpdateMask(editing, original, ds);
@@ -281,25 +280,22 @@ const doCreate = async () => {
 
   state.value.isRequesting = true;
   try {
-    await useGracefulRequest(async () => {
-      const createdInstance = await instanceV1Store.createInstance(
-        pendingCreateInstance.value
-      );
-      if (props.onCreated) {
-        props.onCreated(createdInstance);
-      } else {
-        router.push(`/${createdInstance.name}`);
-        events.emit("dismiss");
-      }
+    const createdInstance = await instanceV1Store.createInstance(
+      pendingCreateInstance.value
+    );
+    if (props.onCreated) {
+      props.onCreated(createdInstance);
+    } else {
+      router.push(`/${createdInstance.name}`);
+      events.emit("dismiss");
+    }
 
-      pushNotification({
-        module: "bytebase",
-        style: "SUCCESS",
-        title: t(
-          "instance.successfully-created-instance-createdinstance-name",
-          [createdInstance.title]
-        ),
-      });
+    pushNotification({
+      module: "bytebase",
+      style: "SUCCESS",
+      title: t("instance.successfully-created-instance-createdinstance-name", [
+        createdInstance.title,
+      ]),
     });
   } finally {
     state.value.isRequesting = false;
@@ -351,7 +347,7 @@ const doUpdate = async () => {
   // 2. Update the admin datasource.
   // 3. Create OR update read-only data source(s).
 
-  const pendingRequestRunners: (() => Promise<any>)[] = [];
+  const pendingRequestRunners: (() => Promise<unknown>)[] = [];
 
   const maybeQueueUpdateInstanceBasicInfo = () => {
     const currentLabels = convertKVListToLabels(labelKVList.value, false);
@@ -378,9 +374,6 @@ const doUpdate = async () => {
       Number(inst.syncInterval?.seconds || 0n)
     ) {
       updateMask.push("sync_interval");
-    }
-    if (instancePatch.maximumConnections !== inst.maximumConnections) {
-      updateMask.push("maximum_connections");
     }
     if (!isEqual(instancePatch.syncDatabases, inst.syncDatabases)) {
       updateMask.push("sync_databases");
@@ -427,14 +420,21 @@ const doUpdate = async () => {
     }
 
     pendingRequestRunners.push(() =>
-      instanceV1Store.updateDataSource(inst, editing, updateMask)
+      instanceV1Store.updateDataSource({
+        instance: inst.name,
+        dataSource: editing,
+        updateMask,
+      })
     );
   };
   const maybeQueueUpdateAdminDataSource = async () => {
     const original = inst.dataSources.find(
       (ds) => ds.type === DataSourceType.ADMIN
     );
-    const editing = extractDataSourceFromEdit(inst, adminDataSource.value);
+    const editing = extractDataSourceFromEdit(
+      inst.engine,
+      adminDataSource.value
+    );
     return await maybeQueueUpdateDataSource(
       editing,
       original,
@@ -452,7 +452,7 @@ const doUpdate = async () => {
     // Upsert readonly data sources one by one
     for (let i = 0; i < readonlyDataSourceList.value.length; i++) {
       const editing = readonlyDataSourceList.value[i];
-      const patch = extractDataSourceFromEdit(inst, editing);
+      const patch = extractDataSourceFromEdit(inst.engine, editing);
       if (editing.pendingCreate) {
         const testResult = await testConnection(editing, /* silent */ true);
         if (!testResult.success) {
@@ -465,7 +465,10 @@ const doUpdate = async () => {
         }
 
         pendingRequestRunners.push(() =>
-          instanceV1Store.createDataSource(inst, patch)
+          instanceV1Store.createDataSource({
+            instance: inst.name,
+            dataSource: patch,
+          })
         );
       } else {
         const original = inst.dataSources.find((ds) => ds.id === editing.id);

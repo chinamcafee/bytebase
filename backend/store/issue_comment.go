@@ -13,14 +13,12 @@ import (
 )
 
 type IssueCommentMessage struct {
-	UID       int
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	IssueUID  int
-	Payload   *storepb.IssueCommentPayload
-	Creator   *UserMessage
-
-	creatorUID int
+	UID          int
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	IssueUID     int
+	Payload      *storepb.IssueCommentPayload
+	CreatorEmail string
 }
 
 type FindIssueCommentMessage struct {
@@ -55,7 +53,7 @@ func (s *Store) ListIssueComment(ctx context.Context, find *FindIssueCommentMess
 	q := qb.Q().Space(`
 		SELECT
 			id,
-			creator_id,
+			creator,
 			created_at,
 			updated_at,
 			issue_id,
@@ -99,7 +97,7 @@ func (s *Store) ListIssueComment(ctx context.Context, find *FindIssueCommentMess
 		var p []byte
 		if err := rows.Scan(
 			&ic.UID,
-			&ic.creatorUID,
+			&ic.CreatorEmail,
 			&ic.CreatedAt,
 			&ic.UpdatedAt,
 			&ic.IssueUID,
@@ -117,70 +115,62 @@ func (s *Store) ListIssueComment(ctx context.Context, find *FindIssueCommentMess
 		return nil, errors.Wrapf(err, "rows err")
 	}
 
-	for _, ic := range issueComments {
-		creator, err := s.GetUserByID(ctx, ic.creatorUID)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to get creator")
-		}
-		ic.Creator = creator
-	}
-
 	return issueComments, nil
 }
 
-func (s *Store) CreateIssueCommentTaskUpdateStatus(ctx context.Context, issueUID int, tasks []string, status storepb.TaskRun_Status, creatorUID int, comment string) error {
-	create := &IssueCommentMessage{
-		IssueUID: issueUID,
-		Payload: &storepb.IssueCommentPayload{
-			Comment: comment,
-			Event: &storepb.IssueCommentPayload_TaskUpdate_{
-				TaskUpdate: &storepb.IssueCommentPayload_TaskUpdate{
-					Tasks:    tasks,
-					ToStatus: &status,
-				},
-			},
-		},
+// CreateIssueComments creates one or more issue comments.
+// For a single comment, it returns the created comment with UID, CreatedAt, and UpdatedAt filled in.
+// For multiple comments, it performs a batch insert and returns nil.
+func (s *Store) CreateIssueComments(ctx context.Context, creator string, creates ...*IssueCommentMessage) (*IssueCommentMessage, error) {
+	if len(creates) == 0 {
+		return nil, nil
 	}
 
-	_, err := s.CreateIssueComment(ctx, create, creatorUID)
-	return err
-}
-
-func (s *Store) CreateIssueComment(ctx context.Context, create *IssueCommentMessage, creatorUID int) (*IssueCommentMessage, error) {
-	payload, err := protojson.Marshal(create.Payload)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to marshal payload")
+	// Prepare all payloads.
+	issueIDs := make([]int, 0, len(creates))
+	payloads := make([][]byte, 0, len(creates))
+	for _, create := range creates {
+		payload, err := protojson.Marshal(create.Payload)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to marshal payload")
+		}
+		issueIDs = append(issueIDs, create.IssueUID)
+		payloads = append(payloads, payload)
 	}
 
+	// Use UNNEST to insert all comments in one query.
 	q := qb.Q().Space(`
-		INSERT INTO issue_comment (
-			creator_id,
-			issue_id,
-			payload
-		) VALUES (
-			?,
-			?,
-			?
-		) RETURNING id, created_at, updated_at
-	`, creatorUID, create.IssueUID, payload)
+		INSERT INTO issue_comment (creator, issue_id, payload)
+		SELECT ?, unnest(?::INT[]), unnest(?::JSONB[])
+	`, creator, issueIDs, payloads)
 
+	// For single comment, use RETURNING to get the created comment details.
+	if len(creates) == 1 {
+		q.Space("RETURNING id, created_at, updated_at")
+		query, args, err := q.ToSQL()
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to build sql")
+		}
+
+		create := creates[0]
+		if err := s.GetDB().QueryRowContext(ctx, query, args...).Scan(&create.UID, &create.CreatedAt, &create.UpdatedAt); err != nil {
+			return nil, errors.Wrapf(err, "failed to insert")
+		}
+		create.CreatorEmail = creator
+		return create, nil
+	}
+
+	// For multiple comments, just execute without RETURNING.
 	query, args, err := q.ToSQL()
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to build sql")
 	}
 
-	if err := s.GetDB().QueryRowContext(ctx, query, args...).Scan(&create.UID, &create.CreatedAt, &create.UpdatedAt); err != nil {
-		return nil, errors.Wrapf(err, "failed to insert")
+	if _, err := s.GetDB().ExecContext(ctx, query, args...); err != nil {
+		return nil, errors.Wrapf(err, "failed to batch insert comments")
 	}
 
-	create.creatorUID = creatorUID
-	creator, err := s.GetUserByID(ctx, creatorUID)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get creator")
-	}
-	create.Creator = creator
-
-	return create, nil
+	return nil, nil
 }
 
 func (s *Store) UpdateIssueComment(ctx context.Context, patch *UpdateIssueCommentMessage) error {

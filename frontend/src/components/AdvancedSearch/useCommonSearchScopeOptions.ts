@@ -1,9 +1,9 @@
 import type { VNode } from "vue";
 import { computed, h, unref } from "vue";
 import {
+  EnvironmentV1Name,
   InstanceV1Name,
   ProjectV1Name,
-  EnvironmentV1Name,
   RichEngineName,
 } from "@/components/v2";
 import { t } from "@/plugins/i18n";
@@ -15,16 +15,15 @@ import {
   useProjectV1Store,
 } from "@/store";
 import type { MaybeRef } from "@/types";
-import { unknownEnvironment, UNKNOWN_ENVIRONMENT_NAME } from "@/types";
+import { UNKNOWN_ENVIRONMENT_NAME, unknownEnvironment } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import type { SearchScopeId } from "@/utils";
 import {
   extractEnvironmentResourceName,
   extractInstanceResourceName,
   extractProjectResourceName,
-  supportedEngineV1List,
   getDefaultPagination,
-  hasWorkspacePermissionV2,
+  supportedEngineV1List,
 } from "@/utils";
 import type { ScopeOption, ValueOption } from "./types";
 
@@ -218,12 +217,6 @@ export const useCommonSearchScopeOptions = (
 
     const scopes: ScopeOption[] = [];
     for (const id of unref(supportOptionIdList)) {
-      // TODO(ed): optimize it.
-      if (id === "instance") {
-        if (!hasWorkspacePermissionV2("bb.instances.list")) {
-          continue;
-        }
-      }
       const create = scopeCreators[id];
       if (create) {
         scopes.push(create());

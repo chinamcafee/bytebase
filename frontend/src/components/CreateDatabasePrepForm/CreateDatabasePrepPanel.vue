@@ -3,16 +3,17 @@
     :title="$t('quick-action.create-db')"
     class="w-[40rem] max-w-[100vw]"
   >
-    <div class="mx-auto space-y-4">
-      <div v-if="!isValidProjectName(currentProject.name)" class="w-full">
+    <div class="mx-auto flex flex-col gap-y-4">
+      <div class="w-full">
         <label for="project" class="textlabel">
           {{ $t("common.project") }}
           <RequiredStar />
         </label>
         <ProjectSelect
-          class="mt-1 !w-full"
+          class="mt-1 w-full!"
           required
-          v-model:project-name="state.projectName"
+          :disabled="isValidProjectName(currentProject.name)"
+          v-model:value="state.projectName"
         />
       </div>
 
@@ -25,9 +26,9 @@
           name="instance"
           required
           :disabled="!allowEditInstance"
-          :instance-name="state.instanceName"
+          :value="state.instanceName"
           :allowed-engine-list="supportedEngines"
-          @update:instance-name="selectInstance"
+          @update:value="selectInstance"
         />
       </div>
 
@@ -84,7 +85,7 @@
           {{ $t("common.environment") }}
         </label>
         <EnvironmentSelect
-          v-model:environment-name="state.environmentName"
+          v-model:value="state.environmentName"
           class="mt-1"
           required
           name="environment"
@@ -198,12 +199,12 @@ import {
 } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import type { InstanceRole } from "@/types/proto-es/v1/instance_role_service_pb";
-import { IssueSchema, Issue_Type } from "@/types/proto-es/v1/issue_service_pb";
+import { Issue_Type, IssueSchema } from "@/types/proto-es/v1/issue_service_pb";
 import type { Plan_CreateDatabaseConfig } from "@/types/proto-es/v1/plan_service_pb";
 import {
-  PlanSchema,
-  Plan_SpecSchema,
   Plan_CreateDatabaseConfigSchema,
+  Plan_SpecSchema,
+  PlanSchema,
 } from "@/types/proto-es/v1/plan_service_pb";
 import {
   enginesSupportCreateDatabase,
@@ -368,7 +369,8 @@ const create = async () => {
     const { createdIssue } = await experimentalCreateIssueByPlan(
       project,
       issueCreate,
-      planCreate
+      planCreate,
+      { skipRollout: true }
     );
     router.push({
       name: PROJECT_V1_ROUTE_ISSUE_DETAIL_V1,

@@ -1,5 +1,5 @@
 <template>
-  <div class="min-w-[14rem] max-w-[18rem] gap-y-1">
+  <div class="min-w-56 max-w-[18rem] gap-y-1">
     <InfoItem :title="$t('common.name')">
       {{ columnMetadata.name }}
     </InfoItem>
@@ -21,8 +21,8 @@
     <InfoItem v-if="collation" :title="$t('db.collation')">
       {{ collation }}
     </InfoItem>
-    <InfoItem v-if="columnMetadata.userComment" :title="$t('database.comment')">
-      {{ columnMetadata.userComment }}
+    <InfoItem v-if="columnMetadata.comment" :title="$t('database.comment')">
+      {{ columnMetadata.comment }}
     </InfoItem>
   </div>
 </template>
@@ -32,7 +32,7 @@ import { create } from "@bufbuild/protobuf";
 import { CheckIcon, XIcon } from "lucide-vue-next";
 import { computed } from "vue";
 import { getColumnDefaultValuePlaceholder } from "@/components/SchemaEditorLite";
-import { useDBSchemaV1Store, useDatabaseV1Store } from "@/store";
+import { useDatabaseV1Store, useDBSchemaV1Store } from "@/store";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import { ColumnMetadataSchema } from "@/types/proto-es/v1/database_service_pb";
 import InfoItem from "./InfoItem.vue";

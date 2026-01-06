@@ -1,31 +1,35 @@
 import { create } from "@bufbuild/protobuf";
-import { createContextValues } from "@connectrpc/connect";
-import { Code, ConnectError } from "@connectrpc/connect";
+import { DurationSchema } from "@bufbuild/protobuf/wkt";
+import { Code, ConnectError, createContextValues } from "@connectrpc/connect";
 import { defineStore } from "pinia";
-import { computed, ref, unref, watchEffect, reactive } from "vue";
-import { orgPolicyServiceClientConnect } from "@/grpcweb";
-import { silentContextKey } from "@/grpcweb/context-key";
+import { computed, reactive, ref, unref, watchEffect } from "vue";
+import { orgPolicyServiceClientConnect } from "@/connect";
+import { silentContextKey } from "@/connect/context-key";
 import { policyNamePrefix } from "@/store/modules/v1/common";
 import type { MaybeRef } from "@/types";
 import { UNKNOWN_USER_NAME } from "@/types";
-import type { Policy } from "@/types/proto-es/v1/org_policy_service_pb";
+import type {
+  Policy,
+  QueryDataPolicy,
+} from "@/types/proto-es/v1/org_policy_service_pb";
 import {
-  PolicyResourceType,
-  PolicyType,
-  QueryDataPolicySchema,
+  DeletePolicyRequestSchema,
   GetPolicyRequestSchema,
   ListPoliciesRequestSchema,
+  PolicyResourceType,
   PolicySchema,
-  UpdatePolicyRequestSchema,
-  DeletePolicyRequestSchema,
+  PolicyType,
+  QueryDataPolicySchema,
   RolloutPolicySchema,
-  RolloutPolicy_Checkers_PlanCheckEnforcement,
+  UpdatePolicyRequestSchema,
 } from "@/types/proto-es/v1/org_policy_service_pb";
 import { useCurrentUserV1 } from "./auth";
 
 interface PolicyState {
   policyMapByName: Map<string, Policy>;
 }
+
+export const DEFAULT_MAX_RESULT_SIZE_IN_MB = 100;
 
 const replacePolicyTypeNameToLowerCase = (name: string) => {
   const pattern = /(^|\/)policies\/([^/]+)($|\/)/;
@@ -61,22 +65,75 @@ export const usePolicyV1Store = defineStore("policy_v1", () => {
 
   const policyList = computed(() => Array.from(state.policyMapByName.values()));
 
-  const maximumResultRows = computed(() => {
-    const queryDataPolicy = getPolicyByParentAndType({
-      parentPath: "",
+  const getQueryDataPolicyByParent = (parent: string): QueryDataPolicy => {
+    const policy = getPolicyByParentAndType({
+      parentPath: parent,
       policyType: PolicyType.DATA_QUERY,
     });
+    return policy?.policy?.case === "queryDataPolicy"
+      ? policy.policy.value
+      : create(QueryDataPolicySchema, {
+          maximumResultSize: BigInt(
+            DEFAULT_MAX_RESULT_SIZE_IN_MB * 1024 * 1024
+          ),
+          maximumResultRows: -1,
+          timeout: create(DurationSchema, {
+            seconds: BigInt(0),
+          }),
+        });
+  };
 
-    const vaule =
-      queryDataPolicy?.policy?.case === "queryDataPolicy"
-        ? queryDataPolicy.policy.value
-        : create(QueryDataPolicySchema);
+  const formatQueryDataPolicy = (policy: QueryDataPolicy) => {
+    let maximumResultSize = Number(policy.maximumResultSize);
+    let maximumResultRows = policy.maximumResultRows;
+    let queryTimeoutInSeconds = Number(policy.timeout?.seconds ?? 0);
 
-    if (vaule.maximumResultRows <= 0) {
-      return Number.MAX_VALUE;
+    if (maximumResultSize <= 0) {
+      maximumResultSize = DEFAULT_MAX_RESULT_SIZE_IN_MB * 1024 * 1024;
     }
-    return vaule.maximumResultRows;
-  });
+    if (maximumResultRows <= 0) {
+      maximumResultRows = Number.MAX_VALUE;
+    }
+    if (queryTimeoutInSeconds <= 0) {
+      queryTimeoutInSeconds = Number.MAX_VALUE;
+    }
+
+    return {
+      disableCopyData: policy.disableCopyData,
+      disableExport: policy.disableExport,
+      maximumResultSize,
+      maximumResultRows,
+      queryTimeoutInSeconds,
+    };
+  };
+
+  const getEffectiveQueryDataPolicyForProject = (project: string) => {
+    const workspacePolicy = formatQueryDataPolicy(
+      getQueryDataPolicyByParent("")
+    );
+    const projectPolicy = formatQueryDataPolicy(
+      getQueryDataPolicyByParent(project)
+    );
+
+    return {
+      disableCopyData:
+        projectPolicy.disableCopyData || workspacePolicy.disableCopyData,
+      disableExport:
+        projectPolicy.disableExport || workspacePolicy.disableExport,
+      maximumResultRows: Math.min(
+        projectPolicy.maximumResultRows,
+        workspacePolicy.maximumResultRows
+      ),
+      maximumResultSize: Math.min(
+        projectPolicy.maximumResultSize,
+        workspacePolicy.maximumResultSize
+      ),
+      queryTimeoutInSeconds: Math.min(
+        projectPolicy.queryTimeoutInSeconds,
+        workspacePolicy.queryTimeoutInSeconds
+      ),
+    };
+  };
 
   const fetchPolicies = async ({
     resourceType,
@@ -220,7 +277,6 @@ export const usePolicyV1Store = defineStore("policy_v1", () => {
 
   return {
     policyList,
-    maximumResultRows,
     fetchPolicies,
     getPolicies,
     getOrFetchPolicyByParentAndType,
@@ -229,6 +285,8 @@ export const usePolicyV1Store = defineStore("policy_v1", () => {
     getPolicyByName,
     upsertPolicy,
     deletePolicy,
+    getQueryDataPolicyByParent,
+    getEffectiveQueryDataPolicyForProject,
   };
 });
 
@@ -236,8 +294,8 @@ const getUpdateMaskFromPolicyType = (policyType: PolicyType) => {
   switch (policyType) {
     case PolicyType.ROLLOUT_POLICY:
       return [PolicySchema.field.rolloutPolicy.name];
-    case PolicyType.MASKING_EXCEPTION:
-      return [PolicySchema.field.maskingExceptionPolicy.name];
+    case PolicyType.MASKING_EXEMPTION:
+      return [PolicySchema.field.maskingExemptionPolicy.name];
     case PolicyType.MASKING_RULE:
       return [PolicySchema.field.maskingRulePolicy.name];
     case PolicyType.DATA_QUERY:
@@ -309,8 +367,25 @@ export const usePolicyByParentAndType = (
   };
 };
 
-// Default RolloutPolicy payload is somehow strict to prevent auto rollout
-
+// getEmptyRolloutPolicy returns a default rollout policy for UI display purposes.
+//
+// IMPORTANT: These defaults MUST match the backend defaults defined in:
+// - backend/store/policy.go: GetDefaultRolloutPolicy()
+// - backend/api/v1/org_policy_service.go: getDefaultRolloutPolicy()
+//
+// This function is used for:
+// 1. Showing default policy in creation forms (so users see what they'll get)
+// 2. Allowing users to customize before creation
+// 3. Detecting if user customized from defaults (only persist if customized)
+//
+// The backend automatically returns these defaults via GetPolicy API when no
+// custom policy exists in the database, so we only persist customizations.
+//
+// Default values:
+// - automatic: false (manual rollout required)
+// - roles: [] (no role restrictions)
+// - requiredIssueApproval: true (issue must be approved before rollout)
+// - planCheckEnforcement: ERROR_ONLY (block rollout only on errors, not warnings)
 export const getEmptyRolloutPolicy = (
   parentPath: string,
   resourceType: PolicyResourceType
@@ -329,13 +404,6 @@ export const getEmptyRolloutPolicy = (
       value: create(RolloutPolicySchema, {
         automatic: false,
         roles: [],
-        checkers: {
-          requiredIssueApproval: true,
-          requiredStatusChecks: {
-            planCheckEnforcement:
-              RolloutPolicy_Checkers_PlanCheckEnforcement.ERROR_ONLY,
-          },
-        },
       }),
     },
   });

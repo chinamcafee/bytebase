@@ -1,19 +1,14 @@
 import { create } from "@bufbuild/protobuf";
 import { cloneDeep } from "lodash-es";
-import { planServiceClientConnect } from "@/grpcweb";
+import { planServiceClientConnect } from "@/connect";
 import { t } from "@/plugins/i18n";
-import { projectNamePrefix, useSheetV1Store } from "@/store";
-import { useProjectV1Store } from "@/store";
-import {
-  DatabaseChangeType,
-  MigrationType,
-} from "@/types/proto-es/v1/common_pb";
+import { projectNamePrefix, useProjectV1Store, useSheetV1Store } from "@/store";
 import type { Plan, Plan_Spec } from "@/types/proto-es/v1/plan_service_pb";
 import { UpdatePlanRequestSchema } from "@/types/proto-es/v1/plan_service_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import { SheetSchema } from "@/types/proto-es/v1/sheet_service_pb";
 import { extractProjectResourceName, setSheetStatement } from "@/utils";
-import { createEmptyLocalSheet, databaseEngineForSpec } from ".";
+import { createEmptyLocalSheet } from ".";
 
 export const projectOfPlan = (plan: Plan): Project => {
   const project = `projects/${extractProjectResourceName(plan.name)}`;
@@ -25,20 +20,7 @@ export const getSpecTitle = (spec: Plan_Spec): string => {
   if (spec.config?.case === "createDatabaseConfig") {
     title = t("plan.spec.type.create-database");
   } else if (spec.config?.case === "changeDatabaseConfig") {
-    const config = spec.config.value;
-    if (config.type === DatabaseChangeType.MIGRATE) {
-      if (config.migrationType === MigrationType.DML) {
-        title = t("plan.spec.type.data-change");
-      } else if (config.migrationType === MigrationType.GHOST) {
-        title = t("plan.spec.type.ghost-migration");
-      } else {
-        title = t("plan.spec.type.schema-change");
-      }
-    } else if (config.type === DatabaseChangeType.SDL) {
-      title = "SDL";
-    } else {
-      title = t("plan.spec.type.database-change");
-    }
+    title = t("plan.spec.type.database-change");
   } else if (spec.config?.case === "exportDataConfig") {
     title = t("plan.spec.type.export-data");
   } else {
@@ -67,11 +49,8 @@ export const updateSpecSheetWithStatement = async (
     );
   }
 
-  const specEngine = await databaseEngineForSpec(specToPatch);
   const newSheet = create(SheetSchema, {
     ...createEmptyLocalSheet(),
-    title: plan.title,
-    engine: specEngine,
   });
   setSheetStatement(newSheet, statement);
 

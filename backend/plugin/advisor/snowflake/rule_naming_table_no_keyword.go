@@ -5,12 +5,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/snowsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/snowflake"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	snowsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/snowflake"
 )
 
@@ -19,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_SNOWFLAKE, advisor.SchemaRuleTableNameNoKeyword, &NamingTableNoKeywordAdvisor{})
+	advisor.Register(storepb.Engine_SNOWFLAKE, storepb.SQLReviewRule_NAMING_TABLE_NO_KEYWORD, &NamingTableNoKeywordAdvisor{})
 }
 
 // NamingTableNoKeywordAdvisor is the advisor checking for table naming convention without keyword.
@@ -28,20 +30,26 @@ type NamingTableNoKeywordAdvisor struct {
 
 // Check checks for table naming convention without keyword.
 func (*NamingTableNoKeywordAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	rule := NewNamingTableNoKeywordRule(level, string(checkCtx.Rule.Type))
+	rule := NewNamingTableNoKeywordRule(level, checkCtx.Rule.Type.String())
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList(), nil
 }
@@ -90,7 +98,7 @@ func (r *NamingTableNoKeywordRule) enterCreateTable(ctx *parser.Create_tableCont
 	if snowsqlparser.IsSnowflakeKeyword(tableName, false) {
 		r.AddAdvice(&storepb.Advice{
 			Status:  r.level,
-			Code:    advisor.NameIsKeywordIdentifier.Int32(),
+			Code:    code.NameIsKeywordIdentifier.Int32(),
 			Title:   r.title,
 			Content: fmt.Sprintf("Table name %q is a keyword identifier and should be avoided.", tableName),
 		})
@@ -106,7 +114,7 @@ func (r *NamingTableNoKeywordRule) enterAlterTable(ctx *parser.Alter_tableContex
 	if snowsqlparser.IsSnowflakeKeyword(tableName, false) {
 		r.AddAdvice(&storepb.Advice{
 			Status:  r.level,
-			Code:    advisor.NameIsKeywordIdentifier.Int32(),
+			Code:    code.NameIsKeywordIdentifier.Int32(),
 			Title:   r.title,
 			Content: fmt.Sprintf("Table name %q is a keyword identifier and should be avoided.", tableName),
 		})

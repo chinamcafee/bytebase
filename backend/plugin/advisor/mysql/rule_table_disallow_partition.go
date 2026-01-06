@@ -4,13 +4,15 @@ import (
 	"context"
 	"fmt"
 
+	advisorcode "github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
-	"github.com/pkg/errors"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -19,9 +21,9 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleTableDisallowPartition, &TableDisallowPartitionAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleTableDisallowPartition, &TableDisallowPartitionAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleTableDisallowPartition, &TableDisallowPartitionAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_TABLE_DISALLOW_PARTITION, &TableDisallowPartitionAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_TABLE_DISALLOW_PARTITION, &TableDisallowPartitionAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_TABLE_DISALLOW_PARTITION, &TableDisallowPartitionAdvisor{})
 }
 
 // TableDisallowPartitionAdvisor is the advisor checking for disallow table partition.
@@ -30,26 +32,28 @@ type TableDisallowPartitionAdvisor struct {
 
 // Check checks for disallow table partition.
 func (*TableDisallowPartitionAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parser result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewTableDisallowPartitionRule(level, string(checkCtx.Rule.Type))
+	rule := NewTableDisallowPartitionRule(level, checkCtx.Rule.Type.String())
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -103,12 +107,12 @@ func (r *TableDisallowPartitionRule) checkCreateTable(ctx *mysql.CreateTableCont
 	if !mysqlparser.IsTopMySQLRule(&ctx.BaseParserRuleContext) {
 		return
 	}
-	code := advisor.Ok
+	code := advisorcode.Ok
 	if ctx.PartitionClause() != nil && ctx.PartitionClause().PartitionTypeDef() != nil {
-		code = advisor.CreateTablePartition
+		code = advisorcode.CreateTablePartition
 	}
 
-	if code != advisor.Ok {
+	if code != advisorcode.Ok {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
 			Code:          code.Int32(),
@@ -123,11 +127,11 @@ func (r *TableDisallowPartitionRule) checkAlterTable(ctx *mysql.AlterTableContex
 	if !mysqlparser.IsTopMySQLRule(&ctx.BaseParserRuleContext) {
 		return
 	}
-	code := advisor.Ok
+	code := advisorcode.Ok
 	if ctx.AlterTableActions() != nil && ctx.AlterTableActions().PartitionClause() != nil && ctx.AlterTableActions().PartitionClause().PartitionTypeDef() != nil {
-		code = advisor.CreateTablePartition
+		code = advisorcode.CreateTablePartition
 	}
-	if code != advisor.Ok {
+	if code != advisorcode.Ok {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
 			Code:          code.Int32(),

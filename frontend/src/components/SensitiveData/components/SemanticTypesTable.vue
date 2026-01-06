@@ -29,13 +29,13 @@
 <script lang="tsx" setup>
 import {
   CheckIcon,
+  InfoIcon,
   PencilIcon,
   TrashIcon,
   Undo2Icon,
-  InfoIcon,
 } from "lucide-vue-next";
-import { NPopconfirm, NInput, NDataTable, NTooltip } from "naive-ui";
 import type { DataTableColumn } from "naive-ui";
+import { NDataTable, NInput, NPopconfirm, NTooltip } from "naive-ui";
 import { computed, reactive } from "vue";
 import { useI18n } from "vue-i18n";
 import { MiniActionButton } from "@/components/v2";
@@ -140,8 +140,8 @@ const columnList = computed(() => {
         // For edit mode, show IconSelector
         return (
           <IconSelector
-            modelValue={item.item.icon || ""}
-            onUpdate:modelValue={(val: string) =>
+            value={item.item.icon || ""}
+            onUpdate:value={(val: string) =>
               onInput(row, (data) => (data.item.icon = val))
             }
           />
@@ -151,6 +151,7 @@ const columnList = computed(() => {
     {
       key: "id",
       title: "ID",
+      width: 150,
       resizable: true,
       ellipsis: {
         tooltip: true,
@@ -162,9 +163,12 @@ const columnList = computed(() => {
       title: t("settings.sensitive-data.semantic-types.table.semantic-type"),
       width: "minmax(min-content, auto)",
       resizable: true,
+      ellipsis: {
+        tooltip: true,
+      },
       render: (item, row) => {
         if (item.mode === "NORMAL") {
-          return <h3 class="break-normal">{item.item.title}</h3>;
+          return item.item.title;
         }
         return (
           <NInput
@@ -184,11 +188,11 @@ const columnList = computed(() => {
     {
       key: "description",
       title: t("settings.sensitive-data.semantic-types.table.description"),
+      width: 200,
       resizable: true,
       ellipsis: {
         tooltip: true,
       },
-      width: "minmax(min-content, auto)",
       render: (item, row) => {
         if (item.mode === "NORMAL") {
           return item.item.description;
@@ -213,11 +217,11 @@ const columnList = computed(() => {
   columns.push({
     key: "algorithm",
     title: t("settings.sensitive-data.semantic-types.table.masking-algorithm"),
-    resizable: true,
     width: "minmax(min-content, auto)",
+    resizable: true,
     render: (item, row) => {
       return (
-        <div class="flex items-center space-x-1">
+        <div class="flex items-center gap-x-1">
           {isBuiltinSemanticType(item.item) ? (
             <h3>
               {t(
@@ -264,9 +268,10 @@ const columnList = computed(() => {
   if (!props.readonly) {
     // operation.
     columns.push({
+      align: "right",
       key: "operation",
       title: t("common.edit"),
-      width: "minmax(min-content, auto)",
+      width: 100,
       render: (item, row) => {
         if (isBuiltinSemanticType(item.item)) {
           return (
@@ -290,7 +295,7 @@ const columnList = computed(() => {
         }
 
         return (
-          <div class="flex gap-x-2">
+          <div class="flex shrink gap-x-2 items-center justify-end">
             {item.mode !== "NORMAL" && (
               <MiniActionButton onClick={() => emit("cancel", row)}>
                 <Undo2Icon class="w-4 h-4" />

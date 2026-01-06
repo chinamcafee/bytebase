@@ -18,35 +18,6 @@ func (x *Policy) Equal(y *Policy) bool {
 	return true
 }
 
-func (x *RolloutPolicy_Checkers_RequiredStatusChecks) Equal(y *RolloutPolicy_Checkers_RequiredStatusChecks) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.PlanCheckEnforcement != y.PlanCheckEnforcement {
-		return false
-	}
-	return true
-}
-
-func (x *RolloutPolicy_Checkers) Equal(y *RolloutPolicy_Checkers) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.RequiredIssueApproval != y.RequiredIssueApproval {
-		return false
-	}
-	if !x.RequiredStatusChecks.Equal(y.RequiredStatusChecks) {
-		return false
-	}
-	return true
-}
-
 func (x *RolloutPolicy) Equal(y *RolloutPolicy) bool {
 	if x == y {
 		return true
@@ -65,24 +36,23 @@ func (x *RolloutPolicy) Equal(y *RolloutPolicy) bool {
 			return false
 		}
 	}
-	if !x.Checkers.Equal(y.Checkers) {
-		return false
-	}
 	return true
 }
 
-func (x *MaskingExceptionPolicy_MaskingException) Equal(y *MaskingExceptionPolicy_MaskingException) bool {
+func (x *MaskingExemptionPolicy_Exemption) Equal(y *MaskingExemptionPolicy_Exemption) bool {
 	if x == y {
 		return true
 	}
 	if x == nil || y == nil {
 		return x == nil && y == nil
 	}
-	if x.Action != y.Action {
+	if len(x.Members) != len(y.Members) {
 		return false
 	}
-	if x.Member != y.Member {
-		return false
+	for i := 0; i < len(x.Members); i++ {
+		if x.Members[i] != y.Members[i] {
+			return false
+		}
 	}
 	if equal, ok := interface{}(x.Condition).(interface{ Equal(*expr.Expr) bool }); !ok || !equal.Equal(y.Condition) {
 		return false
@@ -92,18 +62,18 @@ func (x *MaskingExceptionPolicy_MaskingException) Equal(y *MaskingExceptionPolic
 	return true
 }
 
-func (x *MaskingExceptionPolicy) Equal(y *MaskingExceptionPolicy) bool {
+func (x *MaskingExemptionPolicy) Equal(y *MaskingExemptionPolicy) bool {
 	if x == y {
 		return true
 	}
 	if x == nil || y == nil {
 		return x == nil && y == nil
 	}
-	if len(x.MaskingExceptions) != len(y.MaskingExceptions) {
+	if len(x.Exemptions) != len(y.Exemptions) {
 		return false
 	}
-	for i := 0; i < len(x.MaskingExceptions); i++ {
-		if !x.MaskingExceptions[i].Equal(y.MaskingExceptions[i]) {
+	for i := 0; i < len(x.Exemptions); i++ {
+		if !x.Exemptions[i].Equal(y.Exemptions[i]) {
 			return false
 		}
 	}
@@ -145,31 +115,6 @@ func (x *MaskingRulePolicy) Equal(y *MaskingRulePolicy) bool {
 		if !x.Rules[i].Equal(y.Rules[i]) {
 			return false
 		}
-	}
-	return true
-}
-
-func (x *SQLReviewRule) Equal(y *SQLReviewRule) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Type != y.Type {
-		return false
-	}
-	if x.Level != y.Level {
-		return false
-	}
-	if x.Payload != y.Payload {
-		return false
-	}
-	if x.Engine != y.Engine {
-		return false
-	}
-	if x.Comment != y.Comment {
-		return false
 	}
 	return true
 }

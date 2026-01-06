@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-6" v-bind="$attrs">
+  <div class="flex flex-col gap-y-6" v-bind="$attrs">
     <div :label="$t('settings.profile.password')">
       <div>
         <label class="block text-sm font-medium leading-5 text-control">
@@ -8,8 +8,8 @@
         </label>
         <span
           :class="[
-            'flex items-center gap-x-1 textinfolabel !text-sm',
-            passwordHint ? '!text-error' : '',
+            'flex items-center gap-x-1 textinfolabel text-sm!',
+            passwordHint ? 'text-error!' : '',
           ]"
         >
           {{ $t("settings.profile.password-hint") }}
@@ -22,7 +22,7 @@
           <LearnMoreLink
             v-if="showLearnMore"
             :external="false"
-            class="!text-sm"
+            class="text-sm!"
             :url="
               router.resolve({
                 name: SETTING_ROUTE_WORKSPACE_GENERAL,
@@ -32,7 +32,7 @@
           />
         </span>
       </div>
-      <div class="w-full space-y-1">
+      <div class="w-full flex flex-col gap-y-1">
         <div class="mt-1 relative flex flex-row items-center">
           <NInput
             :value="password"
@@ -96,11 +96,11 @@
 
 <script lang="tsx" setup>
 import {
+  CircleAlertIcon,
+  CircleCheckIcon,
   CircleHelpIcon,
   EyeIcon,
   EyeOffIcon,
-  CircleCheckIcon,
-  CircleAlertIcon,
 } from "lucide-vue-next";
 import { NInput, NTooltip } from "naive-ui";
 import { computed, ref } from "vue";
@@ -109,13 +109,13 @@ import { useRouter } from "vue-router";
 import LearnMoreLink from "@/components/LearnMoreLink.vue";
 import RequiredStar from "@/components/RequiredStar.vue";
 import { SETTING_ROUTE_WORKSPACE_GENERAL } from "@/router/dashboard/workspaceSetting";
-import { type PasswordRestrictionSetting } from "@/types/proto-es/v1/setting_service_pb";
+import { type WorkspaceProfileSetting_PasswordRestriction } from "@/types/proto-es/v1/setting_service_pb";
 
 const props = withDefaults(
   defineProps<{
     password: string;
     passwordConfirm: string;
-    passwordRestriction: PasswordRestrictionSetting;
+    passwordRestriction: WorkspaceProfileSetting_PasswordRestriction;
     showLearnMore?: boolean;
   }>(),
   {
@@ -166,8 +166,7 @@ const passwordCheck = computed(() => {
       text: t(
         "settings.general.workspace.password-restriction.require-special-character"
       ),
-      // eslint-disable-next-line no-useless-escape
-      matched: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]+/.test(props.password),
+      matched: /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]+/.test(props.password),
     });
   }
 

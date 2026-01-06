@@ -139,8 +139,8 @@
     v-model:show="state.showEditorModal"
     :title="statementTitle"
     :trap-focus="true"
-    header-class="!border-b-0"
-    container-class="!pt-0 !overflow-hidden"
+    header-class="border-b-0!"
+    container-class="pt-0! overflow-hidden!"
   >
     <div
       id="modal-editor-container"
@@ -176,12 +176,11 @@
 <script setup lang="ts">
 import { create } from "@bufbuild/protobuf";
 import { useElementSize } from "@vueuse/core";
-import { cloneDeep, head, isEmpty } from "lodash-es";
+import { cloneDeep, isEmpty } from "lodash-es";
 import { ExpandIcon } from "lucide-vue-next";
 import { NButton, NTooltip, useDialog } from "naive-ui";
 import { computed, reactive, ref, toRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute } from "vue-router";
 import { BBAttention, BBModal } from "@/bbkit";
 import { ErrorList } from "@/components/IssueV1/components/common";
 import {
@@ -191,14 +190,11 @@ import {
 } from "@/components/IssueV1/logic";
 import { MonacoEditor } from "@/components/MonacoEditor";
 import { extensionNameOfLanguage } from "@/components/MonacoEditor/utils";
-import {
-  createEmptyLocalSheet,
-  databaseEngineForSpec,
-} from "@/components/Plan";
+import SQLUploadButton from "@/components/misc/SQLUploadButton.vue";
+import { createEmptyLocalSheet } from "@/components/Plan";
 import RequiredStar from "@/components/RequiredStar.vue";
 import DownloadSheetButton from "@/components/Sheet/DownloadSheetButton.vue";
-import SQLUploadButton from "@/components/misc/SQLUploadButton.vue";
-import { planServiceClientConnect } from "@/grpcweb";
+import { planServiceClientConnect } from "@/connect";
 import {
   pushNotification,
   useCurrentProjectV1,
@@ -210,8 +206,8 @@ import { IssueStatus } from "@/types/proto-es/v1/issue_service_pb";
 import { UpdatePlanRequestSchema } from "@/types/proto-es/v1/plan_service_pb";
 import { SheetSchema } from "@/types/proto-es/v1/sheet_service_pb";
 import type { Advice } from "@/types/proto-es/v1/sql_service_pb";
-import { databaseForTask } from "@/utils";
 import {
+  databaseForTask,
   flattenTaskV1List,
   getSheetStatement,
   getStatementSize,
@@ -219,8 +215,8 @@ import {
   useInstanceV1EditorLanguage,
 } from "@/utils";
 import { useSQLAdviceMarkers } from "../useSQLAdviceMarkers";
-import EditorActionPopover from "./EditorActionPopover.vue";
 import { provideEditorContext } from "./context";
+import EditorActionPopover from "./EditorActionPopover.vue";
 import type { EditState } from "./useTempEditState";
 import { useTempEditState } from "./useTempEditState";
 
@@ -235,7 +231,6 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n();
-const route = useRoute();
 const context = useIssueContext();
 const { events, isCreating, issue, selectedTask } = context;
 const { project } = useCurrentProjectV1();
@@ -274,11 +269,6 @@ const statementTitle = computed(() => {
 const { markers } = useSQLAdviceMarkers(context, toRef(props, "advices"));
 
 const allowEditStatementWhenCreating = computed(() => {
-  if (route.query.sheetId) {
-    // Not allowed to edit pre-generated sheets
-    // E.g., rollback DML
-    return false;
-  }
   // Do not allow to edit statement for the plan with release source.
   if (
     (
@@ -436,13 +426,10 @@ const handleUpdateStatementAndOverwrite = async (
   await handleUpdateStatement(statement, filename);
 };
 
-const handleUpdateStatement = async (statement: string, filename: string) => {
+const handleUpdateStatement = async (statement: string, _filename: string) => {
   try {
     state.isUploadingFile = true;
     handleStatementChange(statement);
-    if (sheet.value) {
-      sheet.value.title = filename;
-    }
     resetTempEditState();
   } finally {
     state.isUploadingFile = false;
@@ -458,8 +445,6 @@ const updateStatement = async (statement: string) => {
 
   const sheet = create(SheetSchema, {
     ...createEmptyLocalSheet(),
-    title: issue.value.title,
-    engine: await databaseEngineForSpec(head(planPatch.specs)),
   });
   setSheetStatement(sheet, statement);
   const createdSheet = await useSheetV1Store().createSheet(

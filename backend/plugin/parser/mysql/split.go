@@ -4,7 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/mysql-parser"
+	parser "github.com/bytebase/parser/mysql"
 	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
@@ -19,7 +19,7 @@ func init() {
 }
 
 // SplitSQL splits the given SQL statement into multiple SQL statements.
-func SplitSQL(statement string) ([]base.SingleSQL, error) {
+func SplitSQL(statement string) ([]base.Statement, error) {
 	lexer := parser.NewMySQLLexer(antlr.NewInputStream(statement))
 	stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
 
@@ -32,8 +32,8 @@ func SplitSQL(statement string) ([]base.SingleSQL, error) {
 	return list, nil
 }
 
-func splitDelimiterModeSQL(stream *antlr.CommonTokenStream, statement string) ([]base.SingleSQL, error) {
-	var result []base.SingleSQL
+func splitDelimiterModeSQL(stream *antlr.CommonTokenStream, statement string) ([]base.Statement, error) {
+	var result []base.Statement
 	delimiter := ";"
 	tokens := stream.GetAllTokens()
 	start := 0
@@ -56,17 +56,35 @@ func splitDelimiterModeSQL(stream *antlr.CommonTokenStream, statement string) ([
 
 		// Deal with normal statement.
 		if delimiter == ";" && token.GetTokenType() == parser.MySQLLexerSEMICOLON_SYMBOL {
-			antlrPosition := base.FirstDefaultChannelTokenPosition(tokens[start : i+1])
+			stmtText := stream.GetTextFromTokens(tokens[start], tokens[i])
+
+			// Calculate byte range by getting actual bytes from original statement
+			// This works because for ASCII chars, char offset == byte offset
+			// For UTF-8, we get the actual substring which handles multi-byte chars correctly
+			stmtStartChar := tokens[start].GetStart()
+			stmtEndChar := tokens[i].GetStop() + 1
+			stmtStartByte := len(statement[:stmtStartChar])
+			stmtEndByte := len(statement[:stmtEndChar])
+
+			// Calculate start position from byte offset (first character of Text)
+			startLine, startColumn := base.CalculateLineAndColumn(statement, stmtStartByte)
 			// From antlr4, the line is ONE based, and the column is ZERO based.
 			// So we should minus 1 for the line.
-			result = append(result, base.SingleSQL{
-				Text:     stream.GetTextFromTokens(tokens[start], tokens[i]),
-				BaseLine: tokens[start].GetLine() - 1,
-				End: common.ConvertANTLRPositionToPosition(&common.ANTLRPosition{
-					Line:   int32(tokens[i].GetLine()),
-					Column: int32(tokens[i].GetColumn()),
-				}, statement),
-				Start: common.ConvertANTLRPositionToPosition(antlrPosition, statement),
+			result = append(result, base.Statement{
+				Text: stmtText,
+				Range: &storepb.Range{
+					Start: int32(stmtStartByte),
+					End:   int32(stmtEndByte),
+				},
+				End: common.ConvertANTLRTokenToExclusiveEndPosition(
+					int32(tokens[i].GetLine()),
+					int32(tokens[i].GetColumn()),
+					tokens[i].GetText(),
+				),
+				Start: &storepb.Position{
+					Line:   int32(startLine + 1),
+					Column: int32(startColumn + 1),
+				},
 				Empty: base.IsEmpty(tokens[start:i+1], parser.MySQLLexerSEMICOLON_SYMBOL),
 			})
 			i++
@@ -80,18 +98,34 @@ func splitDelimiterModeSQL(stream *antlr.CommonTokenStream, statement string) ([
 		}
 
 		if newStart, ok := tryMatchDelimiter(stream, i, delimiter); ok {
-			antlrPosition := base.FirstDefaultChannelTokenPosition(tokens[start:newStart])
+			stmtText := stream.GetTextFromTokens(tokens[start], tokens[i-1]) + ";"
+
+			// Calculate byte range by getting actual bytes from original statement
+			stmtStartChar := tokens[start].GetStart()
+			stmtEndChar := tokens[newStart-1].GetStop() + 1
+			stmtStartByte := len(statement[:stmtStartChar])
+			stmtEndByte := len(statement[:stmtEndChar])
+
+			// Calculate start position from byte offset (first character of Text)
+			startLine, startColumn := base.CalculateLineAndColumn(statement, stmtStartByte)
 			// From antlr4, the line is ONE based, and the column is ZERO based.
 			// So we should minus 1 for the line.
-			result = append(result, base.SingleSQL{
+			result = append(result, base.Statement{
 				// Use a single semicolon instead of the user defined delimiter.
-				Text:     stream.GetTextFromTokens(tokens[start], tokens[i-1]) + ";",
-				BaseLine: tokens[start].GetLine() - 1,
-				End: common.ConvertANTLRPositionToPosition(&common.ANTLRPosition{
-					Line:   int32(tokens[newStart-1].GetLine()),
-					Column: int32(tokens[newStart-1].GetColumn()),
-				}, statement),
-				Start: common.ConvertANTLRPositionToPosition(antlrPosition, statement),
+				Text: stmtText,
+				Range: &storepb.Range{
+					Start: int32(stmtStartByte),
+					End:   int32(stmtEndByte),
+				},
+				End: common.ConvertANTLRTokenToExclusiveEndPosition(
+					int32(tokens[newStart-1].GetLine()),
+					int32(tokens[newStart-1].GetColumn()),
+					tokens[newStart-1].GetText(),
+				),
+				Start: &storepb.Position{
+					Line:   int32(startLine + 1),
+					Column: int32(startColumn + 1),
+				},
 				Empty: base.IsEmpty(tokens[start:i], parser.MySQLLexerSEMICOLON_SYMBOL),
 			})
 			i = newStart
@@ -104,17 +138,33 @@ func splitDelimiterModeSQL(stream *antlr.CommonTokenStream, statement string) ([
 
 	endPos := len(tokens) - 1
 	if start < endPos {
-		antlrPosition := base.FirstDefaultChannelTokenPosition(tokens[start:])
+		stmtText := stream.GetTextFromTokens(tokens[start], tokens[endPos-1])
+
+		// Calculate byte range by getting actual bytes from original statement
+		stmtStartChar := tokens[start].GetStart()
+		stmtEndChar := tokens[endPos-1].GetStop() + 1
+		stmtStartByte := len(statement[:stmtStartChar])
+		stmtEndByte := len(statement[:stmtEndChar])
+
+		// Calculate start position from byte offset (first character of Text)
+		startLine, startColumn := base.CalculateLineAndColumn(statement, stmtStartByte)
 		// From antlr4, the line is ONE based, and the column is ZERO based.
 		// So we should minus 1 for the line.
-		result = append(result, base.SingleSQL{
-			Text:     stream.GetTextFromTokens(tokens[start], tokens[endPos-1]),
-			BaseLine: tokens[start].GetLine() - 1,
-			End: common.ConvertANTLRPositionToPosition(&common.ANTLRPosition{
-				Line:   int32(tokens[endPos-1].GetLine()),
-				Column: int32(tokens[endPos-1].GetColumn()),
-			}, statement),
-			Start: common.ConvertANTLRPositionToPosition(antlrPosition, statement),
+		result = append(result, base.Statement{
+			Text: stmtText,
+			Range: &storepb.Range{
+				Start: int32(stmtStartByte),
+				End:   int32(stmtEndByte),
+			},
+			End: common.ConvertANTLRTokenToExclusiveEndPosition(
+				int32(tokens[endPos-1].GetLine()),
+				int32(tokens[endPos-1].GetColumn()),
+				tokens[endPos-1].GetText(),
+			),
+			Start: &storepb.Position{
+				Line:   int32(startLine + 1),
+				Column: int32(startColumn + 1),
+			},
 			Empty: base.IsEmpty(tokens[start:endPos], parser.MySQLLexerSEMICOLON_SYMBOL),
 		})
 	}
@@ -164,7 +214,7 @@ func hasDelimiterStatement(stream *antlr.CommonTokenStream) bool {
 	return false
 }
 
-func splitByParser(statement string, lexer *parser.MySQLLexer, stream *antlr.CommonTokenStream) ([]base.SingleSQL, error) {
+func splitByParser(statement string, lexer *parser.MySQLLexer, stream *antlr.CommonTokenStream) ([]base.Statement, error) {
 	p := parser.NewMySQLParser(stream)
 	lexerErrorListener := &base.ParseErrorListener{
 		Statement: statement,
@@ -190,41 +240,65 @@ func splitByParser(statement string, lexer *parser.MySQLLexer, stream *antlr.Com
 		return nil, parserErrorListener.Err
 	}
 
-	var result []base.SingleSQL
+	var result []base.Statement
 	tokens := stream.GetAllTokens()
 
+	byteOffset := 0
 	start := 0
 	for _, semicolon := range tree.AllSEMICOLON_SYMBOL() {
 		pos := semicolon.GetSymbol().GetStart()
-		antlrPosition := base.FirstDefaultChannelTokenPosition(tokens[start : pos+1])
+		stmtText := stream.GetTextFromTokens(tokens[start], tokens[pos])
+		stmtByteLength := len(stmtText)
+
+		// Calculate start position from byte offset (first character of Text)
+		startLine, startColumn := base.CalculateLineAndColumn(statement, byteOffset)
 		// From antlr4, the line is ONE based, and the column is ZERO based.
 		// So we should minus 1 for the line.
-		result = append(result, base.SingleSQL{
-			Text:     stream.GetTextFromTokens(tokens[start], tokens[pos]),
-			BaseLine: tokens[start].GetLine() - 1,
-			End: common.ConvertANTLRPositionToPosition(&common.ANTLRPosition{
-				Line:   int32(tokens[pos].GetLine()),
-				Column: int32(tokens[pos].GetColumn()),
-			}, statement),
-			Start: common.ConvertANTLRPositionToPosition(antlrPosition, statement),
+		result = append(result, base.Statement{
+			Text: stmtText,
+			Range: &storepb.Range{
+				Start: int32(byteOffset),
+				End:   int32(byteOffset + stmtByteLength),
+			},
+			End: common.ConvertANTLRTokenToExclusiveEndPosition(
+				int32(tokens[pos].GetLine()),
+				int32(tokens[pos].GetColumn()),
+				tokens[pos].GetText(),
+			),
+			Start: &storepb.Position{
+				Line:   int32(startLine + 1),
+				Column: int32(startColumn + 1),
+			},
 			Empty: base.IsEmpty(tokens[start:pos+1], parser.MySQLLexerSEMICOLON_SYMBOL),
 		})
+		byteOffset += stmtByteLength
 		start = pos + 1
 	}
 	// For the last statement, it may not end with semicolon symbol, EOF symbol instead.
 	eofPos := len(tokens) - 1
 	if start < eofPos {
-		antlrPosition := base.FirstDefaultChannelTokenPosition(tokens[start:])
+		stmtText := stream.GetTextFromTokens(tokens[start], tokens[eofPos-1])
+		stmtByteLength := len(stmtText)
+
+		// Calculate start position from byte offset (first character of Text)
+		startLine, startColumn := base.CalculateLineAndColumn(statement, byteOffset)
 		// From antlr4, the line is ONE based, and the column is ZERO based.
 		// So we should minus 1 for the line.
-		result = append(result, base.SingleSQL{
-			Text:     stream.GetTextFromTokens(tokens[start], tokens[eofPos-1]),
-			BaseLine: tokens[start].GetLine() - 1,
-			End: common.ConvertANTLRPositionToPosition(&common.ANTLRPosition{
-				Line:   int32(tokens[eofPos-1].GetLine()),
-				Column: int32(tokens[eofPos-1].GetColumn()),
-			}, statement),
-			Start: common.ConvertANTLRPositionToPosition(antlrPosition, statement),
+		result = append(result, base.Statement{
+			Text: stmtText,
+			Range: &storepb.Range{
+				Start: int32(byteOffset),
+				End:   int32(byteOffset + stmtByteLength),
+			},
+			End: common.ConvertANTLRTokenToExclusiveEndPosition(
+				int32(tokens[eofPos-1].GetLine()),
+				int32(tokens[eofPos-1].GetColumn()),
+				tokens[eofPos-1].GetText(),
+			),
+			Start: &storepb.Position{
+				Line:   int32(startLine + 1),
+				Column: int32(startColumn + 1),
+			},
 			Empty: base.IsEmpty(tokens[start:eofPos], parser.MySQLLexerSEMICOLON_SYMBOL),
 		})
 	}
@@ -236,13 +310,13 @@ type openParenthesis struct {
 	pos       int
 }
 
-func splitMySQLStatement(stream *antlr.CommonTokenStream, statement string) ([]base.SingleSQL, error) {
+func splitMySQLStatement(stream *antlr.CommonTokenStream, statement string) ([]base.Statement, error) {
 	stream.Fill()
 	if hasDelimiterStatement(stream) {
 		return splitDelimiterModeSQL(stream, statement)
 	}
 
-	var result []base.SingleSQL
+	var result []base.Statement
 	tokens := stream.GetAllTokens()
 
 	var beginCaseStack, ifStack, loopStack, whileStack, repeatStack []*openParenthesis
@@ -372,37 +446,61 @@ func splitMySQLStatement(stream *antlr.CommonTokenStream, statement string) ([]b
 		}
 	}
 
+	byteOffset := 0
 	start := 0
 	for _, pos := range semicolonStack {
-		antlrPosition := base.FirstDefaultChannelTokenPosition(tokens[start : pos+1])
+		stmtText := stream.GetTextFromTokens(tokens[start], tokens[pos])
+		stmtByteLength := len(stmtText)
+
+		// Calculate start position from byte offset (first character of Text)
+		startLine, startColumn := base.CalculateLineAndColumn(statement, byteOffset)
 		// From antlr4, the line is ONE based, and the column is ZERO based.
 		// So we should minus 1 for the line.
-		result = append(result, base.SingleSQL{
-			Text:     stream.GetTextFromTokens(tokens[start], tokens[pos]),
-			BaseLine: tokens[start].GetLine() - 1,
-			End: common.ConvertANTLRPositionToPosition(&common.ANTLRPosition{
-				Line:   int32(tokens[pos].GetLine()),
-				Column: int32(tokens[pos].GetColumn()),
-			}, statement),
-			Start: common.ConvertANTLRPositionToPosition(antlrPosition, statement),
+		result = append(result, base.Statement{
+			Text: stmtText,
+			Range: &storepb.Range{
+				Start: int32(byteOffset),
+				End:   int32(byteOffset + stmtByteLength),
+			},
+			End: common.ConvertANTLRTokenToExclusiveEndPosition(
+				int32(tokens[pos].GetLine()),
+				int32(tokens[pos].GetColumn()),
+				tokens[pos].GetText(),
+			),
+			Start: &storepb.Position{
+				Line:   int32(startLine + 1),
+				Column: int32(startColumn + 1),
+			},
 			Empty: base.IsEmpty(tokens[start:pos+1], parser.MySQLLexerSEMICOLON_SYMBOL),
 		})
+		byteOffset += stmtByteLength
 		start = pos + 1
 	}
 	// For the last statement, it may not end with semicolon symbol, EOF symbol instead.
 	eofPos := len(tokens) - 1
 	if start < eofPos {
-		antlrPosition := base.FirstDefaultChannelTokenPosition(tokens[start:])
+		stmtText := stream.GetTextFromTokens(tokens[start], tokens[eofPos-1])
+		stmtByteLength := len(stmtText)
+
+		// Calculate start position from byte offset (first character of Text)
+		startLine, startColumn := base.CalculateLineAndColumn(statement, byteOffset)
 		// From antlr4, the line is ONE based, and the column is ZERO based.
 		// So we should minus 1 for the line.
-		result = append(result, base.SingleSQL{
-			Text:     stream.GetTextFromTokens(tokens[start], tokens[eofPos-1]),
-			BaseLine: tokens[start].GetLine() - 1,
-			End: common.ConvertANTLRPositionToPosition(&common.ANTLRPosition{
-				Line:   int32(tokens[eofPos-1].GetLine()),
-				Column: int32(tokens[eofPos-1].GetColumn()),
-			}, statement),
-			Start: common.ConvertANTLRPositionToPosition(antlrPosition, statement),
+		result = append(result, base.Statement{
+			Text: stmtText,
+			Range: &storepb.Range{
+				Start: int32(byteOffset),
+				End:   int32(byteOffset + stmtByteLength),
+			},
+			End: common.ConvertANTLRTokenToExclusiveEndPosition(
+				int32(tokens[eofPos-1].GetLine()),
+				int32(tokens[eofPos-1].GetColumn()),
+				tokens[eofPos-1].GetText(),
+			),
+			Start: &storepb.Position{
+				Line:   int32(startLine + 1),
+				Column: int32(startColumn + 1),
+			},
 			Empty: base.IsEmpty(tokens[start:eofPos], parser.MySQLLexerSEMICOLON_SYMBOL),
 		})
 	}

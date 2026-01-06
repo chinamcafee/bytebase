@@ -12,7 +12,7 @@
   >
     <template #0>
       <div class="w-full flex flex-col gap-6 py-4">
-        <div class="space-y-2">
+        <div class="flex flex-col gap-y-2">
           <p>{{ $t("setup.purposes.self") }}</p>
           <NRadioGroup v-model:value="state.purpose">
             <NSpace vertical>
@@ -25,7 +25,7 @@
             </NSpace>
           </NRadioGroup>
         </div>
-        <div class="space-y-2">
+        <div class="flex flex-col gap-y-2">
           <p>{{ $t("setup.workflow.self") }}</p>
           <NRadioGroup v-model:value="state.workflow">
             <NSpace vertical>
@@ -98,16 +98,16 @@
 import { create } from "@bufbuild/protobuf";
 import { FieldMaskSchema } from "@bufbuild/protobuf/wkt";
 import { NRadio, NRadioGroup, NSpace } from "naive-ui";
-import { ref, computed, reactive, onMounted } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter, type RouteLocationRaw } from "vue-router";
+import { type RouteLocationRaw, useRouter } from "vue-router";
 import { BBTextField } from "@/bbkit";
 import { StepTab } from "@/components/v2";
 import ResourceIdField from "@/components/v2/Form/ResourceIdField.vue";
 import { SQL_EDITOR_HOME_MODULE } from "@/router/sqlEditor";
 import {
-  useProjectV1Store,
   useActuatorV1Store,
+  useProjectV1Store,
   useSettingV1Store,
 } from "@/store";
 import { projectNamePrefix } from "@/store/modules/v1/common";
@@ -145,9 +145,6 @@ const state = reactive<LocalState>({
   project: {
     ...emptyProject(),
     title: "New Project",
-    // Default to enabled for new project.
-    allowModifyStatement: true,
-    autoResolveIssue: true,
   },
   resourceId: "",
   loading: false,
@@ -216,7 +213,7 @@ const tryFinishSetup = async () => {
         databaseChangeMode: state.mode,
       },
       updateMask: create(FieldMaskSchema, {
-        paths: ["value.workspace_profile_setting_value.database_change_mode"],
+        paths: ["value.workspace_profile.database_change_mode"],
       }),
     });
     onCancel(getHomePageByMode(state.mode));
@@ -232,7 +229,7 @@ onMounted(async () => {
     );
     return onCancel(
       getHomePageByMode(
-        profileSetting?.value?.value?.case === "workspaceProfileSettingValue"
+        profileSetting?.value?.value?.case === "workspaceProfile"
           ? profileSetting.value.value.value.databaseChangeMode
           : undefined
       )

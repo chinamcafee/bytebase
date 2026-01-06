@@ -1,13 +1,9 @@
 <template>
-  <div class="flex items-center space-x-1">
+  <div class="flex items-center gap-x-1">
     <LabelsCell :labels="labels" :show-count="2" />
-    <button
-      v-if="!readonly"
-      class="w-5 h-5 p-0.5 hover:bg-gray-300 rounded cursor-pointer"
-      @click.prevent="openLabelsDrawer()"
-    >
-      <heroicons-outline:pencil class="w-4 h-4" />
-    </button>
+    <MiniActionButton v-if="!readonly" @click.prevent="openLabelsDrawer()">
+      <PencilIcon class="w-3 h-3" />
+    </MiniActionButton>
   </div>
 
   <LabelEditorDrawer
@@ -22,10 +18,11 @@
 </template>
 
 <script lang="ts" setup>
-import { computed } from "vue";
-import { reactive } from "vue";
+import { PencilIcon } from "lucide-vue-next";
+import { computed, reactive } from "vue";
+import { MiniActionButton } from "@/components/v2";
 import { LabelsCell } from "@/components/v2/Model/cells";
-import { useDatabaseCatalog, getColumnCatalog } from "@/store";
+import { getColumnCatalog, useDatabaseCatalog } from "@/store";
 import LabelEditorDrawer from "../LabelEditorDrawer.vue";
 import { updateColumnCatalog } from "./utils";
 

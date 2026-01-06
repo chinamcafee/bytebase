@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -298,10 +297,12 @@ func TestActionCheckCommand(t *testing.T) {
 
 		// Create test data directory and schema.sql file
 		testDataDir := t.TempDir()
-		schemaContent := `CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    username VARCHAR(255) NOT NULL UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		schemaContent := `CREATE TABLE public.users (
+    id SERIAL NOT NULL,
+    username VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT pk_users PRIMARY KEY (id),
+    CONSTRAINT uk_users_username UNIQUE (username)
 );`
 		schemaFile := filepath.Join(testDataDir, "schema.sql")
 		err = os.WriteFile(schemaFile, []byte(schemaContent), 0644)
@@ -341,20 +342,23 @@ func TestActionCheckCommand(t *testing.T) {
 		testDataDir := t.TempDir()
 
 		// Create users.sql
-		usersContent := `CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    username VARCHAR(255) NOT NULL UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		usersContent := `CREATE TABLE public.users (
+    id SERIAL NOT NULL,
+    username VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT pk_users PRIMARY KEY (id),
+    CONSTRAINT uk_users_username UNIQUE (username)
 );`
 		usersFile := filepath.Join(testDataDir, "users.sql")
 		err = os.WriteFile(usersFile, []byte(usersContent), 0644)
 		a.NoError(err)
 
 		// Create products.sql
-		productsContent := `CREATE TABLE products (
-    id SERIAL PRIMARY KEY,
+		productsContent := `CREATE TABLE public.products (
+    id SERIAL NOT NULL,
     name VARCHAR(255) NOT NULL,
-    price DECIMAL(10,2)
+    price DECIMAL(10,2),
+    CONSTRAINT pk_products PRIMARY KEY (id)
 );`
 		productsFile := filepath.Join(testDataDir, "products.sql")
 		err = os.WriteFile(productsFile, []byte(productsContent), 0644)
@@ -553,7 +557,7 @@ func (ctl *controller) createTestDatabase(ctx context.Context, t *testing.T) *v1
 
 	// Create database
 	dbName := generateRandomString("db")[:8]
-	err = ctl.createDatabaseV2(ctx, ctl.project, instanceResp.Msg, nil, dbName, "")
+	err = ctl.createDatabase(ctx, ctl.project, instanceResp.Msg, nil, dbName, "")
 	a.NoError(err)
 
 	// Get database
@@ -595,7 +599,7 @@ func (ctl *controller) createTestMySQLDatabase(ctx context.Context, t *testing.T
 
 	// Create database
 	dbName := generateRandomString("db")[:8]
-	err = ctl.createDatabaseV2(ctx, ctl.project, instanceResp.Msg, nil, dbName, "")
+	err = ctl.createDatabase(ctx, ctl.project, instanceResp.Msg, nil, dbName, "")
 	a.NoError(err)
 
 	// Get database
@@ -637,7 +641,7 @@ func (ctl *controller) createTestPostgreSQLDatabase(ctx context.Context, t *test
 
 	// Create database
 	dbName := generateRandomString("db")[:8]
-	err = ctl.createDatabaseV2(ctx, ctl.project, instanceResp.Msg, nil, dbName, "postgres")
+	err = ctl.createDatabase(ctx, ctl.project, instanceResp.Msg, nil, dbName, "postgres")
 	a.NoError(err)
 
 	// Get database
@@ -861,6 +865,42 @@ func TestActionRolloutCommand(t *testing.T) {
 		release := releases.Msg.Releases[0]
 		a.Equal("Multi-file Release", release.Title)
 
+		// Verify release files
+		a.Len(release.Files, 3, "Expected exactly 3 files in release")
+		// Verify each file has correct version and path
+		for _, f := range release.Files {
+			a.Contains(f.Path, f.Version, "File path %s should contain version %s", f.Path, f.Version)
+		}
+		// Verify specific files exist
+		fileVersions := make(map[string]string)
+		for _, f := range release.Files {
+			fileVersions[f.Version] = f.Path
+		}
+		a.Contains(fileVersions, "00001", "Should have file with version 00001")
+		a.Contains(fileVersions["00001"], "00001_create_users.sql", "File 00001 should be create_users")
+		a.Contains(fileVersions, "00002", "Should have file with version 00002")
+		a.Contains(fileVersions["00002"], "00002_add_email.sql", "File 00002 should be add_email")
+		a.Contains(fileVersions, "00003", "Should have file with version 00003")
+		a.Contains(fileVersions["00003"], "00003_create_index.sql", "File 00003 should be create_index")
+
+		// Verify release file contents match original files
+		expectedContents := map[string]string{
+			"00001": migrationContent1,
+			"00002": migrationContent2,
+			"00003": migrationContent3,
+		}
+		for _, f := range release.Files {
+			a.NotEmpty(f.Sheet, "File %s should have a sheet", f.Path)
+			sheet, err := ctl.sheetServiceClient.GetSheet(ctx, connect.NewRequest(&v1pb.GetSheetRequest{
+				Name: f.Sheet,
+				Raw:  true,
+			}))
+			a.NoError(err)
+			expectedContent, ok := expectedContents[f.Version]
+			a.True(ok, "Unexpected version %s", f.Version)
+			a.Equal(expectedContent, string(sheet.Msg.Content), "File %s content should match original", f.Path)
+		}
+
 		// 3. Verify rollout was created and completed
 		rollouts, err := ctl.rolloutServiceClient.ListRollouts(ctx, connect.NewRequest(&v1pb.ListRolloutsRequest{
 			Parent: ctl.project.Name,
@@ -922,11 +962,23 @@ func TestActionRolloutCommand(t *testing.T) {
 		a.Equal("00003", updatedDatabase.Msg.SchemaVersion)
 
 		// 6. Verify change history was recorded
+		// Note: Versioned releases create one MIGRATE changelog for the entire release (not per file)
+		// Plus a BASELINE changelog if this is the first migration for the database
 		changelogs, err := ctl.databaseServiceClient.ListChangelogs(ctx, connect.NewRequest(&v1pb.ListChangelogsRequest{
 			Parent: database.Name,
 		}))
 		a.NoError(err)
-		a.GreaterOrEqual(len(changelogs.Msg.Changelogs), 3, "Expected at least 3 migration records in history")
+		// Expect at least 1 changelog (MIGRATE), possibly 2 if BASELINE was created
+		a.GreaterOrEqual(len(changelogs.Msg.Changelogs), 1, "Expected at least 1 changelog for the versioned release")
+		// Verify at least one MIGRATE changelog exists
+		foundMigrateChangelog := false
+		for _, changelog := range changelogs.Msg.Changelogs {
+			if changelog.Type == v1pb.Changelog_MIGRATE {
+				foundMigrateChangelog = true
+				break
+			}
+		}
+		a.True(foundMigrateChangelog, "Expected to find at least one MIGRATE changelog")
 
 		revisions, err := ctl.revisionServiceClient.ListRevisions(ctx, connect.NewRequest(&v1pb.ListRevisionsRequest{
 			Parent: database.Name,
@@ -953,7 +1005,9 @@ func TestActionRolloutCommand(t *testing.T) {
 		a.NotContains(result.Stderr, "error", "Multi-file rollout should complete without errors")
 	})
 
-	t.Run("ReleaseDigestDeduplication", func(t *testing.T) {
+	t.Run("FileContentVersionMatch", func(t *testing.T) {
+		// This test verifies that file content matches the correct version
+		// when lexicographical order differs from version order
 		t.Parallel()
 		a := require.New(t)
 		ctx := context.Background()
@@ -966,208 +1020,66 @@ func TestActionRolloutCommand(t *testing.T) {
 		// Create test database
 		database := ctl.createTestDatabase(ctx, t)
 
-		// Create test data directory and migration file
+		// Create test data directory with files where lex order != version order
 		testDataDir := t.TempDir()
-		migrationContent := `CREATE TABLE products (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    price DECIMAL(10,2),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);`
-		migrationFile := filepath.Join(testDataDir, "00001_create_products.sql")
-		err = os.WriteFile(migrationFile, []byte(migrationContent), 0644)
+
+		// Lexicographical order: v1, v10, v2
+		// Version numeric order: 1, 2, 10
+		migrationContent1 := `CREATE TABLE first_table (id INTEGER);`
+		migrationContent2 := `CREATE TABLE second_table (id INTEGER);`
+		migrationContent10 := `CREATE TABLE tenth_table (id INTEGER);`
+
+		err = os.WriteFile(filepath.Join(testDataDir, "v1_first.sql"), []byte(migrationContent1), 0644)
+		a.NoError(err)
+		err = os.WriteFile(filepath.Join(testDataDir, "v2_second.sql"), []byte(migrationContent2), 0644)
+		a.NoError(err)
+		err = os.WriteFile(filepath.Join(testDataDir, "v10_tenth.sql"), []byte(migrationContent10), 0644)
 		a.NoError(err)
 
-		// Create output files for each rollout
-		outputFile1 := filepath.Join(t.TempDir(), "rollout-output1.json")
-		outputFile2 := filepath.Join(t.TempDir(), "rollout-output2.json")
-
-		// Execute first rollout
-		result1, err := executeActionCommand(ctx,
+		// Execute rollout
+		_, err = executeActionCommand(ctx,
 			"rollout",
 			"--url", ctl.rootURL,
 			"--service-account", "demo@example.com",
 			"--service-account-secret", "1024bytebase",
 			"--project", ctl.project.Name,
 			"--targets", database.Name,
-			"--file-pattern", migrationFile,
-			"--release-title", "First Release",
+			"--file-pattern", filepath.Join(testDataDir, "v*.sql"),
+			"--release-title", "Version Order Test",
 			"--target-stage", "environments/prod",
-			"--output", outputFile1,
 		)
+		a.NoError(err, "Rollout command should succeed")
 
-		a.NoError(err, "First rollout command should succeed")
-
-		// Read first output
-		var output1 map[string]string
-		data1, err := os.ReadFile(outputFile1)
-		a.NoError(err)
-		err = json.Unmarshal(data1, &output1)
-		a.NoError(err)
-
-		// Verify first release was created
-		releases1, err := ctl.releaseServiceClient.ListReleases(ctx, connect.NewRequest(&v1pb.ListReleasesRequest{
+		// Verify release files have correct content for each version
+		releases, err := ctl.releaseServiceClient.ListReleases(ctx, connect.NewRequest(&v1pb.ListReleasesRequest{
 			Parent: ctl.project.Name,
 		}))
 		a.NoError(err)
-		a.Len(releases1.Msg.Releases, 1, "Expected exactly one release after first rollout")
-		firstRelease := releases1.Msg.Releases[0]
-		a.Equal("First Release", firstRelease.Title)
-		a.NotEmpty(firstRelease.Digest, "Release should have digest")
+		a.Len(releases.Msg.Releases, 1, "Expected exactly one release")
+		release := releases.Msg.Releases[0]
+		a.Len(release.Files, 3, "Expected exactly 3 files in release")
 
-		// Execute second rollout with same files but different title
-		result2, err := executeActionCommand(ctx,
-			"rollout",
-			"--url", ctl.rootURL,
-			"--service-account", "demo@example.com",
-			"--service-account-secret", "1024bytebase",
-			"--project", ctl.project.Name,
-			"--targets", database.Name,
-			"--file-pattern", migrationFile,
-			"--release-title", "Second Release",
-			"--target-stage", "environments/prod",
-			"--output", outputFile2,
-		)
-
-		a.NoError(err, "Second rollout command should succeed")
-
-		// Read second output
-		var output2 map[string]string
-		data2, err := os.ReadFile(outputFile2)
-		a.NoError(err)
-		err = json.Unmarshal(data2, &output2)
-		a.NoError(err)
-
-		// Verify still only one release exists (deduplication worked)
-		releases2, err := ctl.releaseServiceClient.ListReleases(ctx, connect.NewRequest(&v1pb.ListReleasesRequest{
-			Parent: ctl.project.Name,
-		}))
-		a.NoError(err)
-		a.Len(releases2.Msg.Releases, 1, "Should still have only one release due to deduplication")
-
-		// Verify both rollouts used the same release
-		a.Equal(output1["release"], output2["release"], "Both rollouts should use the same release")
-		a.Equal(firstRelease.Name, output2["release"], "Second rollout should reuse first release")
-
-		// Verify two separate plans were created (plans are not deduplicated)
-		plans, err := ctl.planServiceClient.ListPlans(ctx, connect.NewRequest(&v1pb.ListPlansRequest{
-			Parent: ctl.project.Name,
-		}))
-		a.NoError(err)
-
-		plan1 := slices.Collect(func(yield func(*v1pb.Plan) bool) {
-			for _, plan := range plans.Msg.Plans {
-				if plan.Name == output1["plan"] {
-					if !yield(plan) {
-						return
-					}
-				}
-			}
-		})
-		plan2 := slices.Collect(func(yield func(*v1pb.Plan) bool) {
-			for _, plan := range plans.Msg.Plans {
-				if plan.Name == output2["plan"] {
-					if !yield(plan) {
-						return
-					}
-				}
-			}
-		})
-		a.Len(plan1, 1, "Expected exactly one plan after first rollout")
-		a.Len(plan2, 1, "Expected exactly one plan after second rollout")
-		a.NotEqual(plan1[0].Name, plan2[0].Name, "Each rollout should have its own plan")
-
-		// Verify two separate rollouts were created
-		rollouts, err := ctl.rolloutServiceClient.ListRollouts(ctx, connect.NewRequest(&v1pb.ListRolloutsRequest{
-			Parent: ctl.project.Name,
-		}))
-		a.NoError(err)
-
-		rollout1 := slices.Collect(func(yield func(*v1pb.Rollout) bool) {
-			for _, rollout := range rollouts.Msg.Rollouts {
-				if rollout.Name == output1["rollout"] {
-					if !yield(rollout) {
-						return
-					}
-				}
-			}
-		})
-		rollout2 := slices.Collect(func(yield func(*v1pb.Rollout) bool) {
-			for _, rollout := range rollouts.Msg.Rollouts {
-				if rollout.Name == output2["rollout"] {
-					if !yield(rollout) {
-						return
-					}
-				}
-			}
-		})
-		a.Len(rollout1, 1, "Expected exactly one rollout after first rollout")
-		a.Len(rollout2, 1, "Expected exactly one rollout after second rollout")
-		a.NotEqual(rollout1[0].Name, rollout2[0].Name, "Each rollout should be separate")
-
-		// Verify command outputs don't contain errors
-		a.NotContains(result1.Stderr, "error", "First rollout should complete without errors")
-		a.NotContains(result2.Stderr, "error", "Second rollout should complete without errors")
-
-		// Create a slightly different migration file (different content)
-		migrationContent3 := `CREATE TABLE products (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    description TEXT,  -- This line is different
-    price DECIMAL(10,2),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);`
-		migrationFile3 := filepath.Join(testDataDir, "00001_create_products_v2.sql")
-		err = os.WriteFile(migrationFile3, []byte(migrationContent3), 0644)
-		a.NoError(err)
-
-		outputFile3 := filepath.Join(t.TempDir(), "rollout-output3.json")
-
-		// Execute third rollout with different file content
-		result3, err := executeActionCommand(ctx,
-			"rollout",
-			"--url", ctl.rootURL,
-			"--service-account", "demo@example.com",
-			"--service-account-secret", "1024bytebase",
-			"--project", ctl.project.Name,
-			"--targets", database.Name,
-			"--file-pattern", migrationFile3,
-			"--release-title", "Third Release",
-			"--target-stage", "environments/prod",
-			"--output", outputFile3,
-		)
-
-		a.NoError(err, "Third rollout command should succeed")
-
-		// Read third output
-		var output3 map[string]string
-		data3, err := os.ReadFile(outputFile3)
-		a.NoError(err)
-		err = json.Unmarshal(data3, &output3)
-		a.NoError(err)
-
-		// Verify a new release was created (different content = different digest)
-		releases3, err := ctl.releaseServiceClient.ListReleases(ctx, connect.NewRequest(&v1pb.ListReleasesRequest{
-			Parent: ctl.project.Name,
-		}))
-		a.NoError(err)
-		a.Len(releases3.Msg.Releases, 2, "Should have two releases now (different content)")
-
-		// Verify third rollout used a different release
-		a.NotEqual(output1["release"], output3["release"], "Third rollout should use a different release")
-
-		// Find the new release and verify it has different digest
-		var thirdRelease *v1pb.Release
-		for _, r := range releases3.Msg.Releases {
-			if r.Name == output3["release"] {
-				thirdRelease = r
-				break
-			}
+		// Build expected content map by version
+		expectedContents := map[string]string{
+			"1":  migrationContent1,
+			"2":  migrationContent2,
+			"10": migrationContent10,
 		}
-		a.NotNil(thirdRelease, "Should find the third release")
-		a.NotEqual(firstRelease.Digest, thirdRelease.Digest, "Different content should produce different digest")
 
-		a.NotContains(result3.Stderr, "error", "Third rollout should complete without errors")
+		// Verify each file's content matches its version
+		for _, f := range release.Files {
+			a.NotEmpty(f.Sheet, "File %s should have a sheet", f.Path)
+			sheet, err := ctl.sheetServiceClient.GetSheet(ctx, connect.NewRequest(&v1pb.GetSheetRequest{
+				Name: f.Sheet,
+				Raw:  true,
+			}))
+			a.NoError(err)
+			expectedContent, ok := expectedContents[f.Version]
+			a.True(ok, "Unexpected version %s", f.Version)
+			a.Equal(expectedContent, string(sheet.Msg.Content),
+				"File %s with version %s should contain '%s' but got '%s'",
+				f.Path, f.Version, expectedContent, string(sheet.Msg.Content))
+		}
 	})
 }
 
@@ -1409,7 +1321,7 @@ func TestActionRolloutDeclarativeMode(t *testing.T) {
 		err = json.Unmarshal(data1, &output1)
 		a.NoError(err)
 
-		// Execute second declarative rollout with same schema (should succeed but create empty rollout)
+		// Execute second declarative rollout with same schema (should succeed with task as no-op)
 		result2, err := executeActionCommand(ctx,
 			"rollout",
 			"--url", ctl.rootURL,
@@ -1423,7 +1335,7 @@ func TestActionRolloutDeclarativeMode(t *testing.T) {
 			"--output", outputFile2,
 			"--declarative",
 		)
-		// Second rollout should succeed due to new idempotency behavior
+		// Second rollout should succeed (SDL diff detects no changes, executes as no-op)
 		a.NoError(err, "Second declarative rollout should succeed")
 
 		// Read second output
@@ -1433,11 +1345,11 @@ func TestActionRolloutDeclarativeMode(t *testing.T) {
 		err = json.Unmarshal(data2, &output2)
 		a.NoError(err)
 
-		// Rollout should be created even if it's empty
+		// Rollout should be created for second execution
 		rolloutName := output2["rollout"]
 		a.NotEmpty(rolloutName, "Rollout should be created for second execution")
 
-		// Execute third declarative rollout with same schema (should also succeed but create empty rollout)
+		// Execute third declarative rollout with same schema (should also succeed with task as no-op)
 		result3, err := executeActionCommand(ctx,
 			"rollout",
 			"--url", ctl.rootURL,
@@ -1451,7 +1363,7 @@ func TestActionRolloutDeclarativeMode(t *testing.T) {
 			"--output", outputFile3,
 			"--declarative",
 		)
-		// Third rollout should also succeed due to new idempotency behavior
+		// Third rollout should also succeed (SDL diff detects no changes, executes as no-op)
 		a.NoError(err, "Third declarative rollout should succeed")
 
 		// Read third output
@@ -1461,16 +1373,17 @@ func TestActionRolloutDeclarativeMode(t *testing.T) {
 		err = json.Unmarshal(data3, &output3)
 		a.NoError(err)
 
-		// Verify that all rollouts reuse the same release
+		// Verify that each rollout creates a separate release (no deduplication)
 		releases, err := ctl.releaseServiceClient.ListReleases(ctx, connect.NewRequest(&v1pb.ListReleasesRequest{
 			Parent: ctl.project.Name,
 		}))
 		a.NoError(err)
-		a.Len(releases.Msg.Releases, 1, "Should have only one release (reused)")
+		a.Len(releases.Msg.Releases, 3, "Should have three separate releases (no deduplication)")
 
-		// Verify all outputs reference the same release
-		a.Equal(output1["release"], output2["release"], "Second rollout should reuse first release")
-		a.Equal(output1["release"], output3["release"], "Third rollout should reuse first release")
+		// Verify each rollout has its own release
+		a.NotEqual(output1["release"], output2["release"], "Second rollout should create a new release")
+		a.NotEqual(output1["release"], output3["release"], "Third rollout should create a new release")
+		a.NotEqual(output2["release"], output3["release"], "Each rollout should have a unique release")
 
 		// Verify schema remains consistent (only one table created)
 		metadata, err := ctl.databaseServiceClient.GetDatabaseMetadata(ctx, connect.NewRequest(&v1pb.GetDatabaseMetadataRequest{
@@ -1494,21 +1407,20 @@ func TestActionRolloutDeclarativeMode(t *testing.T) {
 		a.NotContains(result2.Stderr, "error", "second rollout should complete without errors")
 		a.NotContains(result3.Stderr, "error", "third rollout should complete without errors")
 
-		// Verify that second rollout is created but empty (zero tasks)
+		// Verify that second rollout has 1 task (idempotency handled by SDL diff at execution)
 		rollout2, err := ctl.rolloutServiceClient.GetRollout(ctx, connect.NewRequest(&v1pb.GetRolloutRequest{
 			Name: rolloutName,
 		}))
 		a.NoError(err)
-		// Check that rollout has zero tasks
+		// Check that rollout has 1 task (executes as no-op when schema matches)
 		totalTasks := 0
 		for _, stage := range rollout2.Msg.Stages {
 			totalTasks += len(stage.Tasks)
 		}
-		a.Equal(0, totalTasks, "Second rollout should have zero tasks")
-		// Empty rollout should have zero stages
-		a.Len(rollout2.Msg.Stages, 0, "Second rollout should have zero stages")
+		a.Equal(1, totalTasks, "Second rollout should have 1 task")
+		a.Len(rollout2.Msg.Stages, 1, "Second rollout should have 1 stage")
 
-		// Verify third rollout is also created but empty
+		// Verify third rollout also has 1 task
 		rolloutName3 := output3["rollout"]
 		a.NotEmpty(rolloutName3, "Rollout should be created for third execution")
 
@@ -1516,14 +1428,13 @@ func TestActionRolloutDeclarativeMode(t *testing.T) {
 			Name: rolloutName3,
 		}))
 		a.NoError(err)
-		// Check that rollout has zero tasks
+		// Check that rollout has 1 task (executes as no-op when schema matches)
 		totalTasks = 0
 		for _, stage := range rollout3.Msg.Stages {
 			totalTasks += len(stage.Tasks)
 		}
-		a.Equal(0, totalTasks, "Third rollout should have zero tasks")
-		// Empty rollout should have zero stages
-		a.Len(rollout3.Msg.Stages, 0, "Third rollout should have zero stages")
+		a.Equal(1, totalTasks, "Third rollout should have 1 task")
+		a.Len(rollout3.Msg.Stages, 1, "Third rollout should have 1 stage")
 	})
 
 	t.Run("DeclarativeMultipleDatabases", func(t *testing.T) {
@@ -1844,7 +1755,7 @@ func TestActionErrorScenarios(t *testing.T) {
 		)
 
 		a.Error(err, "Command should fail with non-existent database")
-		a.Contains(result.Stderr, "failed to found database", "Expected not found error in stderr")
+		a.Contains(result.Stderr, "database instances/fake/databases/nonexistent not found", "Expected not found error in stderr")
 	})
 
 	t.Run("EmptyFilePattern", func(t *testing.T) {

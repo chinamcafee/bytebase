@@ -20,12 +20,12 @@ import { createContextValues } from "@connectrpc/connect";
 import { computedAsync } from "@vueuse/core";
 import { computed, ref } from "vue";
 import { BBSpin } from "@/bbkit";
-import { rolloutServiceClientConnect } from "@/grpcweb";
-import { silentContextKey } from "@/grpcweb/context-key";
-import { GetTaskRunSessionRequestSchema } from "@/types/proto-es/v1/rollout_service_pb";
+import { rolloutServiceClientConnect } from "@/connect";
+import { silentContextKey } from "@/connect/context-key";
 import {
-  TaskRun_Status,
+  GetTaskRunSessionRequestSchema,
   type TaskRun,
+  TaskRun_Status,
 } from "@/types/proto-es/v1/rollout_service_pb";
 import PostgresSessionTable from "./PostgresSessionTable.vue";
 

@@ -13,6 +13,7 @@ import (
 	"github.com/bytebase/bytebase/backend/common/log"
 	"github.com/bytebase/bytebase/backend/component/config"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
+	"github.com/bytebase/bytebase/backend/plugin/schema"
 	"github.com/bytebase/bytebase/backend/resources/postgres"
 	"github.com/bytebase/bytebase/backend/runner/schemasync"
 	"github.com/bytebase/bytebase/backend/store"
@@ -151,25 +152,20 @@ func (m *Manager) Port() int {
 }
 
 // GenerateOnboardingData generates onboarding data including project and instance.
-func (m *Manager) GenerateOnboardingData(ctx context.Context, userID int, schemaSyncer *schemasync.Syncer) error {
-	setting := &storepb.Project{
-		AllowModifyStatement: true,
-		AutoResolveIssue:     true,
-	}
-
+func (m *Manager) GenerateOnboardingData(ctx context.Context, user *store.UserMessage, schemaSyncer *schemasync.Syncer) error {
 	projectID := "project-sample"
-	project, err := m.store.GetProjectV2(ctx, &store.FindProjectMessage{
+	project, err := m.store.GetProject(ctx, &store.FindProjectMessage{
 		ResourceID: &projectID,
 	})
 	if err != nil {
 		return errors.Wrapf(err, "failed to find onboarding project %v", projectID)
 	}
 	if project == nil {
-		sampleProject, err := m.store.CreateProjectV2(ctx, &store.ProjectMessage{
+		sampleProject, err := m.store.CreateProject(ctx, &store.ProjectMessage{
 			ResourceID: "project-sample",
 			Title:      "Sample Project",
-			Setting:    setting,
-		}, userID)
+			Setting:    &storepb.Project{},
+		}, user)
 		if err != nil {
 			return errors.Wrapf(err, "failed to create onboarding project")
 		}
@@ -222,14 +218,14 @@ func (m *Manager) generateInstance(
 	schemaSyncer *schemasync.Syncer,
 ) error {
 	// Generate Sample Instance
-	instance, err := m.store.GetInstanceV2(ctx, &store.FindInstanceMessage{
+	instance, err := m.store.GetInstance(ctx, &store.FindInstanceMessage{
 		ResourceID: &instanceMessage.ResourceID,
 	})
 	if err != nil {
 		return errors.Wrapf(err, "failed to find onboarding instance %v", instanceMessage.ResourceID)
 	}
 	if instance == nil {
-		sampleInstance, err := m.store.CreateInstanceV2(ctx, &store.InstanceMessage{
+		sampleInstance, err := m.store.CreateInstance(ctx, &store.InstanceMessage{
 			ResourceID:    instanceMessage.ResourceID,
 			EnvironmentID: instanceMessage.EnvironmentID,
 			Metadata: &storepb.Instance{
@@ -278,10 +274,9 @@ func (m *Manager) generateInstance(
 		return errors.Wrapf(err, "failed to transfer sample database %v", dbName)
 	}
 
-	testDatabase, err := m.store.GetDatabaseV2(ctx, &store.FindDatabaseMessage{
-		InstanceID:      &instance.ResourceID,
-		DatabaseName:    &dbName,
-		IsCaseSensitive: store.IsObjectCaseSensitive(instance),
+	testDatabase, err := m.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		InstanceID:   &instance.ResourceID,
+		DatabaseName: &dbName,
 	})
 	if err != nil {
 		return errors.Wrapf(err, "failed to find onboarding database %v", dbName)
@@ -298,14 +293,14 @@ func (m *Manager) generateInstance(
 	}
 
 	if _, err := m.store.CreateChangelog(ctx, &store.ChangelogMessage{
-		InstanceID:         testDatabase.InstanceID,
-		DatabaseName:       dbName,
-		Status:             store.ChangelogStatusDone,
-		PrevSyncHistoryUID: &syncHistory,
-		SyncHistoryUID:     &syncHistory,
+		InstanceID:     testDatabase.InstanceID,
+		DatabaseName:   dbName,
+		Status:         store.ChangelogStatusDone,
+		SyncHistoryUID: &syncHistory,
 		Payload: &storepb.ChangelogPayload{
-			Type:      storepb.ChangelogPayload_BASELINE,
-			GitCommit: m.profile.GitCommit,
+			Type:        storepb.ChangelogPayload_BASELINE,
+			GitCommit:   m.profile.GitCommit,
+			DumpVersion: schema.GetDumpFormatVersion(instance.Metadata.GetEngine()),
 		},
 	}); err != nil {
 		return errors.Wrapf(err, "failed to create baseline changelog for %v", dbName)

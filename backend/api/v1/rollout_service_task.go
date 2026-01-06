@@ -5,25 +5,18 @@ import (
 	"fmt"
 	"strings"
 
-	"log/slog"
-
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/bytebase/bytebase/backend/common"
-	"github.com/bytebase/bytebase/backend/common/log"
-	"github.com/bytebase/bytebase/backend/component/dbfactory"
 	"github.com/bytebase/bytebase/backend/component/ghost"
-	"github.com/bytebase/bytebase/backend/component/sheet"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
-	"github.com/bytebase/bytebase/backend/plugin/db"
 	"github.com/bytebase/bytebase/backend/store"
-	"github.com/bytebase/bytebase/backend/store/model"
 	"github.com/bytebase/bytebase/backend/utils"
 )
 
-func applyDatabaseGroupSpecTransformations(specs []*storepb.PlanConfig_Spec, deployment *storepb.PlanConfig_Deployment) []*storepb.PlanConfig_Spec {
+func applyDatabaseGroupSpecTransformations(ctx context.Context, s *store.Store, specs []*storepb.PlanConfig_Spec, projectID string) ([]*storepb.PlanConfig_Spec, error) {
 	var result []*storepb.PlanConfig_Spec
 	for _, spec := range specs {
 		// Clone the spec to avoid modifying the original
@@ -32,25 +25,46 @@ func applyDatabaseGroupSpecTransformations(specs []*storepb.PlanConfig_Spec, dep
 		if config := clonedSpec.GetChangeDatabaseConfig(); config != nil {
 			// transform database group.
 			if len(config.Targets) == 1 {
-				if _, _, err := common.GetProjectIDDatabaseGroupID(config.Targets[0]); err == nil {
-					for _, s := range deployment.GetDatabaseGroupMappings() {
-						if s.DatabaseGroup == config.Targets[0] {
-							config.Targets = s.Databases
-							break
-						}
+				if _, databaseGroupID, err := common.GetProjectIDDatabaseGroupID(config.Targets[0]); err == nil {
+					// Re-evaluate database group matches live instead of using deployment snapshot
+					databaseGroup, err := s.GetDatabaseGroup(ctx, &store.FindDatabaseGroupMessage{
+						ResourceID: &databaseGroupID,
+						ProjectID:  &projectID,
+					})
+					if err != nil {
+						return nil, errors.Wrapf(err, "failed to get database group")
 					}
+					if databaseGroup == nil {
+						return nil, errors.Errorf("database group %q not found", config.Targets[0])
+					}
+
+					allDatabases, err := s.ListDatabases(ctx, &store.FindDatabaseMessage{ProjectID: &projectID})
+					if err != nil {
+						return nil, errors.Wrapf(err, "failed to list databases for project %q", projectID)
+					}
+
+					matchedDatabases, err := utils.GetMatchedDatabasesInDatabaseGroup(ctx, databaseGroup, allDatabases)
+					if err != nil {
+						return nil, errors.Wrapf(err, "failed to get matched databases in database group %q", databaseGroupID)
+					}
+
+					var databases []string
+					for _, db := range matchedDatabases {
+						databases = append(databases, common.FormatDatabase(db.InstanceID, db.DatabaseName))
+					}
+					config.Targets = databases
 				}
 			}
 		}
 		result = append(result, clonedSpec)
 	}
-	return result
+	return result, nil
 }
 
-func getTaskCreatesFromSpec(ctx context.Context, s *store.Store, sheetManager *sheet.Manager, dbFactory *dbfactory.DBFactory, spec *storepb.PlanConfig_Spec, project *store.ProjectMessage) ([]*store.TaskMessage, error) {
+func getTaskCreatesFromSpec(ctx context.Context, s *store.Store, spec *storepb.PlanConfig_Spec) ([]*store.TaskMessage, error) {
 	switch config := spec.Config.(type) {
 	case *storepb.PlanConfig_Spec_CreateDatabaseConfig:
-		return getTaskCreatesFromCreateDatabaseConfig(ctx, s, sheetManager, dbFactory, spec, config.CreateDatabaseConfig, project)
+		return getTaskCreatesFromCreateDatabaseConfig(ctx, s, spec, config.CreateDatabaseConfig)
 	case *storepb.PlanConfig_Spec_ChangeDatabaseConfig:
 		return getTaskCreatesFromChangeDatabaseConfig(ctx, s, spec, config.ChangeDatabaseConfig)
 	case *storepb.PlanConfig_Spec_ExportDataConfig:
@@ -60,7 +74,7 @@ func getTaskCreatesFromSpec(ctx context.Context, s *store.Store, sheetManager *s
 	return nil, errors.Errorf("invalid spec config type %T", spec.Config)
 }
 
-func getTaskCreatesFromCreateDatabaseConfig(ctx context.Context, s *store.Store, sheetManager *sheet.Manager, dbFactory *dbfactory.DBFactory, spec *storepb.PlanConfig_Spec, c *storepb.PlanConfig_CreateDatabaseConfig, project *store.ProjectMessage) ([]*store.TaskMessage, error) {
+func getTaskCreatesFromCreateDatabaseConfig(ctx context.Context, s *store.Store, spec *storepb.PlanConfig_Spec, c *storepb.PlanConfig_CreateDatabaseConfig) ([]*store.TaskMessage, error) {
 	if c.Database == "" {
 		return nil, errors.Errorf("database name is required")
 	}
@@ -117,21 +131,7 @@ func getTaskCreatesFromCreateDatabaseConfig(ctx context.Context, s *store.Store,
 		case storepb.Engine_MYSQL, storepb.Engine_MARIADB, storepb.Engine_OCEANBASE:
 			// For MySQL, we need to use different case of DatabaseName depends on the variable `lower_case_table_names`.
 			// https://dev.mysql.com/doc/refman/8.0/en/identifier-case-sensitivity.html
-			// And also, meet an error in here is not a big deal, we will just use the original DatabaseName.
-			driver, err := dbFactory.GetAdminDatabaseDriver(ctx, instance, nil /* database */, db.ConnectionContext{})
-			if err != nil {
-				slog.Warn("failed to get admin database driver for instance %q, please check the connection for admin data source", log.BBError(err), slog.String("instance", instance.ResourceID))
-				break
-			}
-			defer driver.Close(ctx)
-			var lowerCaseTableNames int
-			var unused any
-			db := driver.GetDB()
-			if err := db.QueryRowContext(ctx, "SHOW VARIABLES LIKE 'lower_case_table_names'").Scan(&unused, &lowerCaseTableNames); err != nil {
-				slog.Warn("failed to get lower_case_table_names for instance %q", log.BBError(err), slog.String("instance", instance.ResourceID))
-				break
-			}
-			if lowerCaseTableNames == 1 {
+			if !store.IsObjectCaseSensitive(instance) {
 				databaseName = strings.ToLower(databaseName)
 			}
 		default:
@@ -142,18 +142,13 @@ func getTaskCreatesFromCreateDatabaseConfig(ctx context.Context, s *store.Store,
 		if err != nil {
 			return nil, err
 		}
-		sheet, err := sheetManager.CreateSheet(ctx, &store.SheetMessage{
-			CreatorID: common.SystemBotID,
-			ProjectID: project.ResourceID,
-			Title:     fmt.Sprintf("Sheet for creating database %v", databaseName),
+		sheets, err := s.CreateSheets(ctx, &store.SheetMessage{
 			Statement: statement,
-			Payload: &storepb.SheetPayload{
-				Engine: instance.Metadata.GetEngine(),
-			},
 		})
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to create database creation sheet")
 		}
+		sheet := sheets[0]
 
 		v := &store.TaskMessage{
 			InstanceID:   instance.ResourceID,
@@ -161,13 +156,10 @@ func getTaskCreatesFromCreateDatabaseConfig(ctx context.Context, s *store.Store,
 			Environment:  effectiveEnvironmentID,
 			Type:         storepb.Task_DATABASE_CREATE,
 			Payload: &storepb.Task{
-				SpecId:        spec.Id,
-				CharacterSet:  c.CharacterSet,
-				TableName:     c.Table,
-				Collation:     c.Collation,
-				EnvironmentId: dbEnvironmentID,
-				DatabaseName:  databaseName,
-				SheetId:       int32(sheet.UID),
+				SpecId: spec.Id,
+				Source: &storepb.Task_SheetSha256{
+					SheetSha256: sheet.Sha256,
+				},
 			},
 		}
 		return []*store.TaskMessage{
@@ -192,20 +184,52 @@ func getTaskCreatesFromChangeDatabaseConfig(
 		return nil, err
 	}
 
-	// If a release is specified, we need to expand it into individual tasks for each release file
-	if c.Release != "" {
-		return getTaskCreatesFromChangeDatabaseConfigWithRelease(ctx, s, spec, c, databases)
-	}
-
-	// Possible targets: list of instances/{instance}/databases/{database}.
 	var tasks []*store.TaskMessage
 	for _, database := range databases {
-		v, err := getTaskCreatesFromChangeDatabaseConfigDatabaseTarget(spec, c, database)
-		if err != nil {
-			return nil, err
+		env := ""
+		if database.EffectiveEnvironmentID != nil {
+			env = *database.EffectiveEnvironmentID
 		}
-		tasks = append(tasks, v...)
+
+		// All change database tasks use DATABASE_MIGRATE type
+		taskType := storepb.Task_DATABASE_MIGRATE
+
+		// Build task payload
+		payload := &storepb.Task{
+			SpecId:            spec.Id,
+			EnablePriorBackup: c.EnablePriorBackup,
+		}
+
+		// Set source: either release or sheet
+		if c.Release != "" {
+			payload.Source = &storepb.Task_Release{
+				Release: c.Release,
+			}
+		} else {
+			payload.Source = &storepb.Task_SheetSha256{
+				SheetSha256: c.SheetSha256,
+			}
+		}
+
+		// Add ghost flags if specified
+		if c.EnableGhost {
+			if _, err := ghost.GetUserFlags(c.GhostFlags); err != nil {
+				return nil, errors.Wrapf(err, "invalid ghost flags %q", c.GhostFlags)
+			}
+			payload.Flags = c.GhostFlags
+			payload.EnableGhost = c.EnableGhost
+		}
+
+		taskCreate := &store.TaskMessage{
+			InstanceID:   database.InstanceID,
+			DatabaseName: &database.DatabaseName,
+			Environment:  env,
+			Type:         taskType,
+			Payload:      payload,
+		}
+		tasks = append(tasks, taskCreate)
 	}
+
 	return tasks, nil
 }
 
@@ -219,21 +243,35 @@ func getDatabaseMessagesByTargets(ctx context.Context, s *store.Store, targets [
 				return nil, errors.Wrapf(err, "failed to get database group %q", target)
 			}
 			for _, matched := range databaseGroup.MatchedDatabases {
-				database, err := getDatabaseMessage(ctx, s, matched.Name)
+				instanceID, databaseName, err := common.GetInstanceDatabaseID(matched.Name)
 				if err != nil {
-					return nil, err
+					return nil, errors.Wrapf(err, "failed to parse %q", matched.Name)
 				}
-				if database == nil || database.Deleted {
-					return nil, errors.Errorf("database %q not found", target)
+				database, err := s.GetDatabase(ctx, &store.FindDatabaseMessage{
+					InstanceID:   &instanceID,
+					DatabaseName: &databaseName,
+				})
+				if err != nil {
+					return nil, errors.Wrapf(err, "failed to get database")
+				}
+				if database == nil {
+					return nil, errors.Errorf("database %q not found", matched.Name)
 				}
 				databases = append(databases, database)
 			}
 		} else if _, _, err := common.GetInstanceDatabaseID(target); err == nil {
-			database, err := getDatabaseMessage(ctx, s, target)
+			instanceID, databaseName, err := common.GetInstanceDatabaseID(target)
 			if err != nil {
-				return nil, err
+				return nil, errors.Wrapf(err, "failed to parse %q", target)
 			}
-			if database == nil || database.Deleted {
+			database, err := s.GetDatabase(ctx, &store.FindDatabaseMessage{
+				InstanceID:   &instanceID,
+				DatabaseName: &databaseName,
+			})
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to get database")
+			}
+			if database == nil {
 				return nil, errors.Errorf("database %q not found", target)
 			}
 			databases = append(databases, database)
@@ -255,17 +293,11 @@ func getTaskCreatesFromExportDataConfig(
 		return nil, err
 	}
 
-	_, sheetUID, err := common.GetProjectResourceIDSheetUID(c.Sheet)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get sheet id from sheet %q", c.Sheet)
-	}
 	payload := &storepb.Task{
-		SpecId:  spec.Id,
-		SheetId: int32(sheetUID),
-		Format:  c.Format,
-	}
-	if c.Password != nil {
-		payload.Password = *c.Password
+		SpecId: spec.Id,
+		Source: &storepb.Task_SheetSha256{
+			SheetSha256: c.SheetSha256,
+		},
 	}
 
 	tasks := []*store.TaskMessage{}
@@ -283,243 +315,6 @@ func getTaskCreatesFromExportDataConfig(
 		})
 	}
 	return tasks, nil
-}
-
-func getTaskCreatesFromChangeDatabaseConfigDatabaseTarget(
-	spec *storepb.PlanConfig_Spec,
-	c *storepb.PlanConfig_ChangeDatabaseConfig,
-	database *store.DatabaseMessage,
-) ([]*store.TaskMessage, error) {
-	switch c.Type {
-	case storepb.PlanConfig_ChangeDatabaseConfig_MIGRATE:
-		_, sheetUID, err := common.GetProjectResourceIDSheetUID(c.Sheet)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to get sheet id from sheet %q", c.Sheet)
-		}
-		env := ""
-		if database.EffectiveEnvironmentID != nil {
-			env = *database.EffectiveEnvironmentID
-		}
-
-		// Determine task migrate type from plan config migrate type
-		var taskMigrateType storepb.MigrationType
-		var flags map[string]string
-		switch c.MigrateType {
-		case storepb.MigrationType_DDL:
-			taskMigrateType = storepb.MigrationType_DDL
-		case storepb.MigrationType_DML:
-			taskMigrateType = storepb.MigrationType_DML
-		case storepb.MigrationType_GHOST:
-			taskMigrateType = storepb.MigrationType_GHOST
-			if _, err := ghost.GetUserFlags(c.GhostFlags); err != nil {
-				return nil, errors.Wrapf(err, "invalid ghost flags %q", c.GhostFlags)
-			}
-			flags = c.GhostFlags
-		default:
-			taskMigrateType = storepb.MigrationType_DDL
-		}
-
-		taskCreate := &store.TaskMessage{
-			InstanceID:   database.InstanceID,
-			DatabaseName: &database.DatabaseName,
-			Environment:  env,
-			Type:         storepb.Task_DATABASE_MIGRATE,
-			Payload: &storepb.Task{
-				SpecId:            spec.Id,
-				SheetId:           int32(sheetUID),
-				Flags:             flags,
-				EnablePriorBackup: c.EnablePriorBackup,
-				MigrateType:       taskMigrateType,
-			},
-		}
-		return []*store.TaskMessage{taskCreate}, nil
-
-	case storepb.PlanConfig_ChangeDatabaseConfig_SDL:
-		_, sheetUID, err := common.GetProjectResourceIDSheetUID(c.Sheet)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to get sheet id from sheet %q", c.Sheet)
-		}
-		env := ""
-		if database.EffectiveEnvironmentID != nil {
-			env = *database.EffectiveEnvironmentID
-		}
-		taskCreate := &store.TaskMessage{
-			InstanceID:   database.InstanceID,
-			DatabaseName: &database.DatabaseName,
-			Environment:  env,
-			Type:         storepb.Task_DATABASE_SDL,
-			Payload: &storepb.Task{
-				SpecId:  spec.Id,
-				SheetId: int32(sheetUID),
-			},
-		}
-		return []*store.TaskMessage{taskCreate}, nil
-
-	default:
-		return nil, errors.Errorf("unsupported change database config type %q", c.Type)
-	}
-}
-
-func getTaskCreatesFromChangeDatabaseConfigWithRelease(
-	ctx context.Context,
-	s *store.Store,
-	spec *storepb.PlanConfig_Spec,
-	c *storepb.PlanConfig_ChangeDatabaseConfig,
-	databases []*store.DatabaseMessage,
-) ([]*store.TaskMessage, error) {
-	// Parse release name to get project ID and release UID
-	_, releaseUID, err := common.GetProjectReleaseUID(c.Release)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to parse release name %q", c.Release)
-	}
-
-	// Fetch the release
-	release, err := s.GetRelease(ctx, releaseUID)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get release %d", releaseUID)
-	}
-	if release == nil {
-		return nil, errors.Errorf("release %d not found", releaseUID)
-	}
-
-	// Create tasks for each release file that hasn't been applied
-	var taskCreates []*store.TaskMessage
-	for _, database := range databases {
-		// Get existing revisions for the database to check which files have already been applied
-		revisions, err := s.ListRevisions(ctx, &store.FindRevisionMessage{
-			InstanceID:   &database.InstanceID,
-			DatabaseName: &database.DatabaseName,
-		})
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to list revisions for database %q", database.DatabaseName)
-		}
-
-		// Find the max declarative version. Could be nil.
-		var maxDeclarativeVersion *model.Version
-		// Create a map of applied versions of VERSIONED revisions
-		appliedVersions := make(map[string]string) // version -> sha256
-		for _, revision := range revisions {
-			switch revision.Payload.Type {
-			case storepb.SchemaChangeType_VERSIONED:
-				appliedVersions[revision.Version] = revision.Payload.SheetSha256
-			case storepb.SchemaChangeType_DECLARATIVE:
-				v, err := model.NewVersion(revision.Version)
-				if err != nil {
-					return nil, errors.Wrapf(err, "failed to parse revision version %q", revision.Version)
-				}
-				if maxDeclarativeVersion == nil || maxDeclarativeVersion.LessThan(v) {
-					maxDeclarativeVersion = v
-				}
-			default:
-				return nil, errors.Errorf("unexpected revision type %q", revision.Payload.Type)
-			}
-		}
-
-		for _, file := range release.Payload.Files {
-			switch file.Type {
-			case storepb.SchemaChangeType_VERSIONED:
-				// Skip if this version has already been applied
-				if _, ok := appliedVersions[file.Version]; ok {
-					// Skip files that have been applied with the same content
-					// If SHA256 differs, it means the file has been modified after being applied. CheckRelease should have warned it.
-					continue
-				}
-
-				// Parse sheet ID from the file's sheet reference
-				_, sheetUID, err := common.GetProjectResourceIDSheetUID(file.Sheet)
-				if err != nil {
-					return nil, errors.Wrapf(err, "failed to get sheet id from sheet %q in release file %q", file.Sheet, file.Id)
-				}
-
-				// Determine migrate type based on file change type
-				var migrateType storepb.MigrationType
-				switch file.MigrationType {
-				case storepb.MigrationType_DDL:
-					migrateType = storepb.MigrationType_DDL
-				case storepb.MigrationType_GHOST:
-					migrateType = storepb.MigrationType_GHOST
-				case storepb.MigrationType_DML:
-					migrateType = storepb.MigrationType_DML
-				case storepb.MigrationType_MIGRATION_TYPE_UNSPECIFIED:
-					migrateType = storepb.MigrationType_MIGRATION_TYPE_UNSPECIFIED
-				default:
-					return nil, errors.Errorf("unsupported release file migration type %q", file.MigrationType)
-				}
-
-				// Create task payload
-				payload := &storepb.Task{
-					SpecId:        spec.Id,
-					SheetId:       int32(sheetUID),
-					SchemaVersion: file.Version,
-					MigrateType:   migrateType,
-					TaskReleaseSource: &storepb.TaskReleaseSource{
-						File: common.FormatReleaseFile(c.Release, file.Id),
-					},
-				}
-
-				// Add ghost flags if this is a ghost migration
-				if migrateType == storepb.MigrationType_GHOST && c.GhostFlags != nil {
-					payload.Flags = c.GhostFlags
-				}
-
-				if migrateType == storepb.MigrationType_DML {
-					payload.EnablePriorBackup = c.EnablePriorBackup
-				}
-
-				env := ""
-				if database.EffectiveEnvironmentID != nil {
-					env = *database.EffectiveEnvironmentID
-				}
-				taskCreate := &store.TaskMessage{
-					InstanceID:   database.InstanceID,
-					DatabaseName: &database.DatabaseName,
-					Environment:  env,
-					Type:         storepb.Task_DATABASE_MIGRATE,
-					Payload:      payload,
-				}
-				taskCreates = append(taskCreates, taskCreate)
-			case storepb.SchemaChangeType_DECLARATIVE:
-				// skip if applied revisions contain an equal or higher version than the declarative file
-				v, err := model.NewVersion(file.Version)
-				if err != nil {
-					return nil, errors.Wrapf(err, "failed to parse file version %q", file.Version)
-				}
-				if maxDeclarativeVersion != nil && v.LessThanOrEqual(maxDeclarativeVersion) {
-					continue
-				}
-
-				// Parse sheet ID from the file's sheet reference
-				_, sheetUID, err := common.GetProjectResourceIDSheetUID(file.Sheet)
-				if err != nil {
-					return nil, errors.Wrapf(err, "failed to get sheet id from sheet %q in release file %q", file.Sheet, file.Id)
-				}
-				payload := &storepb.Task{
-					SpecId:        spec.Id,
-					SheetId:       int32(sheetUID),
-					SchemaVersion: file.Version,
-					TaskReleaseSource: &storepb.TaskReleaseSource{
-						File: common.FormatReleaseFile(c.Release, file.Id),
-					},
-				}
-				env := ""
-				if database.EffectiveEnvironmentID != nil {
-					env = *database.EffectiveEnvironmentID
-				}
-				taskCreate := &store.TaskMessage{
-					InstanceID:   database.InstanceID,
-					DatabaseName: &database.DatabaseName,
-					Environment:  env,
-					Type:         storepb.Task_DATABASE_SDL,
-					Payload:      payload,
-				}
-				taskCreates = append(taskCreates, taskCreate)
-			default:
-				return nil, errors.Errorf("unsupported release file type %q", file.Type)
-			}
-		}
-	}
-
-	return taskCreates, nil
 }
 
 // checkCharacterSetCollationOwner checks if the character set, collation and owner are legal according to the dbType.
@@ -560,7 +355,7 @@ func checkCharacterSetCollationOwner(dbType storepb.Engine, characterSet, collat
 		if owner == "" {
 			return errors.Errorf("database owner is required for CockroachDB")
 		}
-	case storepb.Engine_SQLITE, storepb.Engine_MONGODB, storepb.Engine_MSSQL, storepb.Engine_DORIS:
+	case storepb.Engine_SQLITE, storepb.Engine_MONGODB, storepb.Engine_MSSQL, storepb.Engine_DORIS, storepb.Engine_STARROCKS:
 		// no-op.
 	default:
 		if characterSet == "" {
@@ -634,6 +429,8 @@ func getCreateDatabaseStatement(dbType storepb.Engine, c *storepb.PlanConfig_Cre
 		return fmt.Sprintf("CREATE DATABASE %s;", databaseName), nil
 	case storepb.Engine_DORIS:
 		return fmt.Sprintf("CREATE DATABASE %s;", databaseName), nil
+	case storepb.Engine_STARROCKS:
+		return fmt.Sprintf("CREATE DATABASE `%s`;", databaseName), nil
 	default:
 		return "", errors.Errorf("unsupported database type %s", dbType)
 	}

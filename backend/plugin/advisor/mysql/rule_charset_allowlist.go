@@ -6,12 +6,13 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
-	"github.com/pkg/errors"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -20,9 +21,9 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleCharsetAllowlist, &CharsetAllowlistAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleCharsetAllowlist, &CharsetAllowlistAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleCharsetAllowlist, &CharsetAllowlistAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_SYSTEM_CHARSET_ALLOWLIST, &CharsetAllowlistAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_SYSTEM_CHARSET_ALLOWLIST, &CharsetAllowlistAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_SYSTEM_CHARSET_ALLOWLIST, &CharsetAllowlistAdvisor{})
 }
 
 // CharsetAllowlistAdvisor is the advisor checking for charset allowlist.
@@ -31,34 +32,34 @@ type CharsetAllowlistAdvisor struct {
 
 // Check checks for charset allowlist.
 func (*CharsetAllowlistAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalStringArrayTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
+	stringArrayPayload := checkCtx.Rule.GetStringArrayPayload()
 
 	allowList := make(map[string]bool)
-	for _, charset := range payload.List {
+	for _, charset := range stringArrayPayload.List {
 		allowList[strings.ToLower(charset)] = true
 	}
 
 	// Create the rule
-	rule := NewCharsetAllowlistRule(level, string(checkCtx.Rule.Type), allowList)
+	rule := NewCharsetAllowlistRule(level, checkCtx.Rule.Type.String(), allowList)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -130,7 +131,7 @@ func (r *CharsetAllowlistRule) checkCharset(charset string, lineNumber int) {
 	if _, exists := r.allowList[charset]; charset != "" && !exists {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.DisabledCharset.Int32(),
+			Code:          code.DisabledCharset.Int32(),
 			Title:         r.title,
 			Content:       fmt.Sprintf("\"%s\" used disabled charset '%s'", r.text, charset),
 			StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + lineNumber),

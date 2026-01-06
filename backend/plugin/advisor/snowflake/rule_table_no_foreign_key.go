@@ -6,12 +6,13 @@ import (
 	"fmt"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/snowsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/snowflake"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	snowsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/snowflake"
 )
 
@@ -20,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_SNOWFLAKE, advisor.SchemaRuleTableNoFK, &TableNoForeignKeyAdvisor{})
+	advisor.Register(storepb.Engine_SNOWFLAKE, storepb.SQLReviewRule_TABLE_NO_FOREIGN_KEY, &TableNoForeignKeyAdvisor{})
 }
 
 // TableNoForeignKeyAdvisor is the advisor checking for table disallow foreign key.
@@ -29,20 +30,26 @@ type TableNoForeignKeyAdvisor struct {
 
 // Check checks for table disallow foreign key.
 func (*TableNoForeignKeyAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	rule := NewTableNoForeignKeyRule(level, string(checkCtx.Rule.Type))
+	rule := NewTableNoForeignKeyRule(level, checkCtx.Rule.Type.String())
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList(), nil
 }
@@ -124,7 +131,7 @@ func (r *TableNoForeignKeyRule) GetAdviceList() []*storepb.Advice {
 		if times > 0 {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.TableHasFK.Int32(),
+				Code:          code.TableHasFK.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("FOREIGN KEY is not allowed in the table %s.", r.tableOriginalName[tableName]),
 				StartPosition: common.ConvertANTLRLineToPosition(r.tableLine[tableName]),
@@ -140,7 +147,7 @@ func (r *TableNoForeignKeyRule) enterCreateTable(ctx *parser.Create_tableContext
 
 	r.tableForeignKeyTimes[normalizedTableName] = 0
 	r.tableOriginalName[normalizedTableName] = originalTableName.GetText()
-	r.tableLine[normalizedTableName] = ctx.GetStart().GetLine()
+	r.tableLine[normalizedTableName] = r.baseLine + ctx.GetStart().GetLine()
 	r.currentNormalizedTableName = normalizedTableName
 	r.currentConstraintAction = currentConstraintActionAdd
 }
@@ -164,7 +171,7 @@ func (r *TableNoForeignKeyRule) enterOutOfLineConstraint(ctx *parser.Out_of_line
 	switch r.currentConstraintAction {
 	case currentConstraintActionAdd:
 		r.tableForeignKeyTimes[r.currentNormalizedTableName]++
-		r.tableLine[r.currentNormalizedTableName] = ctx.GetStart().GetLine()
+		r.tableLine[r.currentNormalizedTableName] = r.baseLine + ctx.GetStart().GetLine()
 	case currentConstraintActionDrop:
 		if times, ok := r.tableForeignKeyTimes[r.currentNormalizedTableName]; ok && times > 0 {
 			r.tableForeignKeyTimes[r.currentNormalizedTableName]--

@@ -5,7 +5,7 @@ import {
   PROJECT_V1_ROUTE_ISSUE_DETAIL,
   PROJECT_V1_ROUTE_ISSUE_DETAIL_V1,
 } from "@/router/dashboard/projectV1";
-import { EMPTY_ID, UNKNOWN_ID, type ComposedIssue } from "@/types";
+import { type ComposedIssue, EMPTY_ID, UNKNOWN_ID } from "@/types";
 import { Issue_Type } from "@/types/proto-es/v1/issue_service_pb";
 import type { Plan } from "@/types/proto-es/v1/plan_service_pb";
 import type { Rollout } from "@/types/proto-es/v1/rollout_service_pb";
@@ -30,6 +30,10 @@ export const isValidIssueName = (name: string | undefined) => {
   return uid && uid !== String(EMPTY_ID) && uid !== String(UNKNOWN_ID);
 };
 
+export const getRolloutFromPlan = (planName: string): string => {
+  return `${planName}/rollout`;
+};
+
 export const flattenTaskV1List = (rollout: Rollout | undefined) => {
   return rollout?.stages.flatMap((stage) => stage.tasks) || [];
 };
@@ -37,12 +41,11 @@ export const flattenTaskV1List = (rollout: Rollout | undefined) => {
 const DATABASE_RELATED_TASK_TYPE_LIST = [
   Task_Type.DATABASE_CREATE,
   Task_Type.DATABASE_MIGRATE,
-  Task_Type.DATABASE_SDL,
 ];
 
 export const isDatabaseChangeRelatedIssue = (issue: ComposedIssue): boolean => {
   return (
-    Boolean(issue.rollout) &&
+    Boolean(issue.plan) &&
     flattenTaskV1List(issue.rolloutEntity).some((task) => {
       return DATABASE_RELATED_TASK_TYPE_LIST.includes(task.type);
     })
@@ -59,8 +62,7 @@ export const isDatabaseDataExportIssue = (issue: ComposedIssue): boolean => {
 
 export const generateIssueTitle = (
   type:
-    | "bb.issue.database.schema.update"
-    | "bb.issue.database.data.update"
+    | "bb.issue.database.update"
     | "bb.issue.database.data.export"
     | "bb.issue.grant.request",
   databaseNameList?: string[],
@@ -84,11 +86,9 @@ export const generateIssueTitle = (
   } else {
     if (type.startsWith("bb.issue.database")) {
       parts.push(
-        type === "bb.issue.database.schema.update"
-          ? t("issue.title.edit-schema")
-          : type === "bb.issue.database.data.update"
-            ? t("issue.title.change-data")
-            : t("issue.title.export-data")
+        type === "bb.issue.database.update"
+          ? t("issue.title.change-database")
+          : t("issue.title.export-data")
       );
     } else {
       parts.push(t("issue.title.request-role"));

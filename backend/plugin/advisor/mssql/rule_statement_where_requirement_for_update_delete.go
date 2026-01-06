@@ -4,12 +4,13 @@ import (
 	"context"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/tsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/tsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -17,7 +18,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MSSQL, advisor.SchemaRuleStatementRequireWhereForUpdateDelete, &WhereRequirementForUpdateDeleteAdvisor{})
+	advisor.Register(storepb.Engine_MSSQL, storepb.SQLReviewRule_STATEMENT_WHERE_REQUIRE_UPDATE_DELETE, &WhereRequirementForUpdateDeleteAdvisor{})
 }
 
 // WhereRequirementForUpdateDeleteAdvisor is the advisor checking for WHERE clause requirement for UPDATE/DELETE statements.
@@ -26,23 +27,28 @@ type WhereRequirementForUpdateDeleteAdvisor struct {
 
 // Check checks for WHERE clause requirement.
 func (*WhereRequirementForUpdateDeleteAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewWhereRequirementForUpdateDeleteRule(level, string(checkCtx.Rule.Type))
+	rule := NewWhereRequirementForUpdateDeleteRule(level, checkCtx.Rule.Type.String())
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList(), nil
 }
@@ -90,7 +96,7 @@ func (r *WhereRequirementForUpdateDeleteRule) enterDeleteStatement(ctx *parser.D
 	if ctx.WHERE() == nil {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.StatementNoWhere.Int32(),
+			Code:          code.StatementNoWhere.Int32(),
 			Title:         r.title,
 			Content:       "WHERE clause is required for DELETE statement.",
 			StartPosition: common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),
@@ -102,7 +108,7 @@ func (r *WhereRequirementForUpdateDeleteRule) enterUpdateStatement(ctx *parser.U
 	if ctx.WHERE() == nil {
 		r.AddAdvice(&storepb.Advice{
 			Status:        r.level,
-			Code:          advisor.StatementNoWhere.Int32(),
+			Code:          code.StatementNoWhere.Int32(),
 			Title:         r.title,
 			Content:       "WHERE clause is required for UPDATE statement.",
 			StartPosition: common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),

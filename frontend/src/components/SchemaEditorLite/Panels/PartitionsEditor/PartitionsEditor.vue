@@ -30,28 +30,28 @@ import { create } from "@bufbuild/protobuf";
 import { useElementSize } from "@vueuse/core";
 import { head, pull } from "lodash-es";
 import { ChevronDownIcon } from "lucide-vue-next";
-import { NDataTable, type DataTableColumn } from "naive-ui";
+import { type DataTableColumn, NDataTable } from "naive-ui";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { ComposedDatabase } from "@/types";
 import type {
-  TablePartitionMetadata,
   DatabaseMetadata,
   SchemaMetadata,
   TableMetadata,
+  TablePartitionMetadata,
 } from "@/types/proto-es/v1/database_service_pb";
 import {
-  TablePartitionMetadataSchema,
   TablePartitionMetadata_Type,
+  TablePartitionMetadataSchema,
 } from "@/types/proto-es/v1/database_service_pb";
 import type { EditStatus } from "../..";
 import { useSchemaEditorContext } from "../../context";
 import { markUUID } from "../common";
 import {
-  OperationCell,
-  NameCell,
-  TypeCell,
   ExpressionCell,
+  NameCell,
+  OperationCell,
+  TypeCell,
   ValueCell,
 } from "./components";
 
@@ -338,7 +338,7 @@ const columns = computed(() => {
       resizable: false,
       width: 60,
       hide: props.readonly,
-      className: "!px-0",
+      className: "px-0!",
       render: (item) => {
         return (
           <OperationCell
@@ -410,41 +410,55 @@ const columns = computed(() => {
 <style lang="postcss" scoped>
 .schema-editor-table-partitions-editor
   :deep(.n-data-table-th .n-data-table-resize-button::after) {
-  @apply bg-control-bg h-2/3;
+  background-color: var(--color-control-bg);
+  height: 66.666667%;
 }
 .schema-editor-table-partitions-editor :deep(.n-data-table-td.input-cell) {
-  @apply pl-0.5 pr-1 py-0;
+  padding-left: 0.125rem;
+  padding-right: 0.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 .schema-editor-table-partitions-editor
   :deep(.n-data-table-td .n-data-table-expand-placeholder) {
-  @apply hidden;
+  display: none;
 }
 .schema-editor-table-partitions-editor
   :deep(.n-data-table-td .n-data-table-expand-trigger) {
-  @apply ml-2 mr-0;
+  margin-left: 0.5rem;
+  margin-right: 0;
 }
 .schema-editor-table-partitions-editor
   :deep(.n-data-table-td.input-cell .n-input__placeholder),
 .schema-editor-table-partitions-editor
   :deep(.n-data-table-td.input-cell .n-base-selection-placeholder) {
-  @apply italic;
+  font-style: italic;
 }
 .schema-editor-table-partitions-editor :deep(.n-data-table-td.checkbox-cell) {
-  @apply pr-1 py-0;
+  padding-right: 0.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 .schema-editor-table-partitions-editor :deep(.n-data-table-td.text-cell) {
-  @apply pr-1 py-0;
+  padding-right: 0.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 .schema-editor-table-partitions-editor
   :deep(.n-data-table-tr.created .n-data-table-td) {
-  @apply text-green-700 !bg-green-50;
+  color: var(--color-green-700);
+  background-color: var(--color-green-50) !important;
 }
 .schema-editor-table-partitions-editor
   :deep(.n-data-table-tr.dropped .n-data-table-td) {
-  @apply text-red-700 cursor-not-allowed !bg-red-50 opacity-70;
+  color: var(--color-red-700);
+  cursor: not-allowed;
+  background-color: var(--color-red-50) !important;
+  opacity: 0.7;
 }
 .schema-editor-table-partitions-editor
   :deep(.n-data-table-tr.updated .n-data-table-td) {
-  @apply text-yellow-700 !bg-yellow-50;
+  color: var(--color-yellow-700);
+  background-color: var(--color-yellow-50) !important;
 }
 </style>

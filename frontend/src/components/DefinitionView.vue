@@ -17,7 +17,7 @@
     </div>
     <button
       v-if="state.showExpandButton"
-      class="inline-block cursor-pointer px-2 py-1 rounded text-xs shadow bg-gray-50 hover:opacity-80"
+      class="inline-block cursor-pointer px-2 py-1 rounded-sm text-xs shadow-sm bg-gray-50 hover:opacity-80"
       @click="state.expanded = !state.expanded"
     >
       {{ $t("common." + (state.expanded ? "collapse" : "expand")) }}
@@ -32,7 +32,7 @@
 
 <script lang="ts" setup>
 import { NEllipsis } from "naive-ui";
-import { computed, ref, reactive, onMounted } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 
 const MAX_HEIGHT = 60;
 

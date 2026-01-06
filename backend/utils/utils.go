@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strconv"
 	"strings"
 	"unicode"
 
@@ -32,25 +31,31 @@ func DataSourceFromInstanceWithType(instance *store.InstanceMessage, dataSourceT
 }
 
 // FindNextPendingRole finds the next pending role in the approval flow.
-func FindNextPendingRole(template *storepb.ApprovalTemplate, approvers []*storepb.IssuePayloadApproval_Approver) string {
+func FindNextPendingRole(approval *storepb.IssuePayloadApproval) string {
+	if approval == nil || approval.ApprovalTemplate == nil {
+		return ""
+	}
 	// We can do the finding like this for now because we are presuming that
 	// one role is approved by one approver.
 	// and the approver status is either
 	// APPROVED or REJECTED.
-	if len(approvers) >= len(template.Flow.Roles) {
+	if len(approval.Approvers) >= len(approval.ApprovalTemplate.Flow.Roles) {
 		return ""
 	}
-	return template.Flow.Roles[len(approvers)]
+	return approval.ApprovalTemplate.Flow.Roles[len(approval.Approvers)]
 }
 
 // FindRejectedRole finds the rejected role in the approval flow.
-func FindRejectedRole(template *storepb.ApprovalTemplate, approvers []*storepb.IssuePayloadApproval_Approver) string {
-	for i, approver := range approvers {
-		if i >= len(template.Flow.Roles) {
+func FindRejectedRole(approval *storepb.IssuePayloadApproval) string {
+	if approval == nil || approval.ApprovalTemplate == nil {
+		return ""
+	}
+	for i, approver := range approval.Approvers {
+		if i >= len(approval.ApprovalTemplate.Flow.Roles) {
 			return ""
 		}
 		if approver.Status == storepb.IssuePayloadApproval_Approver_REJECTED {
-			return template.Flow.Roles[i]
+			return approval.ApprovalTemplate.Flow.Roles[i]
 		}
 	}
 	return ""
@@ -61,13 +66,10 @@ func CheckApprovalApproved(approval *storepb.IssuePayloadApproval) (bool, error)
 	if approval == nil || !approval.ApprovalFindingDone {
 		return false, nil
 	}
-	if approval.ApprovalFindingError != "" {
-		return false, nil
-	}
 	if approval.ApprovalTemplate == nil {
 		return true, nil
 	}
-	return FindRejectedRole(approval.ApprovalTemplate, approval.Approvers) == "" && FindNextPendingRole(approval.ApprovalTemplate, approval.Approvers) == "", nil
+	return FindRejectedRole(approval) == "" && FindNextPendingRole(approval) == "", nil
 }
 
 // CheckIssueApproved checks if the issue is approved.
@@ -75,27 +77,11 @@ func CheckIssueApproved(issue *store.IssueMessage) (bool, error) {
 	return CheckApprovalApproved(issue.Payload.Approval)
 }
 
-// HandleIncomingApprovalSteps handles incoming approval steps.
-// - Blocks approval steps if no user can approve the step.
-func HandleIncomingApprovalSteps(approval *storepb.IssuePayloadApproval) ([]*storepb.IssuePayloadApproval_Approver, error) {
-	if approval.ApprovalTemplate == nil {
-		return nil, nil
-	}
-
-	var approvers []*storepb.IssuePayloadApproval_Approver
-
-	role := FindNextPendingRole(approval.ApprovalTemplate, approval.Approvers)
-	if role == "" {
-		return nil, nil
-	}
-	return approvers, nil
-}
-
 // UpdateProjectPolicyFromGrantIssue updates the project policy from grant issue.
 func UpdateProjectPolicyFromGrantIssue(ctx context.Context, stores *store.Store, issue *store.IssueMessage, grantRequest *storepb.GrantRequest) error {
-	policyMessage, err := stores.GetProjectIamPolicy(ctx, issue.Project.ResourceID)
+	policyMessage, err := stores.GetProjectIamPolicy(ctx, issue.ProjectID)
 	if err != nil {
-		return errors.Wrapf(err, "failed to get project policy for project %s", issue.Project.ResourceID)
+		return errors.Wrapf(err, "failed to get project policy for project %s", issue.ProjectID)
 	}
 
 	var newConditionExpr string
@@ -104,16 +90,16 @@ func UpdateProjectPolicyFromGrantIssue(ctx context.Context, stores *store.Store,
 	}
 	updated := false
 
-	userID, err := strconv.Atoi(strings.TrimPrefix(grantRequest.User, "users/"))
-	if err != nil {
-		return err
+	email := strings.TrimPrefix(grantRequest.User, "users/")
+	if email == "" {
+		return errors.New("invalid empty user identifier")
 	}
-	newUser, err := stores.GetUserByID(ctx, userID)
+	newUser, err := stores.GetUserByEmail(ctx, email)
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "failed to find user %s", email)
 	}
 	if newUser == nil {
-		return connect.NewError(connect.CodeInternal, errors.Errorf("user %v not found", userID))
+		return connect.NewError(connect.CodeInternal, errors.Errorf("user %s not found", email))
 	}
 	for _, binding := range policyMessage.Policy.Bindings {
 		if binding.Role != grantRequest.Role {
@@ -127,7 +113,7 @@ func UpdateProjectPolicyFromGrantIssue(ctx context.Context, stores *store.Store,
 			continue
 		}
 		// Append
-		binding.Members = append(binding.Members, common.FormatUserUID(newUser.ID))
+		binding.Members = append(binding.Members, common.FormatUserEmail(newUser.Email))
 		updated = true
 		break
 	}
@@ -139,7 +125,7 @@ func UpdateProjectPolicyFromGrantIssue(ctx context.Context, stores *store.Store,
 		condition.Description = fmt.Sprintf("#%d", issue.UID)
 		policyMessage.Policy.Bindings = append(policyMessage.Policy.Bindings, &storepb.Binding{
 			Role:      grantRequest.Role,
-			Members:   []string{common.FormatUserUID(newUser.ID)},
+			Members:   []string{common.FormatUserEmail(newUser.Email)},
 			Condition: condition,
 		})
 	}
@@ -148,8 +134,8 @@ func UpdateProjectPolicyFromGrantIssue(ctx context.Context, stores *store.Store,
 	if err != nil {
 		return err
 	}
-	if _, err := stores.CreatePolicyV2(ctx, &store.PolicyMessage{
-		Resource:          common.FormatProject(issue.Project.ResourceID),
+	if _, err := stores.CreatePolicy(ctx, &store.PolicyMessage{
+		Resource:          common.FormatProject(issue.ProjectID),
 		ResourceType:      storepb.Policy_PROJECT,
 		Payload:           string(policyPayload),
 		Type:              storepb.Policy_IAM,
@@ -209,21 +195,6 @@ func CheckDatabaseGroupMatch(ctx context.Context, expression string, database *s
 		return true, nil
 	}
 	return false, nil
-}
-
-func Uniq[T comparable](array []T) []T {
-	res := make([]T, 0, len(array))
-	seen := make(map[T]struct{}, len(array))
-
-	for _, e := range array {
-		if _, ok := seen[e]; ok {
-			continue
-		}
-		seen[e] = struct{}{}
-		res = append(res, e)
-	}
-
-	return res
 }
 
 // IsSpaceOrSemicolon checks if the rune is a space or a semicolon.

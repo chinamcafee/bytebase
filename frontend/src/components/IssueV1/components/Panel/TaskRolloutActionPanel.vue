@@ -17,7 +17,7 @@
           type="error"
           :title="$t('rollout.task-execution-errors')"
         >
-          <ul class="list-disc list-inside space-y-1">
+          <ul class="list-disc list-inside flex flex-col gap-y-1">
             <li
               v-for="(error, index) in validationErrors"
               :key="index"
@@ -34,7 +34,7 @@
           type="warning"
           :title="$t('rollout.task-execution-notices')"
         >
-          <ul class="list-disc list-inside space-y-1">
+          <ul class="list-disc list-inside flex flex-col gap-y-1">
             <li
               v-for="(warning, index) in validationWarnings"
               :key="index"
@@ -71,39 +71,19 @@
           </label>
           <div class="flex-1 overflow-y-auto">
             <NScrollbar class="max-h-64">
-              <ul class="text-sm space-y-2">
+              <ul class="text-sm flex flex-col gap-y-2">
                 <li
                   v-for="task in filteredTasks"
                   :key="task.name"
                   class="flex items-center"
                 >
                   <NTag
-                    v-if="
-                      semanticTaskType(
-                        task.type,
-                        task.payload?.case === 'databaseUpdate'
-                          ? task.payload.value.databaseChangeType
-                          : undefined,
-                        task.payload?.case === 'databaseUpdate'
-                          ? task.payload.value.migrationType
-                          : undefined
-                      )
-                    "
+                    v-if="semanticTaskType(task.type)"
                     class="mr-2"
                     size="small"
                   >
                     <span class="inline-block text-center">
-                      {{
-                        semanticTaskType(
-                          task.type,
-                          task.payload?.case === "databaseUpdate"
-                            ? task.payload.value.databaseChangeType
-                            : undefined,
-                          task.payload?.case === "databaseUpdate"
-                            ? task.payload.value.migrationType
-                            : undefined
-                        )
-                      }}
+                      {{ semanticTaskType(task.type) }}
                     </span>
                   </NTag>
                   <RolloutTaskDatabaseName :task="task" />
@@ -121,14 +101,15 @@
             planCheckRunList.length > 0
           "
           class="shrink-0 flex-col gap-y-1"
-          label-class="!text-base"
+          label-class="text-base!"
           :allow-run-checks="false"
           :plan-name="issue.plan"
           :plan-check-run-list="planCheckRunList"
           :database="database"
         />
 
-        <div class="flex flex-col gap-y-1 shrink-0">
+        <!-- Only show comment/reason field for SKIP action -->
+        <div v-if="action === 'SKIP'" class="flex flex-col gap-y-1 shrink-0">
           <p class="font-medium text-control">
             {{ $t("common.comment") }}
           </p>
@@ -248,28 +229,21 @@ import {
   taskRunListForTask,
   useIssueContext,
 } from "@/components/IssueV1/logic";
-import PlanCheckRunBar from "@/components/PlanCheckRun/PlanCheckRunBar.vue";
 import { planCheckRunSummaryForCheckRunList } from "@/components/PlanCheckRun/common";
+import PlanCheckRunBar from "@/components/PlanCheckRun/PlanCheckRunBar.vue";
 import { EnvironmentV1Name } from "@/components/v2";
-import { rolloutServiceClientConnect } from "@/grpcweb";
+import { rolloutServiceClientConnect } from "@/connect";
 import {
   pushNotification,
-  useEnvironmentV1Store,
   useCurrentProjectV1,
-  usePolicyByParentAndType,
+  useEnvironmentV1Store,
 } from "@/store";
 import { Issue_Approver_Status } from "@/types/proto-es/v1/issue_service_pb";
-import {
-  PolicyType,
-  RolloutPolicy_Checkers_PlanCheckEnforcement,
-} from "@/types/proto-es/v1/org_policy_service_pb";
-import {
-  BatchRunTasksRequestSchema,
-  BatchSkipTasksRequestSchema,
-  BatchCancelTaskRunsRequestSchema,
-} from "@/types/proto-es/v1/rollout_service_pb";
 import type { Task } from "@/types/proto-es/v1/rollout_service_pb";
 import {
+  BatchCancelTaskRunsRequestSchema,
+  BatchRunTasksRequestSchema,
+  BatchSkipTasksRequestSchema,
   Task_Status,
   TaskRun_Status,
 } from "@/types/proto-es/v1/rollout_service_pb";
@@ -358,20 +332,6 @@ const database = computed(() =>
   databaseForTask(project.value, selectedTask.value)
 );
 
-// Get rollout policy for the environment
-const { policy: rolloutPolicy } = usePolicyByParentAndType(
-  computed(() => {
-    const env = database.value?.effectiveEnvironment;
-    if (!env) {
-      return { parentPath: "", policyType: PolicyType.ROLLOUT_POLICY };
-    }
-    return {
-      parentPath: env,
-      policyType: PolicyType.ROLLOUT_POLICY,
-    };
-  })
-);
-
 const stage = computed(() => {
   const firstTask = head(props.taskList);
   if (!firstTask) return undefined;
@@ -447,7 +407,7 @@ const planCheckRunList = computed(() => {
   return uniqBy(list, (checkRun) => checkRun.name);
 });
 
-// Plan check error validation based on rollout policy checkers
+// Plan check error validation based on project settings
 const planCheckError = computed(() => {
   if (
     !(
@@ -461,15 +421,8 @@ const planCheckError = computed(() => {
 
   const summary = planCheckRunSummaryForCheckRunList(planCheckRunList.value);
 
-  // Get the plan check enforcement level from the rollout policy
-  const planCheckEnforcement =
-    rolloutPolicy.value?.policy?.case === "rolloutPolicy"
-      ? rolloutPolicy.value.policy.value.checkers?.requiredStatusChecks
-          ?.planCheckEnforcement
-      : undefined;
-
   // If no enforcement is specified, default to no validation
-  if (!planCheckEnforcement) {
+  if (!project.value.requirePlanCheckNoError) {
     return undefined;
   }
 
@@ -478,27 +431,13 @@ const planCheckError = computed(() => {
       "custom-approval.issue-review.disallow-approve-reason.some-task-checks-are-still-running"
     );
   }
-  // ERROR_ONLY enforcement: only block on errors
-  if (
-    planCheckEnforcement ===
-    RolloutPolicy_Checkers_PlanCheckEnforcement.ERROR_ONLY
-  ) {
-    if (summary.errorCount > 0) {
-      return t(
-        "custom-approval.issue-review.disallow-approve-reason.some-task-checks-didnt-pass"
-      );
-    }
+
+  if (summary.errorCount > 0) {
+    return t(
+      "custom-approval.issue-review.disallow-approve-reason.some-task-checks-didnt-pass"
+    );
   }
-  // STRICT enforcement: block on both errors and warnings
-  if (
-    planCheckEnforcement === RolloutPolicy_Checkers_PlanCheckEnforcement.STRICT
-  ) {
-    if (summary.errorCount > 0 || summary.warnCount > 0) {
-      return t(
-        "custom-approval.issue-review.disallow-approve-reason.some-task-checks-didnt-pass"
-      );
-    }
-  }
+
   return undefined;
 });
 
@@ -525,15 +464,8 @@ const planCheckWarning = computed(() => {
     return undefined;
   }
 
-  // Get the plan check enforcement level from the rollout policy
-  const planCheckEnforcement =
-    rolloutPolicy.value?.policy?.case === "rolloutPolicy"
-      ? rolloutPolicy.value.policy.value.checkers?.requiredStatusChecks
-          ?.planCheckEnforcement
-      : undefined;
-
-  // If there's no enforcement policy, show any plan check issues as warnings
-  if (!planCheckEnforcement) {
+  // If enforcement is disabled, show any plan check issues as warnings
+  if (!project.value.requirePlanCheckNoError) {
     if (summary.runningCount > 0) {
       return t(
         "custom-approval.issue-review.disallow-approve-reason.some-task-checks-are-still-running"
@@ -543,17 +475,6 @@ const planCheckWarning = computed(() => {
       return t(
         "custom-approval.issue-review.disallow-approve-reason.some-task-checks-didnt-pass"
       );
-    }
-  }
-
-  // Show warnings for plan check results that don't violate enforcement policy
-  if (
-    planCheckEnforcement ===
-    RolloutPolicy_Checkers_PlanCheckEnforcement.ERROR_ONLY
-  ) {
-    // Show warnings as non-blocking when ERROR_ONLY policy allows them
-    if (summary.warnCount > 0) {
-      return t("rollout.task-execution-notices");
     }
   }
 
@@ -590,10 +511,7 @@ const validationErrors = computed(() => {
     props.action === "RESTART"
   ) {
     // Issue approval errors (only if policy requires it) - HARD BLOCK
-    const requiresIssueApproval =
-      rolloutPolicy.value?.policy?.case === "rolloutPolicy"
-        ? rolloutPolicy.value.policy.value.checkers?.requiredIssueApproval
-        : false;
+    const requiresIssueApproval = project.value.requireIssueApproval;
 
     if (
       requiresIssueApproval &&
@@ -644,10 +562,7 @@ const validationWarnings = computed(() => {
     }
 
     // Issue approval warnings (when not required by policy but issue is not approved)
-    const requiresIssueApproval =
-      rolloutPolicy.value?.policy?.case === "rolloutPolicy"
-        ? rolloutPolicy.value.policy.value.checkers?.requiredIssueApproval
-        : false;
+    const requiresIssueApproval = project.value.requireIssueApproval;
 
     if (
       !requiresIssueApproval &&
@@ -699,7 +614,6 @@ const handleConfirm = async (action: TaskRolloutAction) => {
       const request = create(BatchRunTasksRequestSchema, {
         parent: stage.name,
         tasks: filteredTasks.value.map((task) => task.name),
-        reason: comment.value,
       });
       if (runTimeInMS.value !== undefined) {
         // Convert timestamp to protobuf Timestamp format
@@ -734,7 +648,6 @@ const handleConfirm = async (action: TaskRolloutAction) => {
         const request = create(BatchCancelTaskRunsRequestSchema, {
           parent: `${stage.name}/tasks/-`,
           taskRuns: taskRunListToCancel.map((taskRun) => taskRun.name),
-          reason: comment.value,
         });
         await rolloutServiceClientConnect.batchCancelTaskRuns(request);
       }

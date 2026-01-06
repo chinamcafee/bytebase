@@ -61,8 +61,8 @@ func TestSQLExport(t *testing.T) {
 							statement: "SELECT * FROM Test1.tbl;",
 							content: `[
   {
-    "gender": "0b00000000",
-    "height": "0b01111111",
+    "gender": "AA==",
+    "height": "fw==",
     "id": 1,
     "name": "Alice"
   }
@@ -79,7 +79,7 @@ func TestSQLExport(t *testing.T) {
 					}{
 						{
 							statement: "SELECT * FROM Test1.tbl;",
-							content:   "id,name,gender,height\n1,\"Alice\",\"\x00\",\"\x7f\"",
+							content:   "id,name,gender,height\n1,\"Alice\",\"0x00\",\"0x7f\"",
 						},
 					},
 				},
@@ -201,7 +201,7 @@ func TestSQLExport(t *testing.T) {
 		default:
 			a.FailNow("unsupported db type")
 		}
-		err = ctl.createDatabaseV2(ctx, ctl.project, instance, nil /* environment */, tt.databaseName, databaseOwner)
+		err = ctl.createDatabase(ctx, ctl.project, instance, nil /* environment */, tt.databaseName, databaseOwner)
 		a.NoError(err)
 
 		instanceID, err := common.GetInstanceID(instance.Name)
@@ -216,7 +216,6 @@ func TestSQLExport(t *testing.T) {
 		sheetResp, err := ctl.sheetServiceClient.CreateSheet(ctx, connect.NewRequest(&v1pb.CreateSheetRequest{
 			Parent: ctl.project.Name,
 			Sheet: &v1pb.Sheet{
-				Title:   "prepareStatements",
 				Content: []byte(tt.prepareStatement),
 			},
 		}))
@@ -227,7 +226,7 @@ func TestSQLExport(t *testing.T) {
 		a.Equal(1, len(database.InstanceResource.DataSources))
 		dataSource := database.InstanceResource.DataSources[0]
 
-		err = ctl.changeDatabase(ctx, ctl.project, database, sheet, v1pb.MigrationType_DDL)
+		err = ctl.changeDatabase(ctx, ctl.project, database, sheet, false)
 		a.NoError(err)
 
 		for _, exportTest := range tt.exportTests {

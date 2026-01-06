@@ -1,19 +1,17 @@
 <template>
   <div class="pb-6 lg:flex">
     <div class="text-left lg:w-1/4">
-      <div class="flex items-center space-x-2">
+      <div class="flex items-center gap-x-2">
         <h1 class="text-2xl font-bold">
           {{ title }}
         </h1>
       </div>
     </div>
-    <div class="flex-1 mt-4 lg:px-4 lg:mt-0 space-y-7">
+    <div class="flex-1 mt-4 lg:px-4 lg:mt-0 flex flex-col gap-y-6">
       <WorkspaceMode
         v-model:mode="state.databaseChangeMode"
         :disabled="!allowEdit"
       />
-
-      <NDivider v-if="!isSaaSMode" />
 
       <div v-if="!isSaaSMode">
         <label class="flex items-center gap-x-2">
@@ -27,16 +25,26 @@
             url="https://docs.bytebase.com/get-started/self-host/external-url?source=console"
           />
         </div>
-        <NTooltip placement="top-start" :disabled="allowEdit">
+        <div v-if="externalUrlFromFlag" class="mb-2 text-sm text-accent">
+          {{ $t("settings.general.workspace.external-url.managed-by-flag") }}
+        </div>
+        <NTooltip
+          placement="top-start"
+          :disabled="allowEdit && !externalUrlFromFlag"
+        >
           <template #trigger>
             <NInput
               v-model:value="state.externalUrl"
               class="mb-4 w-full"
-              :disabled="!allowEdit || isSaaSMode"
+              :disabled="!allowEdit || isSaaSMode || externalUrlFromFlag"
             />
           </template>
           <span class="text-sm text-gray-400 -translate-y-2">
-            {{ $t("settings.general.workspace.only-admin-can-edit") }}
+            {{
+              externalUrlFromFlag
+                ? $t("settings.general.workspace.external-url.cannot-edit-flag")
+                : $t("settings.general.workspace.only-admin-can-edit")
+            }}
           </span>
         </NTooltip>
       </div>
@@ -74,14 +82,14 @@
 import { create } from "@bufbuild/protobuf";
 import { FieldMaskSchema } from "@bufbuild/protobuf/wkt";
 import { isEqual } from "lodash-es";
-import { NDivider, NTooltip, NButton, NInput } from "naive-ui";
+import { NButton, NInput, NTooltip } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { computed, reactive, ref } from "vue";
 import { BBModal } from "@/bbkit";
 import LearnMoreLink from "@/components/LearnMoreLink.vue";
 import { router } from "@/router";
 import { SQL_EDITOR_HOME_MODULE } from "@/router/sqlEditor";
-import { useSettingV1Store, useActuatorV1Store } from "@/store";
+import { useActuatorV1Store, useSettingV1Store } from "@/store";
 import { DatabaseChangeMode } from "@/types/proto-es/v1/setting_service_pb";
 import WorkspaceMode from "@/views/Setup/WorkspaceMode.vue";
 
@@ -119,6 +127,10 @@ const { isSaaSMode } = storeToRefs(actuatorV1Store);
 const state = reactive<LocalState>(getInitialState());
 const showModal = ref(false);
 
+const externalUrlFromFlag = computed(() => {
+  return actuatorV1Store.serverInfo?.externalUrlFromFlag ?? false;
+});
+
 const allowSave = computed((): boolean => {
   return !isEqual(state, getInitialState());
 });
@@ -131,7 +143,7 @@ const onUpdate = async () => {
         externalUrl: state.externalUrl,
       },
       updateMask: create(FieldMaskSchema, {
-        paths: ["value.workspace_profile_setting_value.external_url"],
+        paths: ["value.workspace_profile.external_url"],
       }),
     });
   }
@@ -141,7 +153,7 @@ const onUpdate = async () => {
         databaseChangeMode: state.databaseChangeMode,
       },
       updateMask: create(FieldMaskSchema, {
-        paths: ["value.workspace_profile_setting_value.database_change_mode"],
+        paths: ["value.workspace_profile.database_change_mode"],
       }),
     });
     if (state.databaseChangeMode === DatabaseChangeMode.EDITOR) {

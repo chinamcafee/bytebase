@@ -76,7 +76,11 @@ func (d *Driver) Open(ctx context.Context, _ storepb.Engine, config db.Connectio
 	if err != nil {
 		return nil, err
 	}
-	pgxConnConfig.RuntimeParams["application_name"] = "bytebase"
+	appName := "bytebase"
+	if config.ConnectionContext.TaskRunUID != nil {
+		appName = fmt.Sprintf("bytebase-taskrun-%d", *config.ConnectionContext.TaskRunUID)
+	}
+	pgxConnConfig.RuntimeParams["application_name"] = appName
 	if config.ConnectionContext.ReadOnly {
 		pgxConnConfig.RuntimeParams["default_transaction_read_only"] = "true"
 	}
@@ -115,7 +119,7 @@ func (d *Driver) Open(ctx context.Context, _ storepb.Engine, config db.Connectio
 		return nil, err
 	}
 	d.db = db
-	if config.ConnectionContext.UseDatabaseOwner {
+	if config.ConnectionContext.TenantMode {
 		owner, err := d.GetCurrentDatabaseOwner(ctx)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to get database owner")
@@ -365,8 +369,9 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 	}
 
 	// Parse transaction mode from the script
-	transactionMode, cleanedStatement := base.ParseTransactionMode(statement)
+	config, cleanedStatement := base.ParseTransactionConfig(statement)
 	statement = cleanedStatement
+	transactionMode := config.Mode
 
 	// Apply default when transaction mode is not specified
 	if transactionMode == common.TransactionModeUnspecified {
@@ -378,10 +383,8 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 		return 0, err
 	}
 
-	var commands []base.SingleSQL
-	var originalIndex []int32
-	var nonTransactionAndSetRoleStmts []string
-	var nonTransactionAndSetRoleStmtsIndex []int32
+	var commands []base.Statement
+	var nonTransactionAndSetRoleStmts []base.Statement
 	var isPlsql bool
 	// HACK(p0ny): always split for pg
 	//nolint
@@ -390,7 +393,7 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 		if err != nil {
 			return 0, err
 		}
-		commands, originalIndex = base.FilterEmptySQLWithIndexes(singleSQLs)
+		commands = base.FilterEmptyStatements(singleSQLs)
 
 		// If the statement is a single statement and is a PL/pgSQL block,
 		// we should execute it as a single statement without transaction.
@@ -400,18 +403,15 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 			isPlsql = true
 		}
 
-		var tmpCommands []base.SingleSQL
-		var tmpOriginalIndex []int32
-		for i, command := range commands {
+		var tmpCommands []base.Statement
+		for _, command := range commands {
 			switch {
 			case isSetRoleStatement(command.Text):
-				nonTransactionAndSetRoleStmts = append(nonTransactionAndSetRoleStmts, command.Text)
-				nonTransactionAndSetRoleStmtsIndex = append(nonTransactionAndSetRoleStmtsIndex, originalIndex[i])
+				nonTransactionAndSetRoleStmts = append(nonTransactionAndSetRoleStmts, command)
 			case IsNonTransactionStatement(command.Text):
-				nonTransactionAndSetRoleStmts = append(nonTransactionAndSetRoleStmts, command.Text)
-				nonTransactionAndSetRoleStmtsIndex = append(nonTransactionAndSetRoleStmtsIndex, originalIndex[i])
+				nonTransactionAndSetRoleStmts = append(nonTransactionAndSetRoleStmts, command)
 				continue
-			case isSuperuserStatement(command.Text) && d.connectionCtx.UseDatabaseOwner:
+			case isSuperuserStatement(command.Text) && d.connectionCtx.TenantMode:
 				// Use superuser privilege to run privileged statements.
 				slog.Info("Use superuser privilege to run privileged statements", slog.String("statement", command.Text))
 				ct := command.Text
@@ -421,17 +421,16 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 				command.Text = fmt.Sprintf("SET LOCAL ROLE NONE;%sSET LOCAL ROLE '%s';", ct, owner)
 			}
 			tmpCommands = append(tmpCommands, command)
-			tmpOriginalIndex = append(tmpOriginalIndex, originalIndex[i])
 		}
-		commands, originalIndex = tmpCommands, tmpOriginalIndex
+		commands = tmpCommands
 	}
 
 	// Execute based on transaction mode
 	var affectedRows int64
 	if transactionMode == common.TransactionModeOff {
-		affectedRows, err = d.executeInAutoCommitMode(ctx, owner, statement, commands, originalIndex, nonTransactionAndSetRoleStmts, nonTransactionAndSetRoleStmtsIndex, opts, isPlsql)
+		affectedRows, err = d.executeInAutoCommitMode(ctx, owner, statement, commands, nonTransactionAndSetRoleStmts, opts, isPlsql)
 	} else {
-		affectedRows, err = d.executeInTransactionMode(ctx, owner, statement, commands, originalIndex, nonTransactionAndSetRoleStmts, nonTransactionAndSetRoleStmtsIndex, opts, isPlsql)
+		affectedRows, err = d.executeInTransactionMode(ctx, owner, statement, commands, nonTransactionAndSetRoleStmts, opts, isPlsql)
 	}
 	if err == nil {
 		return affectedRows, nil
@@ -452,9 +451,9 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 
 		// Do retry.
 		if transactionMode == common.TransactionModeOff {
-			affectedRows, err = d.executeInAutoCommitMode(ctx, owner, statement, commands, originalIndex, nonTransactionAndSetRoleStmts, nonTransactionAndSetRoleStmtsIndex, opts, isPlsql)
+			affectedRows, err = d.executeInAutoCommitMode(ctx, owner, statement, commands, nonTransactionAndSetRoleStmts, opts, isPlsql)
 		} else {
-			affectedRows, err = d.executeInTransactionMode(ctx, owner, statement, commands, originalIndex, nonTransactionAndSetRoleStmts, nonTransactionAndSetRoleStmtsIndex, opts, isPlsql)
+			affectedRows, err = d.executeInTransactionMode(ctx, owner, statement, commands, nonTransactionAndSetRoleStmts, opts, isPlsql)
 		}
 		if err == nil {
 			break
@@ -483,10 +482,8 @@ func (d *Driver) executeInTransactionMode(
 	ctx context.Context,
 	owner string,
 	statement string,
-	commands []base.SingleSQL,
-	originalIndex []int32,
-	nonTransactionAndSetRoleStmts []string,
-	nonTransactionAndSetRoleStmtsIndex []int32,
+	commands []base.Statement,
+	nonTransactionAndSetRoleStmts []base.Statement,
 	opts db.ExecuteOptions,
 	isPlsql bool,
 ) (int64, error) {
@@ -496,26 +493,14 @@ func (d *Driver) executeInTransactionMode(
 	}
 	defer conn.Close()
 
-	if opts.SetConnectionID != nil {
-		var pid string
-		if err := conn.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
-			return 0, errors.Wrapf(err, "failed to get connection id")
-		}
-		opts.SetConnectionID(pid)
-
-		if opts.DeleteConnectionID != nil {
-			defer opts.DeleteConnectionID()
-		}
-	}
-
 	if isPlsql {
-		if d.connectionCtx.UseDatabaseOwner {
+		if d.connectionCtx.TenantMode {
 			// USE SET SESSION ROLE to set the role for the current session.
 			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION ROLE '%s'", owner)); err != nil {
 				return 0, errors.Wrapf(err, "failed to set role to database owner %q", owner)
 			}
 		}
-		opts.LogCommandExecute([]int32{0}, statement)
+		opts.LogCommandExecute(&storepb.Range{Start: 0, End: int32(len(statement))}, statement)
 		if _, err := conn.ExecContext(ctx, statement); err != nil {
 			opts.LogCommandResponse(0, []int64{0}, err.Error())
 			return 0, err
@@ -552,27 +537,22 @@ func (d *Driver) executeInTransactionMode(
 				opts.LogTransactionControl(storepb.TaskRunLog_TransactionControl_ROLLBACK, rerr)
 			}()
 
-			if d.connectionCtx.UseDatabaseOwner {
+			if d.connectionCtx.TenantMode {
 				// Set the current transaction role to the database owner so that the owner of created objects will be the same as the database owner.
 				if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL ROLE '%s'", owner)); err != nil {
 					return err
 				}
 			}
 
-			for i, command := range commands {
-				indexes := []int32{originalIndex[i]}
-				opts.LogCommandExecute(indexes, command.Text)
+			for _, command := range commands {
+				opts.LogCommandExecute(command.Range, command.Text)
 
 				rr := tx.Conn().PgConn().Exec(ctx, command.Text)
 				results, err := rr.ReadAll()
 				if err != nil {
 					opts.LogCommandResponse(0, nil, err.Error())
 
-					return &db.ErrorWithPosition{
-						Err:   errors.Wrapf(err, "failed to execute context in a transaction"),
-						Start: command.Start,
-						End:   command.End,
-					}
+					return err
 				}
 
 				var rowsAffected int64
@@ -606,17 +586,16 @@ func (d *Driver) executeInTransactionMode(
 		}
 	}
 
-	if d.connectionCtx.UseDatabaseOwner {
+	if d.connectionCtx.TenantMode {
 		// USE SET SESSION ROLE to set the role for the current session.
 		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION ROLE '%s'", owner)); err != nil {
 			return 0, errors.Wrapf(err, "failed to set role to database owner %q", owner)
 		}
 	}
 	// Run non-transaction statements at the end.
-	for i, stmt := range nonTransactionAndSetRoleStmts {
-		indexes := []int32{nonTransactionAndSetRoleStmtsIndex[i]}
-		opts.LogCommandExecute(indexes, stmt)
-		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+	for _, stmt := range nonTransactionAndSetRoleStmts {
+		opts.LogCommandExecute(stmt.Range, stmt.Text)
+		if _, err := conn.ExecContext(ctx, stmt.Text); err != nil {
 			opts.LogCommandResponse(0, []int64{0}, err.Error())
 			return 0, err
 		}
@@ -629,18 +608,13 @@ func (d *Driver) executeInAutoCommitMode(
 	ctx context.Context,
 	owner string,
 	statement string,
-	commands []base.SingleSQL,
-	originalIndex []int32,
-	nonTransactionAndSetRoleStmts []string,
-	nonTransactionAndSetRoleStmtsIndex []int32,
+	commands []base.Statement,
+	nonTransactionAndSetRoleStmts []base.Statement,
 	opts db.ExecuteOptions,
 	isPlsql bool,
 ) (int64, error) {
 	// For auto-commit mode, treat all statements as non-transactional
-	for i, command := range commands {
-		nonTransactionAndSetRoleStmts = append(nonTransactionAndSetRoleStmts, command.Text)
-		nonTransactionAndSetRoleStmtsIndex = append(nonTransactionAndSetRoleStmtsIndex, originalIndex[i])
-	}
+	nonTransactionAndSetRoleStmts = append(nonTransactionAndSetRoleStmts, commands...)
 
 	conn, err := d.db.Conn(ctx)
 	if err != nil {
@@ -648,19 +622,7 @@ func (d *Driver) executeInAutoCommitMode(
 	}
 	defer conn.Close()
 
-	if opts.SetConnectionID != nil {
-		var pid string
-		if err := conn.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
-			return 0, errors.Wrapf(err, "failed to get connection id")
-		}
-		opts.SetConnectionID(pid)
-
-		if opts.DeleteConnectionID != nil {
-			defer opts.DeleteConnectionID()
-		}
-	}
-
-	if d.connectionCtx.UseDatabaseOwner {
+	if d.connectionCtx.TenantMode {
 		// USE SET SESSION ROLE to set the role for the current session.
 		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION ROLE '%s'", owner)); err != nil {
 			return 0, errors.Wrapf(err, "failed to set role to database owner %q", owner)
@@ -668,7 +630,7 @@ func (d *Driver) executeInAutoCommitMode(
 	}
 
 	if isPlsql {
-		opts.LogCommandExecute([]int32{0}, statement)
+		opts.LogCommandExecute(&storepb.Range{Start: 0, End: int32(len(statement))}, statement)
 		if _, err := conn.ExecContext(ctx, statement); err != nil {
 			opts.LogCommandResponse(0, []int64{0}, err.Error())
 			return 0, err
@@ -679,11 +641,10 @@ func (d *Driver) executeInAutoCommitMode(
 
 	totalRowsAffected := int64(0)
 	// Execute all statements individually in auto-commit mode
-	for i, stmt := range nonTransactionAndSetRoleStmts {
-		indexes := []int32{nonTransactionAndSetRoleStmtsIndex[i]}
-		opts.LogCommandExecute(indexes, stmt)
+	for _, stmt := range nonTransactionAndSetRoleStmts {
+		opts.LogCommandExecute(stmt.Range, stmt.Text)
 
-		sqlResult, err := conn.ExecContext(ctx, stmt)
+		sqlResult, err := conn.ExecContext(ctx, stmt.Text)
 		if err != nil {
 			opts.LogCommandResponse(0, []int64{0}, err.Error())
 			if isLockTimeoutError(err.Error()) {
@@ -768,7 +729,7 @@ func IsNonTransactionStatement(stmt string) bool {
 
 func isSuperuserStatement(stmt string) bool {
 	upperCaseStmt := strings.ToUpper(strings.TrimLeftFunc(stmt, unicode.IsSpace))
-	if strings.HasPrefix(upperCaseStmt, "GRANT") || strings.HasPrefix(upperCaseStmt, "CREATE EXTENSION") || strings.HasPrefix(upperCaseStmt, "CREATE EVENT TRIGGER") || strings.HasPrefix(upperCaseStmt, "COMMENT ON EVENT TRIGGER") {
+	if strings.HasPrefix(upperCaseStmt, "GRANT") || strings.HasPrefix(upperCaseStmt, "CREATE EXTENSION") || strings.HasPrefix(upperCaseStmt, "CREATE EVENT TRIGGER") || strings.HasPrefix(upperCaseStmt, "COMMENT ON EVENT TRIGGER") || strings.HasPrefix(upperCaseStmt, "COMMENT ON EXTENSION") {
 		return true
 	}
 	return false
@@ -809,7 +770,7 @@ func (d *Driver) QueryConn(ctx context.Context, conn *sql.Conn, statement string
 	if err != nil {
 		return nil, err
 	}
-	singleSQLs = base.FilterEmptySQL(singleSQLs)
+	singleSQLs = base.FilterEmptyStatements(singleSQLs)
 	if len(singleSQLs) == 0 {
 		return nil, nil
 	}

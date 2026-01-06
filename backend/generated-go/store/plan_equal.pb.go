@@ -74,16 +74,10 @@ func (x *PlanConfig_ChangeDatabaseConfig) Equal(y *PlanConfig_ChangeDatabaseConf
 			return false
 		}
 	}
-	if x.Sheet != y.Sheet {
+	if x.SheetSha256 != y.SheetSha256 {
 		return false
 	}
 	if x.Release != y.Release {
-		return false
-	}
-	if x.Type != y.Type {
-		return false
-	}
-	if x.MigrateType != y.MigrateType {
 		return false
 	}
 	if len(x.GhostFlags) != len(y.GhostFlags) {
@@ -99,6 +93,9 @@ func (x *PlanConfig_ChangeDatabaseConfig) Equal(y *PlanConfig_ChangeDatabaseConf
 		}
 	}
 	if x.EnablePriorBackup != y.EnablePriorBackup {
+		return false
+	}
+	if x.EnableGhost != y.EnableGhost {
 		return false
 	}
 	return true
@@ -119,7 +116,7 @@ func (x *PlanConfig_ExportDataConfig) Equal(y *PlanConfig_ExportDataConfig) bool
 			return false
 		}
 	}
-	if x.Sheet != y.Sheet {
+	if x.SheetSha256 != y.SheetSha256 {
 		return false
 	}
 	if x.Format != y.Format {
@@ -127,53 +124,6 @@ func (x *PlanConfig_ExportDataConfig) Equal(y *PlanConfig_ExportDataConfig) bool
 	}
 	if p, q := x.Password, y.Password; (p == nil && q != nil) || (p != nil && (q == nil || *p != *q)) {
 		return false
-	}
-	return true
-}
-
-func (x *PlanConfig_Deployment_DatabaseGroupMapping) Equal(y *PlanConfig_Deployment_DatabaseGroupMapping) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.DatabaseGroup != y.DatabaseGroup {
-		return false
-	}
-	if len(x.Databases) != len(y.Databases) {
-		return false
-	}
-	for i := 0; i < len(x.Databases); i++ {
-		if x.Databases[i] != y.Databases[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func (x *PlanConfig_Deployment) Equal(y *PlanConfig_Deployment) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if len(x.Environments) != len(y.Environments) {
-		return false
-	}
-	for i := 0; i < len(x.Environments); i++ {
-		if x.Environments[i] != y.Environments[i] {
-			return false
-		}
-	}
-	if len(x.DatabaseGroupMappings) != len(y.DatabaseGroupMappings) {
-		return false
-	}
-	for i := 0; i < len(x.DatabaseGroupMappings); i++ {
-		if !x.DatabaseGroupMappings[i].Equal(y.DatabaseGroupMappings[i]) {
-			return false
-		}
 	}
 	return true
 }
@@ -193,7 +143,7 @@ func (x *PlanConfig) Equal(y *PlanConfig) bool {
 			return false
 		}
 	}
-	if !x.Deployment.Equal(y.Deployment) {
+	if x.HasRollout != y.HasRollout {
 		return false
 	}
 	return true

@@ -29,17 +29,17 @@ enum Engine {
   REDSHIFT = 12;
   MARIADB = 13;
   OCEANBASE = 14;
-  STARROCKS = 18;
-  DORIS = 19;
-  HIVE = 20;
-  ELASTICSEARCH = 21;
-  BIGQUERY = 22;
-  DYNAMODB = 23;
-  DATABRICKS = 24;
-  COCKROACHDB = 25;
-  COSMOSDB = 26;
-  TRINO = 27;
-  CASSANDRA = 28;
+  STARROCKS = 15;
+  DORIS = 16;
+  HIVE = 17;
+  ELASTICSEARCH = 18;
+  BIGQUERY = 19;
+  DYNAMODB = 20;
+  DATABRICKS = 21;
+  COCKROACHDB = 22;
+  COSMOSDB = 23;
+  TRINO = 24;
+  CASSANDRA = 25;
 }
 
 // VCSType represents the type of version control system.
@@ -49,17 +49,6 @@ enum VCSType {
   GITLAB = 2;
   BITBUCKET = 3;
   AZURE_DEVOPS = 4;
-}
-
-// MaskingLevel represents the level of data masking applied to sensitive information.
-enum MaskingLevel {
-  MASKING_LEVEL_UNSPECIFIED = 0;
-  // No masking applied.
-  NONE = 1;
-  // Partial masking (e.g., showing first/last characters).
-  PARTIAL = 2;
-  // Full masking (all characters masked).
-  FULL = 3;
 }
 
 // ExportFormat represents the file format for exported data.
@@ -77,17 +66,6 @@ enum RiskLevel {
   LOW = 1;
   MODERATE = 2;
   HIGH = 3;
-}
-
-// MigrationType represents the type of database migration.
-enum MigrationType {
-  MIGRATION_TYPE_UNSPECIFIED = 0;
-  // DDL changes (Data Definition Language) for schema modifications.
-  DDL = 1;
-  // DML changes (Data Manipulation Language) for data modifications.
-  DML = 2;
-  // Online schema migration using gh-ost tool.
-  GHOST = 3;
 }
 
 // SchemaChangeType represents the strategy for schema changes.
@@ -130,9 +108,30 @@ message Position {
 }
 
 // Range represents a span within a text or sequence.
+// Whether the indices are byte offsets or character indices depends on the context.
+// Check the documentation of the field using Range for specific semantics.
 message Range {
   // Start index (inclusive).
   int32 start = 1;
   // End index (exclusive).
   int32 end = 2;
+}
+
+enum WebhookType {
+  // Unspecified type.
+  WEBHOOK_TYPE_UNSPECIFIED = 0;
+  // Slack integration.
+  SLACK = 1;
+  // Discord integration.
+  DISCORD = 2;
+  // Microsoft Teams integration.
+  TEAMS = 3;
+  // DingTalk integration.
+  DINGTALK = 4;
+  // Feishu integration.
+  FEISHU = 5;
+  // WeCom (WeChat Work) integration.
+  WECOM = 6;
+  // Lark integration.
+  LARK = 7;
 }

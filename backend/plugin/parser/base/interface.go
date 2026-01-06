@@ -1,20 +1,42 @@
 package base
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"regexp"
 	"strings"
 	"sync"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/pkg/errors"
+	"github.com/zeebo/xxh3"
 
 	lsp "github.com/bytebase/lsp-protocol"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
-	parsererror "github.com/bytebase/bytebase/backend/plugin/parser/errors"
 	"github.com/bytebase/bytebase/backend/store/model"
+)
+
+type isAllDMLCacheKey struct {
+	engine storepb.Engine
+	hash   uint64
+}
+
+type isAllDMLResult struct {
+	sync.Mutex
+	computed bool
+	value    bool
+}
+
+var (
+	isAllDMLCacheMu sync.Mutex
+	isAllDMLCache   = func() *lru.Cache[isAllDMLCacheKey, *isAllDMLResult] {
+		cache, err := lru.New[isAllDMLCacheKey, *isAllDMLResult](1024)
+		if err != nil {
+			panic(err)
+		}
+		return cache
+	}()
 )
 
 var (
@@ -22,7 +44,6 @@ var (
 	queryValidators         = make(map[storepb.Engine]ValidateSQLForEditorFunc)
 	changedResourcesGetters = make(map[storepb.Engine]ExtractChangedResourcesFunc)
 	splitters               = make(map[storepb.Engine]SplitMultiSQLFunc)
-	schemaDiffers           = make(map[storepb.Engine]SchemaDiffFunc)
 	completers              = make(map[storepb.Engine]CompletionFunc)
 	diagnoseCollectors      = make(map[storepb.Engine]DiagnoseFunc)
 	statementRanges         = make(map[storepb.Engine]StatementRangeFunc)
@@ -30,12 +51,13 @@ var (
 	transformDMLToSelect    = make(map[storepb.Engine]TransformDMLToSelectFunc)
 	generateRestoreSQL      = make(map[storepb.Engine]GenerateRestoreSQLFunc)
 	parsers                 = make(map[storepb.Engine]ParseFunc)
+	statementParsers        = make(map[storepb.Engine]ParseStatementsFunc)
+	statementTypeGetters    = make(map[storepb.Engine]GetStatementTypesFunc)
 )
 
 type ValidateSQLForEditorFunc func(string) (bool, bool, error)
-type ExtractChangedResourcesFunc func(string, string, *model.DatabaseSchema, any, string) (*ChangeSummary, error)
-type SplitMultiSQLFunc func(string) ([]SingleSQL, error)
-type SchemaDiffFunc func(ctx DiffContext, oldStmt, newStmt string) (string, error)
+type ExtractChangedResourcesFunc func(string, string, *model.DatabaseMetadata, []AST, string) (*ChangeSummary, error)
+type SplitMultiSQLFunc func(string) ([]Statement, error)
 type CompletionFunc func(ctx context.Context, cCtx CompletionContext, statement string, caretLine int, caretOffset int) ([]Candidate, error)
 type DiagnoseFunc func(ctx context.Context, dCtx DiagnoseContext, statement string) ([]Diagnostic, error)
 type StatementRangeFunc func(ctx context.Context, sCtx StatementRangeContext, statement string) ([]Range, error)
@@ -48,10 +70,18 @@ type TransformDMLToSelectFunc func(ctx context.Context, tCtx TransformContext, s
 
 type GenerateRestoreSQLFunc func(ctx context.Context, rCtx RestoreContext, statement string, backupItem *storepb.PriorBackupDetail_Item) (string, error)
 
-// ParseFunc is the interface for parsing SQL statements and returning an AST.
-// The return type varies by database engine. See RegisterParser() in each parser package for details.
-// Common types: []ast.Node, antlr.Tree, []*ParseResult, statements.Statements.
-type ParseFunc func(statement string) (any, error)
+// ParseFunc is the interface for parsing SQL statements and returning []AST.
+// Each parser package is responsible for creating AST instances with the appropriate data.
+// Parser packages can return *ANTLRAST for ANTLR-based parsers or their own concrete types.
+type ParseFunc func(statement string) ([]AST, error)
+
+// ParseStatementsFunc is the interface for parsing SQL statements and returning []ParsedStatement.
+// This is the new unified parsing function that returns complete ParsedStatement objects with AST.
+type ParseStatementsFunc func(statement string) ([]ParsedStatement, error)
+
+// GetStatementTypesFunc returns the types of statements in the ASTs.
+// Statement types include: INSERT, UPDATE, DELETE (DML), CREATE_TABLE, ALTER_TABLE, DROP_TABLE, etc. (DDL).
+type GetStatementTypesFunc func([]AST) ([]string, error)
 
 func RegisterQueryValidator(engine storepb.Engine, f ValidateSQLForEditorFunc) {
 	mux.Lock()
@@ -86,12 +116,12 @@ func RegisterExtractChangedResourcesFunc(engine storepb.Engine, f ExtractChanged
 }
 
 // ExtractChangedResources extracts the changed resources from the SQL.
-func ExtractChangedResources(engine storepb.Engine, currentDatabase string, currentSchema string, dbSchema *model.DatabaseSchema, ast any, statement string) (*ChangeSummary, error) {
+func ExtractChangedResources(engine storepb.Engine, currentDatabase string, currentSchema string, dbMetadata *model.DatabaseMetadata, asts []AST, statement string) (*ChangeSummary, error) {
 	f, ok := changedResourcesGetters[engine]
 	if !ok {
 		return nil, errors.Errorf("engine %s is not supported", engine)
 	}
-	return f(currentDatabase, currentSchema, dbSchema, ast, statement)
+	return f(currentDatabase, currentSchema, dbMetadata, asts, statement)
 }
 
 func RegisterSplitterFunc(engine storepb.Engine, f SplitMultiSQLFunc) {
@@ -104,29 +134,12 @@ func RegisterSplitterFunc(engine storepb.Engine, f SplitMultiSQLFunc) {
 }
 
 // SplitMultiSQL splits statement into a slice of the single SQL.
-func SplitMultiSQL(engine storepb.Engine, statement string) ([]SingleSQL, error) {
+func SplitMultiSQL(engine storepb.Engine, statement string) ([]Statement, error) {
 	f, ok := splitters[engine]
 	if !ok {
 		return nil, errors.Errorf("engine %s is not supported", engine)
 	}
 	return f(statement)
-}
-
-func RegisterSchemaDiffFunc(engine storepb.Engine, f SchemaDiffFunc) {
-	mux.Lock()
-	defer mux.Unlock()
-	if _, dup := schemaDiffers[engine]; dup {
-		panic(fmt.Sprintf("Register called twice %s", engine))
-	}
-	schemaDiffers[engine] = f
-}
-
-func SchemaDiff(engine storepb.Engine, ctx DiffContext, oldStmt, newStmt string) (string, error) {
-	f, ok := schemaDiffers[engine]
-	if !ok {
-		return "", errors.Errorf("engine %s is not supported", engine)
-	}
-	return f(ctx, oldStmt, newStmt)
 }
 
 // RegisterCompleteFunc registers the completion function for the engine.
@@ -219,11 +232,11 @@ func GetQuerySpan(ctx context.Context, gCtx GetQuerySpanContext, engine storepb.
 		if err != nil {
 			// Try to unwrap the error to see if it's a ResourceNotFoundError to decrease the error noise.
 			// TODO(d): remove resource not found error checks.
-			var resourceNotFound *parsererror.ResourceNotFoundError
+			var resourceNotFound *ResourceNotFoundError
 			if errors.As(err, &resourceNotFound) {
 				return nil, resourceNotFound
 			}
-			var typeNotSupported *parsererror.TypeNotSupportedError
+			var typeNotSupported *TypeNotSupportedError
 			if errors.As(err, &typeNotSupported) {
 				return nil, typeNotSupported
 			}
@@ -282,19 +295,9 @@ func RegisterParseFunc(engine storepb.Engine, f ParseFunc) {
 	parsers[engine] = f
 }
 
-// Parse parses the SQL statement and returns the AST.
-// The return type (any) varies by database engine:
-//   - TiDB: []ast.StmtNode (github.com/pingcap/tidb/pkg/parser/ast)
-//   - MySQL, MariaDB, OceanBase: []*ParseResult (github.com/bytebase/bytebase/backend/plugin/parser/mysql)
-//   - PostgreSQL: []ast.Node (github.com/bytebase/bytebase/backend/plugin/parser/pg/legacy/ast)
-//   - CockroachDB: statements.Statements (github.com/cockroachdb/cockroachdb-parser/pkg/sql/parser/statements)
-//   - Redshift: antlr.Tree
-//   - Oracle: antlr.Tree
-//   - Snowflake: antlr.Tree
-//   - MSSQL: antlr.Tree
-//   - DynamoDB (PartiQL): antlr.Tree
-//   - Doris: *ParseResult (github.com/bytebase/bytebase/backend/plugin/parser/doris)
-func Parse(engine storepb.Engine, statement string) (any, error) {
+// Parse parses the SQL statement and returns an AST representation.
+// Each parser is responsible for creating []AST instances directly.
+func Parse(engine storepb.Engine, statement string) ([]AST, error) {
 	f, ok := parsers[engine]
 	if !ok {
 		return nil, errors.Errorf("engine %s is not supported", engine)
@@ -302,22 +305,99 @@ func Parse(engine storepb.Engine, statement string) (any, error) {
 	return f(statement)
 }
 
+func RegisterParseStatementsFunc(engine storepb.Engine, f ParseStatementsFunc) {
+	mux.Lock()
+	defer mux.Unlock()
+	if _, dup := statementParsers[engine]; dup {
+		panic(fmt.Sprintf("RegisterParseStatementsFunc called twice %s", engine))
+	}
+	statementParsers[engine] = f
+}
+
+// ParseStatements parses the SQL statement and returns ParsedStatement objects with both text and AST.
+// This is the new unified parsing function.
+func ParseStatements(engine storepb.Engine, statement string) ([]ParsedStatement, error) {
+	f, ok := statementParsers[engine]
+	if !ok {
+		return nil, errors.Errorf("engine %s is not supported for ParseStatements", engine)
+	}
+	return f(statement)
+}
+
+func RegisterGetStatementTypes(engine storepb.Engine, f GetStatementTypesFunc) {
+	mux.Lock()
+	defer mux.Unlock()
+	if _, dup := statementTypeGetters[engine]; dup {
+		panic(fmt.Sprintf("Register called twice %s", engine))
+	}
+	statementTypeGetters[engine] = f
+}
+
+// GetStatementTypes returns the types of statements in the ASTs.
+func GetStatementTypes(engine storepb.Engine, asts []AST) ([]string, error) {
+	f, ok := statementTypeGetters[engine]
+	if !ok {
+		return nil, errors.Errorf("engine %s is not supported", engine)
+	}
+	return f(asts)
+}
+
+// IsAllDML checks if all statements are DML (INSERT, UPDATE, DELETE).
+// Returns false for unsupported engines or parse errors (conservative approach).
+// Results are cached to avoid repeated parsing of the same statement.
+// Safe for concurrent calls with the same statement.
+func IsAllDML(engine storepb.Engine, statement string) bool {
+	key := isAllDMLCacheKey{engine: engine, hash: xxh3.HashString(statement)}
+
+	isAllDMLCacheMu.Lock()
+	result, ok := isAllDMLCache.Get(key)
+	if !ok {
+		result = &isAllDMLResult{}
+		isAllDMLCache.Add(key, result)
+	}
+	isAllDMLCacheMu.Unlock()
+
+	result.Lock()
+	defer result.Unlock()
+	if result.computed {
+		return result.value
+	}
+	result.value = isAllDMLImpl(engine, statement)
+	result.computed = true
+	return result.value
+}
+
+func isAllDMLImpl(engine storepb.Engine, statement string) bool {
+	asts, err := Parse(engine, statement)
+	if err != nil {
+		return false
+	}
+	if len(asts) == 0 {
+		return false
+	}
+	types, err := GetStatementTypes(engine, asts)
+	if err != nil {
+		return false
+	}
+	if len(types) == 0 {
+		return false
+	}
+	for _, t := range types {
+		switch t {
+		case "INSERT", "UPDATE", "DELETE":
+			// DML statement, continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 type ChangeSummary struct {
 	ChangedResources *model.ChangedResources
 	SampleDMLS       []string
 	DMLCount         int
 	InsertCount      int
-}
-
-// NewRange creates a new Range with index range of singleSQL in statement.
-func NewRange(statement, singleSQL string) *storepb.Range {
-	statementBytes := []byte(statement)
-	singleSQLBytes := []byte(singleSQL)
-	start := bytes.Index(statementBytes, singleSQLBytes)
-	return &storepb.Range{
-		Start: int32(start),
-		End:   int32(start + len(singleSQLBytes)),
-	}
 }
 
 // REFACTOR(zp): Put it here to avoid circular import for now.

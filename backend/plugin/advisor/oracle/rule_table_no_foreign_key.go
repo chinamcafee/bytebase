@@ -6,12 +6,13 @@ import (
 	"fmt"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/plsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -19,7 +20,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_ORACLE, advisor.SchemaRuleTableNoFK, &TableNoForeignKeyAdvisor{})
+	advisor.Register(storepb.Engine_ORACLE, storepb.SQLReviewRule_TABLE_NO_FOREIGN_KEY, &TableNoForeignKeyAdvisor{})
 }
 
 // TableNoForeignKeyAdvisor is the advisor checking for table disallow foreign key.
@@ -28,20 +29,26 @@ type TableNoForeignKeyAdvisor struct {
 
 // Check checks for table disallow foreign key.
 func (*TableNoForeignKeyAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	rule := NewTableNoForeignKeyRule(level, string(checkCtx.Rule.Type), checkCtx.CurrentDatabase)
+	rule := NewTableNoForeignKeyRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase)
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList()
 }
@@ -103,7 +110,7 @@ func (r *TableNoForeignKeyRule) GetAdviceList() ([]*storepb.Advice, error) {
 		if hasFK {
 			r.AddAdvice(
 				r.level,
-				advisor.TableHasFK.Int32(),
+				code.TableHasFK.Int32(),
 				fmt.Sprintf("Foreign key is not allowed in the table %s.", normalizeIdentifierName(tableName)),
 				common.ConvertANTLRLineToPosition(r.tableLine[tableName]),
 			)
@@ -123,7 +130,7 @@ func (r *TableNoForeignKeyRule) handleCreateTable(ctx *parser.Create_tableContex
 
 func (r *TableNoForeignKeyRule) handleReferencesClause(ctx *parser.References_clauseContext) {
 	r.tableWithFK[r.tableName] = true
-	r.tableLine[r.tableName] = ctx.GetStop().GetLine()
+	r.tableLine[r.tableName] = r.baseLine + ctx.GetStop().GetLine()
 }
 
 func (r *TableNoForeignKeyRule) handleAlterTable(ctx *parser.Alter_tableContext) {

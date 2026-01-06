@@ -7,12 +7,13 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/plsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -20,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_ORACLE, advisor.SchemaRuleIdentifierCase, &NamingIdentifierCaseAdvisor{})
+	advisor.Register(storepb.Engine_ORACLE, storepb.SQLReviewRule_NAMING_IDENTIFIER_CASE, &NamingIdentifierCaseAdvisor{})
 }
 
 // NamingIdentifierCaseAdvisor is the advisor checking for identifier case.
@@ -29,24 +30,27 @@ type NamingIdentifierCaseAdvisor struct {
 
 // Check checks for identifier case.
 func (*NamingIdentifierCaseAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalNamingCaseRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
+	namingCasePayload := checkCtx.Rule.GetNamingCasePayload()
 
-	rule := NewNamingIdentifierCaseRule(level, string(checkCtx.Rule.Type), checkCtx.CurrentDatabase, payload.Upper)
+	rule := NewNamingIdentifierCaseRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase, namingCasePayload.Upper)
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList()
 }
@@ -92,18 +96,18 @@ func (r *NamingIdentifierCaseRule) handleIDExpression(ctx *parser.Id_expressionC
 		if identifier != strings.ToUpper(identifier) {
 			r.AddAdvice(
 				r.level,
-				advisor.NamingCaseMismatch.Int32(),
+				code.NamingCaseMismatch.Int32(),
 				fmt.Sprintf("Identifier %q should be upper case", identifier),
-				common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),
+				common.ConvertANTLRLineToPosition(r.baseLine+ctx.GetStart().GetLine()),
 			)
 		}
 	} else {
 		if identifier != strings.ToLower(identifier) {
 			r.AddAdvice(
 				r.level,
-				advisor.NamingCaseMismatch.Int32(),
+				code.NamingCaseMismatch.Int32(),
 				fmt.Sprintf("Identifier %q should be lower case", identifier),
-				common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),
+				common.ConvertANTLRLineToPosition(r.baseLine+ctx.GetStart().GetLine()),
 			)
 		}
 	}

@@ -156,8 +156,9 @@ func parseVersion(version string) (string, string, error) {
 // Execute executes a SQL statement.
 func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteOptions) (int64, error) {
 	// Parse transaction mode from the script
-	transactionMode, cleanedStatement := base.ParseTransactionMode(statement)
+	config, cleanedStatement := base.ParseTransactionConfig(statement)
 	statement = cleanedStatement
+	transactionMode := config.Mode
 
 	// Apply default when transaction mode is not specified
 	if transactionMode == common.TransactionModeUnspecified {
@@ -172,7 +173,7 @@ func (d *Driver) Execute(ctx context.Context, statement string, opts db.ExecuteO
 	// Note: StarRocks is an OLAP database with limited transaction support.
 	// For DDL operations, transactions are not supported. For DML operations,
 	// StarRocks supports transactions within certain limitations.
-	if transactionMode == common.TransactionModeOff {
+	if transactionMode == common.TransactionModeOff || opts.CreateDatabase {
 		return d.executeInAutoCommitMode(ctx, statement)
 	}
 	return d.executeInTransactionMode(ctx, statement, opts)
@@ -276,7 +277,7 @@ func (d *Driver) QueryConn(ctx context.Context, conn *sql.Conn, statement string
 	if err != nil {
 		return nil, err
 	}
-	singleSQLs = base.FilterEmptySQL(singleSQLs)
+	singleSQLs = base.FilterEmptyStatements(singleSQLs)
 	if len(singleSQLs) == 0 {
 		return nil, nil
 	}

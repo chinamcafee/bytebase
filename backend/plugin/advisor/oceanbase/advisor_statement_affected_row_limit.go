@@ -5,14 +5,17 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/antlr4-go/antlr/v4"
 	"github.com/pkg/errors"
 
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/antlr4-go/antlr/v4"
+
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -21,7 +24,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleStatementAffectedRowLimit, &StatementAffectedRowLimitAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_STATEMENT_AFFECTED_ROW_LIMIT, &StatementAffectedRowLimitAdvisor{})
 }
 
 // StatementAffectedRowLimitAdvisor is the advisor checking for UPDATE/DELETE affected row limit.
@@ -30,31 +33,33 @@ type StatementAffectedRowLimitAdvisor struct {
 
 // Check checks for UPDATE/DELETE affected row limit.
 func (*StatementAffectedRowLimitAdvisor) Check(ctx context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalNumberTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	numberPayload := checkCtx.Rule.GetNumberPayload()
+	if numberPayload == nil {
+		return nil, errors.New("number_payload is required for this rule")
 	}
 	checker := &statementAffectedRowLimitChecker{
 		level:  level,
-		title:  string(checkCtx.Rule.Type),
-		maxRow: payload.Number,
+		title:  checkCtx.Rule.Type.String(),
+		maxRow: int(numberPayload.Number),
 		driver: checkCtx.Driver,
 		ctx:    ctx,
 	}
 
 	if checker.driver != nil {
-		for _, stmt := range stmtList {
-			checker.baseLine = stmt.BaseLine
-			antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+		for _, stmt := range checkCtx.ParsedStatements {
+			if stmt.AST == nil {
+				continue
+			}
+			antlrAST, ok := base.GetANTLRAST(stmt.AST)
+			if !ok {
+				continue
+			}
+			checker.baseLine = stmt.BaseLine()
+			antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 			if checker.explainCount >= common.MaximumLintExplainSize {
 				break
 			}
@@ -105,7 +110,7 @@ func (checker *statementAffectedRowLimitChecker) handleStmt(lineNumber int) {
 	if err != nil {
 		checker.adviceList = append(checker.adviceList, &storepb.Advice{
 			Status:        checker.level,
-			Code:          advisor.StatementAffectedRowExceedsLimit.Int32(),
+			Code:          code.StatementAffectedRowExceedsLimit.Int32(),
 			Title:         checker.title,
 			Content:       fmt.Sprintf("\"%s\" dry runs failed: %s", checker.text, err.Error()),
 			StartPosition: common.ConvertANTLRLineToPosition(lineNumber),
@@ -115,7 +120,7 @@ func (checker *statementAffectedRowLimitChecker) handleStmt(lineNumber int) {
 		if err != nil {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.Internal.Int32(),
+				Code:          code.Internal.Int32(),
 				Title:         checker.title,
 				Content:       fmt.Sprintf("failed to get row count for \"%s\": %s", checker.text, err.Error()),
 				StartPosition: common.ConvertANTLRLineToPosition(lineNumber),
@@ -123,7 +128,7 @@ func (checker *statementAffectedRowLimitChecker) handleStmt(lineNumber int) {
 		} else if rowCount > int64(checker.maxRow) {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.StatementAffectedRowExceedsLimit.Int32(),
+				Code:          code.StatementAffectedRowExceedsLimit.Int32(),
 				Title:         checker.title,
 				Content:       fmt.Sprintf("\"%s\" affected %d rows (estimated). The count exceeds %d.", checker.text, rowCount, checker.maxRow),
 				StartPosition: common.ConvertANTLRLineToPosition(lineNumber),

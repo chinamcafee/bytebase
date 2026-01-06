@@ -6,12 +6,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 const (
@@ -24,7 +24,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleTableRequirePK, &TableRequirePKAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_TABLE_REQUIRE_PK, &TableRequirePKAdvisor{})
 }
 
 // TableRequirePKAdvisor is the advisor checking table requires PK.
@@ -33,9 +33,10 @@ type TableRequirePKAdvisor struct {
 
 // Check checks table requires PK.
 func (*TableRequirePKAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	root, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -43,11 +44,12 @@ func (*TableRequirePKAdvisor) Check(_ context.Context, checkCtx advisor.Context)
 		return nil, err
 	}
 	checker := &tableRequirePKChecker{
-		level:   level,
-		title:   string(checkCtx.Rule.Type),
-		tables:  make(tablePK),
-		line:    make(map[string]int),
-		catalog: checkCtx.Catalog,
+		level:            level,
+		title:            checkCtx.Rule.Type.String(),
+		tables:           make(tablePK),
+		line:             make(map[string]int),
+		originalMetadata: checkCtx.OriginalMetadata,
+		finalMetadata:    checkCtx.FinalMetadata,
 	}
 
 	for _, stmtNode := range root {
@@ -58,12 +60,13 @@ func (*TableRequirePKAdvisor) Check(_ context.Context, checkCtx advisor.Context)
 }
 
 type tableRequirePKChecker struct {
-	adviceList []*storepb.Advice
-	level      storepb.Advice_Status
-	title      string
-	tables     tablePK
-	line       map[string]int
-	catalog    *catalog.Finder
+	adviceList       []*storepb.Advice
+	level            storepb.Advice_Status
+	title            string
+	tables           tablePK
+	line             map[string]int
+	originalMetadata *model.DatabaseMetadata
+	finalMetadata    *model.DatabaseMetadata
 }
 
 // Enter implements the ast.Visitor interface.
@@ -139,7 +142,7 @@ func (v *tableRequirePKChecker) generateAdviceList() []*storepb.Advice {
 		if len(v.tables[tableName]) == 0 {
 			v.adviceList = append(v.adviceList, &storepb.Advice{
 				Status:        v.level,
-				Code:          advisor.TableNoPK.Int32(),
+				Code:          code.TableNoPK.Int32(),
 				Title:         v.title,
 				Content:       fmt.Sprintf("Table `%s` requires PRIMARY KEY", tableName),
 				StartPosition: common.ConvertANTLRLineToPosition(v.line[tableName]),
@@ -179,14 +182,13 @@ func (v *tableRequirePKChecker) createTableLike(node *ast.CreateTableStmt) {
 		}
 		v.tables[table] = newColumnSet(columns)
 	} else {
-		referTableState := v.catalog.Origin.FindTable(&catalog.TableFind{
-			TableName: referTableName,
-		})
-		if referTableState != nil {
-			indexSet := referTableState.Index(&catalog.TableIndexFind{})
-			for _, index := range *indexSet {
-				if index.Primary() {
-					v.tables[table] = newColumnSet(index.ExpressionList())
+		schema := v.originalMetadata.GetSchemaMetadata("")
+		if schema != nil {
+			referTableMetadata := schema.GetTable(referTableName)
+			if referTableMetadata != nil {
+				primaryKey := referTableMetadata.GetPrimaryKey()
+				if primaryKey != nil {
+					v.tables[table] = newColumnSet(primaryKey.GetProto().GetExpressions())
 				}
 			}
 		}
@@ -195,14 +197,11 @@ func (v *tableRequirePKChecker) createTableLike(node *ast.CreateTableStmt) {
 
 func (v *tableRequirePKChecker) dropColumn(table string, column string) bool {
 	if _, ok := v.tables[table]; !ok {
-		_, pk := v.catalog.Origin.FindIndex(&catalog.IndexFind{
-			TableName: table,
-			IndexName: primaryKeyName,
-		})
+		pk := v.originalMetadata.GetSchemaMetadata("").GetTable(table).GetIndex(primaryKeyName)
 		if pk == nil {
 			return false
 		}
-		v.tables[table] = newColumnSet(pk.ExpressionList())
+		v.tables[table] = newColumnSet(pk.GetProto().GetExpressions())
 	}
 
 	pk := v.tables[table]

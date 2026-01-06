@@ -6,8 +6,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pkg/errors"
+
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
+	"github.com/pingcap/tidb/pkg/parser/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -20,7 +23,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleColumnAutoIncrementInitialValue, &ColumnAutoIncrementInitialValueAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_COLUMN_AUTO_INCREMENT_INITIAL_VALUE, &ColumnAutoIncrementInitialValueAdvisor{})
 }
 
 // ColumnAutoIncrementInitialValueAdvisor is the advisor checking for auto-increment column initial value.
@@ -29,23 +32,24 @@ type ColumnAutoIncrementInitialValueAdvisor struct {
 
 // Check checks for auto-increment column initial value.
 func (*ColumnAutoIncrementInitialValueAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalNumberTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	numberPayload := checkCtx.Rule.GetNumberPayload()
+	if numberPayload == nil {
+		return nil, errors.New("number_payload is required for column auto increment initial value rule")
 	}
 	checker := &columnAutoIncrementInitialValueChecker{
 		level: level,
-		title: string(checkCtx.Rule.Type),
-		value: payload.Number,
+		title: checkCtx.Rule.Type.String(),
+		value: int(numberPayload.Number),
 	}
 
 	for _, stmt := range stmtList {
@@ -74,7 +78,7 @@ func (checker *columnAutoIncrementInitialValueChecker) Enter(in ast.Node) (ast.N
 				if option.UintValue != uint64(checker.value) {
 					checker.adviceList = append(checker.adviceList, &storepb.Advice{
 						Status:        checker.level,
-						Code:          advisor.AutoIncrementColumnInitialValueNotMatch.Int32(),
+						Code:          code.AutoIncrementColumnInitialValueNotMatch.Int32(),
 						Title:         checker.title,
 						Content:       fmt.Sprintf("The initial auto-increment value in table `%s` is %v, which doesn't equal %v", createTable.Table.Name.O, option.UintValue, checker.value),
 						StartPosition: common.ConvertANTLRLineToPosition(checker.line),

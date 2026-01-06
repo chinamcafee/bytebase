@@ -2,7 +2,7 @@ package snowflake
 
 import (
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/snowsql-parser"
+	parser "github.com/bytebase/parser/snowflake"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
@@ -14,16 +14,18 @@ func init() {
 
 // validateQuery validates the SQL statement for SQL editor.
 func validateQuery(statement string) (bool, bool, error) {
-	parseResult, err := ParseSnowSQL(statement)
+	parseResults, err := ParseSnowSQL(statement)
 	if err != nil {
 		return false, false, err
 	}
 	l := &queryValidateListener{
 		valid: true,
 	}
-	antlr.ParseTreeWalkerDefault.Walk(l, parseResult.Tree)
-	if !l.valid {
-		return false, false, nil
+	for _, parseResult := range parseResults {
+		antlr.ParseTreeWalkerDefault.Walk(l, parseResult.Tree)
+		if !l.valid {
+			return false, false, nil
+		}
 	}
 	return true, !l.hasExecute, nil
 }

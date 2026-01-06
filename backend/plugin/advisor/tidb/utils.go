@@ -9,6 +9,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pkg/errors"
+
+	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	tidbparser "github.com/bytebase/bytebase/backend/plugin/parser/tidb"
 )
 
 type columnSet map[string]bool
@@ -74,4 +78,24 @@ func needDefault(column *ast.ColumnDef) bool {
 		// Other types can have default values
 	}
 	return true
+}
+
+// getTiDBNodes extracts TiDB AST nodes from the advisor context.
+func getTiDBNodes(checkCtx advisor.Context) ([]ast.StmtNode, error) {
+	if checkCtx.ParsedStatements == nil {
+		return nil, errors.New("ParsedStatements is not provided in context")
+	}
+
+	var stmtNodes []ast.StmtNode
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		tidbAST, ok := tidbparser.GetTiDBAST(stmt.AST)
+		if !ok {
+			return nil, errors.New("AST type mismatch: expected TiDB parser result")
+		}
+		stmtNodes = append(stmtNodes, tidbAST.Node)
+	}
+	return stmtNodes, nil
 }

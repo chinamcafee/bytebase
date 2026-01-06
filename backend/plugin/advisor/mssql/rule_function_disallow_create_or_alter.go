@@ -4,39 +4,45 @@ import (
 	"context"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/tsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/tsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MSSQL, advisor.SchemaRuleFunctionDisallowCreate, &FunctionDisallowCreateOrAlterAdvisor{})
+	advisor.Register(storepb.Engine_MSSQL, storepb.SQLReviewRule_SYSTEM_FUNCTION_DISALLOW_CREATE, &FunctionDisallowCreateOrAlterAdvisor{})
 }
 
 type FunctionDisallowCreateOrAlterAdvisor struct{}
 
 // Check implements advisor.Advisor.
 func (*FunctionDisallowCreateOrAlterAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewFunctionDisallowCreateOrAlterRule(level, string(checkCtx.Rule.Type))
+	rule := NewFunctionDisallowCreateOrAlterRule(level, checkCtx.Rule.Type.String())
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList(), nil
 }
@@ -78,7 +84,7 @@ func (*FunctionDisallowCreateOrAlterRule) OnExit(_ antlr.ParserRuleContext, _ st
 func (r *FunctionDisallowCreateOrAlterRule) enterCreateOrAlterFunction(ctx *parser.Create_or_alter_functionContext) {
 	r.AddAdvice(&storepb.Advice{
 		Status:        r.level,
-		Code:          advisor.DisallowCreateFunction.Int32(),
+		Code:          code.DisallowCreateFunction.Int32(),
 		Title:         r.title,
 		Content:       "Creating or altering functions is prohibited",
 		StartPosition: common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),

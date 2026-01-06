@@ -1,9 +1,9 @@
 <template>
-  <div class="space-y-6 divide-y divide-block-border">
+  <div>
     <!-- Description list -->
-    <DatabaseOverviewInfo :database="database" />
+    <DatabaseOverviewInfo :database="database" class="pb-6" />
 
-    <div v-if="allowGetSchema" class="py-6">
+    <div v-if="allowGetSchema" class="border-t border-block-border pt-6">
       <div
         v-if="hasSchemaPropertyV1"
         class="flex flex-row justify-start items-center mb-4"
@@ -14,7 +14,7 @@
           :options="schemaNameOptions"
           :disabled="state.loading"
           :placeholder="$t('database.schema.select')"
-          class="!w-auto min-w-[12rem]"
+          class="w-auto! min-w-48"
         />
       </div>
 
@@ -160,8 +160,8 @@ import { NSelect } from "naive-ui";
 import { computed, reactive, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
-import DBExtensionDataTable from "@/components/DBExtensionDataTable.vue";
 import { useDatabaseDetailContext } from "@/components/Database/context";
+import DBExtensionDataTable from "@/components/DBExtensionDataTable.vue";
 import ExternalTableDataTable from "@/components/ExternalTableDataTable.vue";
 import FunctionDataTable from "@/components/FunctionDataTable.vue";
 import StreamTable from "@/components/StreamTable.vue";

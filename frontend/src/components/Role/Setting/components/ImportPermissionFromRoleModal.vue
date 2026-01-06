@@ -1,13 +1,9 @@
 <template>
   <BBModal :title="$t('role.import-from-role')" @close="$emit('cancel')">
-    <div class="w-96 mb-2 space-y-2">
+    <div class="w-96 mb-2 flex flex-col gap-y-2">
       <div>
         <p class="textlabel mb-1">{{ $t("role.select-role") }}</p>
-        <NSelect
-          v-model:value="state.selectedRole"
-          :options="availableRoleOptions"
-          :placeholder="$t('role.select-role')"
-        />
+        <RoleSelect v-model:value="state.selectedRole" :multiple="false" />
       </div>
       <template v-if="selectedRole">
         <p class="textinfolabel">
@@ -19,18 +15,18 @@
               filterDisplayPermissions.length
             }})
           </p>
-          <div class="max-h-[10em] overflow-auto border rounded p-2">
+          <div class="max-h-[10em] overflow-auto border rounded-sm p-2">
             <p
               v-for="permission in filterDisplayPermissions"
               :key="permission"
               class="text-sm leading-5"
             >
-              {{ displayPermissionTitle(permission) }}
+              {{ permission }}
             </p>
           </div>
         </div>
       </template>
-      <div class="!mt-4 w-full flex flex-row justify-end items-center gap-2">
+      <div class="mt-4! w-full flex flex-row justify-end items-center gap-2">
         <NButton @click.prevent="$emit('cancel')">
           {{ $t("common.cancel") }}
         </NButton>
@@ -47,12 +43,12 @@
 </template>
 
 <script lang="ts" setup>
-import { NSelect, NButton } from "naive-ui";
+import { NButton } from "naive-ui";
 import { computed, reactive } from "vue";
 import { BBModal } from "@/bbkit";
+import { RoleSelect } from "@/components/v2/Select";
 import { useRoleStore } from "@/store";
-import { displayRoleTitle, displayRoleDescription } from "@/utils";
-import { displayPermissionTitle } from "@/utils/permission";
+import { displayRoleDescription } from "@/utils";
 
 interface LocalState {
   selectedRole?: string;
@@ -65,14 +61,6 @@ const emit = defineEmits<{
 
 const roleStore = useRoleStore();
 const state = reactive<LocalState>({});
-
-const availableRoleOptions = computed(() => {
-  const roles = roleStore.roleList.map((role) => role.name);
-  return roles.map((role) => ({
-    label: displayRoleTitle(role),
-    value: role,
-  }));
-});
 
 const selectedRole = computed(() => {
   return roleStore.roleList.find((role) => role.name === state.selectedRole);

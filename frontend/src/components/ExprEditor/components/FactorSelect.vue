@@ -3,9 +3,9 @@
     v-model:value="factor"
     :options="options"
     :consistent-menu-width="false"
-    :disabled="!allowAdmin"
+    :disabled="readonly"
     size="small"
-    style="width: auto; min-width: 7rem; flex-shrink: 0"
+    style="width: auto; min-width: 7rem; shrink: 0"
   />
 </template>
 
@@ -21,7 +21,7 @@ const props = defineProps<{
   expr: ConditionExpr;
 }>();
 
-const { allowAdmin, factorList } = useExprEditorContext();
+const { readonly, factorList } = useExprEditorContext();
 
 const factor = computed({
   get() {

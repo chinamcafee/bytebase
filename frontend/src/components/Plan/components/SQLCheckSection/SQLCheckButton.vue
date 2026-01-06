@@ -54,21 +54,21 @@ import { NButton, NPopover } from "naive-ui";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { BBSpin } from "@/bbkit";
+import ErrorList from "@/components/misc/ErrorList.vue";
 import { SQLCheckPanel } from "@/components/SQLCheck";
 import { STATEMENT_SKIP_CHECK_THRESHOLD } from "@/components/SQLCheck/common";
-import ErrorList from "@/components/misc/ErrorList.vue";
-import { releaseServiceClientConnect } from "@/grpcweb";
+import { releaseServiceClientConnect } from "@/connect";
 import type { CheckReleaseResponse } from "@/types/proto-es/v1/release_service_pb";
 import {
   CheckReleaseRequestSchema,
   CheckReleaseResponseSchema,
-  Release_File_Type,
+  Release_Type,
 } from "@/types/proto-es/v1/release_service_pb";
 import {
+  Advice_Level,
   AdviceSchema,
   Advice_Level as ProtoESAdvice_Level,
 } from "@/types/proto-es/v1/sql_service_pb";
-import { Advice_Level } from "@/types/proto-es/v1/sql_service_pb";
 import type { Defer, VueStyle } from "@/utils";
 import { defer } from "@/utils";
 import { useSpecSheet } from "../StatementSection/useSpecSheet";
@@ -117,13 +117,13 @@ const runCheckInternal = async (statement: string) => {
   const request = create(CheckReleaseRequestSchema, {
     parent: project.value.name,
     release: {
+      type: Release_Type.VERSIONED,
       files: [
         {
           // Use "0" for dummy version.
           version: "0",
-          type: Release_File_Type.VERSIONED,
           statement: new TextEncoder().encode(statement),
-          migrationType: migrationType.value,
+          enableGhost: migrationType.value,
         },
       ],
     },

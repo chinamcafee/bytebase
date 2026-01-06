@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -20,15 +21,14 @@ import (
 
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
-	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/dbfactory"
+	"github.com/bytebase/bytebase/backend/component/export"
 	"github.com/bytebase/bytebase/backend/component/iam"
-	"github.com/bytebase/bytebase/backend/component/sheet"
 	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/generated-go/v1/v1connect"
-	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 	"github.com/bytebase/bytebase/backend/plugin/db"
 	parserbase "github.com/bytebase/bytebase/backend/plugin/parser/base"
 	"github.com/bytebase/bytebase/backend/plugin/schema"
@@ -42,31 +42,25 @@ import (
 type SQLService struct {
 	v1connect.UnimplementedSQLServiceHandler
 	store          *store.Store
-	sheetManager   *sheet.Manager
 	schemaSyncer   *schemasync.Syncer
 	dbFactory      *dbfactory.DBFactory
 	licenseService *enterprise.LicenseService
-	profile        *config.Profile
 	iamManager     *iam.Manager
 }
 
 // NewSQLService creates a SQLService.
 func NewSQLService(
 	store *store.Store,
-	sheetManager *sheet.Manager,
 	schemaSyncer *schemasync.Syncer,
 	dbFactory *dbfactory.DBFactory,
 	licenseService *enterprise.LicenseService,
-	profile *config.Profile,
 	iamManager *iam.Manager,
 ) *SQLService {
 	return &SQLService{
 		store:          store,
-		sheetManager:   sheetManager,
 		schemaSyncer:   schemaSyncer,
 		dbFactory:      dbFactory,
 		licenseService: licenseService,
-		profile:        profile,
 		iamManager:     iamManager,
 	}
 }
@@ -119,18 +113,35 @@ func (s *SQLService) AdminExecute(ctx context.Context, stream *connect.BidiStrea
 			}
 		}
 
-		queryRestriction := getMaximumSQLResultLimit(ctx, s.store, s.licenseService, 0)
+		queryRestriction := getEffectiveQueryDataPolicy(
+			ctx,
+			s.store,
+			s.licenseService,
+			request.Limit,
+			database.ProjectID,
+		)
 		queryContext := db.QueryContext{
 			OperatorEmail:        user.Email,
 			Container:            request.GetContainer(),
 			MaximumSQLResultSize: queryRestriction.MaximumResultSize,
+			Limit:                int(queryRestriction.MaximumResultRows),
 		}
 		if request.Schema != nil {
 			queryContext.Schema = *request.Schema
 		}
-		result, duration, queryErr := executeWithTimeout(ctx, s.store, s.licenseService, driver, conn, request.Statement, queryContext)
+		if queryRestriction.MaxQueryTimeoutInSeconds > 0 {
+			queryContext.Timeout = &durationpb.Duration{Seconds: queryRestriction.MaxQueryTimeoutInSeconds}
+		}
 
-		s.createQueryHistory(database, store.QueryHistoryTypeQuery, request.Statement, user.ID, duration, queryErr)
+		result, duration, queryErr := executeWithTimeout(
+			ctx,
+			driver,
+			conn,
+			request.Statement,
+			queryContext,
+		)
+
+		s.createQueryHistory(database, store.QueryHistoryTypeQuery, request.Statement, user.Email, duration, queryErr)
 		response := &v1pb.AdminExecuteResponse{}
 		if queryErr != nil {
 			response.Results = []*v1pb.QueryResult{
@@ -140,10 +151,6 @@ func (s *SQLService) AdminExecute(ctx context.Context, stream *connect.BidiStrea
 			}
 		} else {
 			response.Results = result
-			for _, result := range response.Results {
-				// The AdminExecute requires bb.sql.admin permission, so we can presume the users have enough permission to export.
-				result.AllowExport = true
-			}
 		}
 
 		if err := stream.Send(response); err != nil {
@@ -199,7 +206,13 @@ func (s *SQLService) Query(ctx context.Context, req *connect.Request[v1pb.QueryR
 	}
 
 	startTime := time.Now()
-	queryRestriction := getMaximumSQLResultLimit(ctx, s.store, s.licenseService, request.Limit)
+	queryRestriction := getEffectiveQueryDataPolicy(
+		ctx,
+		s.store,
+		s.licenseService,
+		request.Limit,
+		database.ProjectID,
+	)
 	queryContext := db.QueryContext{
 		Explain:              request.Explain,
 		Limit:                int(queryRestriction.MaximumResultRows),
@@ -211,7 +224,11 @@ func (s *SQLService) Query(ctx context.Context, req *connect.Request[v1pb.QueryR
 	if request.Schema != nil {
 		queryContext.Schema = *request.Schema
 	}
-	results, spans, duration, queryErr := queryRetry(
+	if queryRestriction.MaxQueryTimeoutInSeconds > 0 {
+		queryContext.Timeout = &durationpb.Duration{Seconds: queryRestriction.MaxQueryTimeoutInSeconds}
+	}
+
+	results, _, duration, queryErr := queryRetryStopOnError(
 		ctx,
 		s.store,
 		user,
@@ -224,7 +241,6 @@ func (s *SQLService) Query(ctx context.Context, req *connect.Request[v1pb.QueryR
 		s.licenseService,
 		s.accessCheck,
 		s.schemaSyncer,
-		storepb.MaskingExceptionPolicy_MaskingException_QUERY,
 	)
 	slog.Debug("query finished",
 		log.BBError(queryErr),
@@ -234,36 +250,39 @@ func (s *SQLService) Query(ctx context.Context, req *connect.Request[v1pb.QueryR
 	)
 
 	// Update activity.
-	s.createQueryHistory(database, store.QueryHistoryTypeQuery, statement, user.ID, duration, queryErr)
-	if queryErr != nil {
-		code := connect.CodeInternal
-		// If queryErr is already a connect.Error, preserve its code
-		if connectErr, ok := queryErr.(*connect.Error); ok {
-			code = connectErr.Code()
-		} else if syntaxErr, ok := queryErr.(*parserbase.SyntaxError); ok {
-			err := connect.NewError(connect.CodeInvalidArgument, syntaxErr)
-			if detail, detailErr := connect.NewErrorDetail(&v1pb.PlanCheckRun_Result{
-				Code:    int32(advisor.StatementSyntaxError),
-				Content: syntaxErr.Message,
-				Title:   "Syntax error",
-				Status:  v1pb.Advice_ERROR,
-				Report: &v1pb.PlanCheckRun_Result_SqlReviewReport_{
-					SqlReviewReport: &v1pb.PlanCheckRun_Result_SqlReviewReport{
-						StartPosition: convertToPosition(syntaxErr.Position),
-					},
-				},
-			}); detailErr == nil {
-				err.AddDetail(detail)
-			}
-			return nil, err
-		}
-		return nil, connect.NewError(code, errors.New(queryErr.Error()))
-	}
+	s.createQueryHistory(database, store.QueryHistoryTypeQuery, statement, user.Email, duration, queryErr)
 
-	for _, result := range results {
-		// AllowExport is a validate only check.
-		checkErr := s.accessCheck(ctx, instance, database, user, spans, request.Explain)
-		result.AllowExport = checkErr == nil
+	if queryErr != nil {
+		if len(results) == 0 {
+			if _, ok := queryErr.(*connect.Error); ok {
+				return nil, queryErr
+			}
+			return nil, connect.NewError(connect.CodeInternal, errors.New(queryErr.Error()))
+		}
+		// populate the detailed_error field of the last query result
+		var qe *queryError
+		var pe *parserbase.SyntaxError
+		if errors.As(queryErr, &qe) {
+			if len(qe.resources) > 0 {
+				results[len(results)-1].DetailedError = &v1pb.QueryResult_PermissionDenied_{
+					PermissionDenied: &v1pb.QueryResult_PermissionDenied{
+						Resources: qe.resources,
+					},
+				}
+			} else if qe.commandType != v1pb.QueryResult_PermissionDenied_COMMAND_TYPE_UNSPECIFIED {
+				results[len(results)-1].DetailedError = &v1pb.QueryResult_PermissionDenied_{
+					PermissionDenied: &v1pb.QueryResult_PermissionDenied{
+						CommandType: qe.commandType,
+					},
+				}
+			}
+		} else if errors.As(queryErr, &pe) {
+			results[len(results)-1].DetailedError = &v1pb.QueryResult_SyntaxError_{
+				SyntaxError: &v1pb.QueryResult_SyntaxError{
+					StartPosition: convertToPosition(pe.Position),
+				},
+			}
+		}
 	}
 
 	slog.Debug("request finished",
@@ -279,26 +298,30 @@ func (s *SQLService) Query(ctx context.Context, req *connect.Request[v1pb.QueryR
 	return connect.NewResponse(response), nil
 }
 
-func getMaximumSQLResultLimit(
+func getEffectiveQueryDataPolicy(
 	ctx context.Context,
 	stores *store.Store,
 	licenseService *enterprise.LicenseService,
 	limit int32,
-) *storepb.QueryDataPolicy {
-	value := &storepb.QueryDataPolicy{
+	projectID string,
+) *store.EffectiveQueryDataPolicy {
+	value := &store.EffectiveQueryDataPolicy{
 		MaximumResultSize: common.DefaultMaximumSQLResultSize,
-		MaximumResultRows: -1,
+		MaximumResultRows: math.MaxInt32,
 	}
 	if err := licenseService.IsFeatureEnabled(v1pb.PlanFeature_FEATURE_QUERY_POLICY); err == nil {
-		policy, err := stores.GetQueryDataPolicy(ctx)
+		policy, err := stores.GetEffectiveQueryDataPolicy(ctx, common.FormatProject(projectID))
 		if err != nil {
 			slog.Error("failed to get the query data policy", log.BBError(err))
 			return value
 		}
 		value = policy
 	}
-	if limit > 0 && (value.GetMaximumResultRows() < 0 || limit < value.GetMaximumResultRows()) {
-		value.MaximumResultRows = limit
+	if limit > 0 {
+		value.MaximumResultRows = min(limit, value.MaximumResultRows)
+	}
+	if value.MaximumResultRows == math.MaxInt32 {
+		value.MaximumResultRows = 0
 	}
 	return value
 }
@@ -325,14 +348,14 @@ func extractSourceTable(comment string) (string, string, string, error) {
 	return "", "", "", errors.Errorf("failed to extract source table from comment: %s", comment)
 }
 
-func getSchemaMetadata(engine storepb.Engine, dbSchema *model.DatabaseSchema) *model.SchemaMetadata {
+func getSchemaMetadata(engine storepb.Engine, dbMetadata *model.DatabaseMetadata) *model.SchemaMetadata {
 	switch engine {
 	case storepb.Engine_POSTGRES:
-		return dbSchema.GetDatabaseMetadata().GetSchema(common.BackupDatabaseNameOfEngine(storepb.Engine_POSTGRES))
+		return dbMetadata.GetSchemaMetadata(common.BackupDatabaseNameOfEngine(storepb.Engine_POSTGRES))
 	case storepb.Engine_MSSQL:
-		return dbSchema.GetDatabaseMetadata().GetSchema("dbo")
+		return dbMetadata.GetSchemaMetadata("dbo")
 	default:
-		return dbSchema.GetDatabaseMetadata().GetSchema("")
+		return dbMetadata.GetSchemaMetadata("")
 	}
 }
 
@@ -350,14 +373,14 @@ func replaceBackupTableWithSource(ctx context.Context, stores *store.Store, inst
 			return nil
 		}
 	}
-	dbSchema, err := stores.GetDBSchema(ctx, &store.FindDBSchemaMessage{
+	dbMetadata, err := stores.GetDBSchema(ctx, &store.FindDBSchemaMessage{
 		InstanceID:   database.InstanceID,
 		DatabaseName: database.DatabaseName,
 	})
 	if err != nil {
 		return err
 	}
-	schema := getSchemaMetadata(instance.Metadata.GetEngine(), dbSchema)
+	schema := getSchemaMetadata(instance.Metadata.GetEngine(), dbMetadata)
 	if schema == nil {
 		return nil
 	}
@@ -440,7 +463,6 @@ func queryRetry(
 	licenseService *enterprise.LicenseService,
 	optionalAccessCheck accessCheckFunc,
 	schemaSyncer *schemasync.Syncer,
-	action storepb.MaskingExceptionPolicy_MaskingException_Action,
 ) ([]*v1pb.QueryResult, []*parserbase.QuerySpan, time.Duration, error) {
 	var spans []*parserbase.QuerySpan
 	var sensitivePredicateColumns [][]parserbase.ColumnResource
@@ -477,7 +499,7 @@ func queryRetry(
 		}
 		if licenseService.IsFeatureEnabledForInstance(v1pb.PlanFeature_FEATURE_DATA_MASKING, instance) == nil {
 			masker := NewQueryResultMasker(stores)
-			sensitivePredicateColumns, err = masker.ExtractSensitivePredicateColumns(ctx, spans, instance, user, action)
+			sensitivePredicateColumns, err = masker.ExtractSensitivePredicateColumns(ctx, spans, instance, user)
 			if err != nil {
 				return nil, nil, time.Duration(0), connect.NewError(connect.CodeInternal, errors.New(err.Error()))
 			}
@@ -486,7 +508,13 @@ func queryRetry(
 	}
 
 	slog.Debug("start execute with timeout", slog.String("instance", instance.ResourceID), slog.String("database", database.DatabaseName), slog.String("statement", statement))
-	results, duration, queryErr := executeWithTimeout(ctx, stores, licenseService, driver, conn, statement, queryContext)
+	results, duration, queryErr := executeWithTimeout(
+		ctx,
+		driver,
+		conn,
+		statement,
+		queryContext,
+	)
 	if queryErr != nil {
 		return nil, nil, duration, queryErr
 	}
@@ -511,7 +539,7 @@ func queryRetry(
 	// Sync database metadata.
 	for accessDatabaseName := range syncDatabaseMap {
 		slog.Debug("sync database metadata", slog.String("instance", instance.ResourceID), slog.String("database", accessDatabaseName))
-		d, err := stores.GetDatabaseV2(ctx, &store.FindDatabaseMessage{InstanceID: &instance.ResourceID, DatabaseName: &accessDatabaseName})
+		d, err := stores.GetDatabase(ctx, &store.FindDatabaseMessage{InstanceID: &instance.ResourceID, DatabaseName: &accessDatabaseName})
 		if err != nil {
 			return nil, nil, duration, err
 		}
@@ -547,7 +575,7 @@ func queryRetry(
 		}
 		if licenseService.IsFeatureEnabledForInstance(v1pb.PlanFeature_FEATURE_DATA_MASKING, instance) == nil {
 			masker := NewQueryResultMasker(stores)
-			sensitivePredicateColumns, err = masker.ExtractSensitivePredicateColumns(ctx, spans, instance, user, action)
+			sensitivePredicateColumns, err = masker.ExtractSensitivePredicateColumns(ctx, spans, instance, user)
 			if err != nil {
 				return nil, nil, time.Duration(0), connect.NewError(connect.CodeInternal, errors.New(err.Error()))
 			}
@@ -627,7 +655,7 @@ func queryRetry(
 			}
 		} else {
 			masker := NewQueryResultMasker(stores)
-			if err := masker.MaskResults(ctx, spans, results, instance, user, action); err != nil {
+			if err := masker.MaskResults(ctx, spans, results, instance, user); err != nil {
 				return nil, nil, duration, connect.NewError(connect.CodeInternal, errors.New(err.Error()))
 			}
 
@@ -648,7 +676,7 @@ func queryRetry(
 }
 
 func getCosmosDBContainerObjectSchema(ctx context.Context, stores *store.Store, instanceID string, databaseName string, containerName string) (*storepb.ObjectSchema, error) {
-	dbSchema, err := stores.GetDBSchema(ctx, &store.FindDBSchemaMessage{
+	dbMetadata, err := stores.GetDBSchema(ctx, &store.FindDBSchemaMessage{
 		InstanceID:   instanceID,
 		DatabaseName: databaseName,
 	})
@@ -656,11 +684,11 @@ func getCosmosDBContainerObjectSchema(ctx context.Context, stores *store.Store, 
 		return nil, errors.Wrapf(err, "failed to get database schema: %q", databaseName)
 	}
 
-	if dbSchema == nil {
+	if dbMetadata == nil {
 		return nil, nil
 	}
 
-	schemas := dbSchema.GetConfig().GetSchemas()
+	schemas := dbMetadata.GetConfig().GetSchemas()
 	if len(schemas) == 0 {
 		return nil, nil
 	}
@@ -688,25 +716,84 @@ func getSensitivePredicateColumnErrorMessages(sensitiveColumns []parserbase.Colu
 	return buf.String()
 }
 
-func executeWithTimeout(ctx context.Context, stores *store.Store, licenseService *enterprise.LicenseService, driver db.Driver, conn *sql.Conn, statement string, queryContext db.QueryContext) ([]*v1pb.QueryResult, time.Duration, error) {
+// queryRetryStopOnError runs the query and stops on encountering errors.
+// The error is both present in the returned QueryResult and error, the caller decides what to do.
+func queryRetryStopOnError(
+	ctx context.Context,
+	stores *store.Store,
+	user *store.UserMessage,
+	instance *store.InstanceMessage,
+	database *store.DatabaseMessage,
+	driver db.Driver,
+	conn *sql.Conn,
+	statement string,
+	queryContext db.QueryContext,
+	licenseService *enterprise.LicenseService,
+	optionalAccessCheck accessCheckFunc,
+	schemaSyncer *schemasync.Syncer,
+) ([]*v1pb.QueryResult, []*parserbase.QuerySpan, time.Duration, error) {
+	// Split the statement into individual SQLs
+	statements, err := parserbase.SplitMultiSQL(instance.Metadata.GetEngine(), statement)
+	if err != nil {
+		// Fall back to executing as a single statement if splitting fails
+		return queryRetry(ctx, stores, user, instance, database, driver, conn, statement, queryContext, licenseService, optionalAccessCheck, schemaSyncer)
+	}
+
+	var allResults []*v1pb.QueryResult
+	var allSpans []*parserbase.QuerySpan
+	var totalDuration time.Duration
+
+	for _, stmt := range statements {
+		// Skip empty statements
+		if stmt.Empty {
+			continue
+		}
+
+		results, spans, duration, err := queryRetry(ctx, stores, user, instance, database, driver, conn, stmt.Text, queryContext, licenseService, optionalAccessCheck, schemaSyncer)
+		totalDuration += duration
+
+		if err != nil {
+			allResults = append(allResults, &v1pb.QueryResult{
+				Error:     err.Error(),
+				Statement: stmt.Text,
+			})
+			allSpans = append(allSpans, nil)
+			return allResults, allSpans, totalDuration, err
+		}
+
+		allResults = append(allResults, results...)
+		allSpans = append(allSpans, spans...)
+
+		// results may have swollen error.
+		for _, result := range results {
+			if result.Error != "" {
+				return allResults, allSpans, totalDuration, nil
+			}
+		}
+	}
+
+	return allResults, allSpans, totalDuration, nil
+}
+
+func executeWithTimeout(
+	ctx context.Context,
+	driver db.Driver,
+	conn *sql.Conn,
+	statement string,
+	queryContext db.QueryContext,
+) ([]*v1pb.QueryResult, time.Duration, error) {
 	queryCtx := ctx
 	var timeout time.Duration
 	// For access control feature, we will use the timeout from request and query data policy.
 	// Otherwise, no timeout will be applied.
-	if licenseService.IsFeatureEnabled(v1pb.PlanFeature_FEATURE_QUERY_POLICY) == nil {
-		queryDataPolicy, err := stores.GetQueryDataPolicy(ctx)
-		if err != nil {
-			return nil, time.Duration(0), errors.Wrap(err, "failed to get query data policy")
-		}
-		// Override the timeout if the query data policy has a smaller timeout.
-		if queryDataPolicy.Timeout.GetSeconds() > 0 || queryDataPolicy.Timeout.GetNanos() > 0 {
-			timeout = queryDataPolicy.Timeout.AsDuration()
-			slog.Debug("create query context with timeout", slog.Duration("timeout", timeout))
-			newCtx, cancelCtx := context.WithTimeout(ctx, timeout)
-			defer cancelCtx()
-			queryCtx = newCtx
-		}
+	if queryContext.Timeout != nil {
+		timeout = queryContext.Timeout.AsDuration()
+		slog.Debug("create query context with timeout", slog.Duration("timeout", timeout))
+		newCtx, cancelCtx := context.WithTimeout(ctx, timeout)
+		defer cancelCtx()
+		queryCtx = newCtx
 	}
+
 	start := time.Now()
 	result, err := driver.QueryConn(queryCtx, conn, statement, queryContext)
 	select {
@@ -732,19 +819,22 @@ func (s *SQLService) Export(ctx context.Context, req *connect.Request[v1pb.Expor
 		return connect.NewResponse(response), nil
 	}
 
-	// Check if data export is allowed.
-	queryDataPolicy, err := s.store.GetQueryDataPolicy(ctx)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to get data export policy: %v", err))
-	}
-	if queryDataPolicy.DisableExport {
-		return nil, connect.NewError(connect.CodePermissionDenied, errors.Errorf("data export is not allowed"))
-	}
-
 	// Prepare related message.
 	user, instance, database, err := s.prepareRelatedMessage(ctx, request.Name)
 	if err != nil {
 		return nil, err
+	}
+
+	// Check if data export is allowed.
+	queryDataPolicy := getEffectiveQueryDataPolicy(
+		ctx,
+		s.store,
+		s.licenseService,
+		request.Limit,
+		database.ProjectID,
+	)
+	if queryDataPolicy.DisableExport {
+		return nil, connect.NewError(connect.CodePermissionDenied, errors.Errorf("data export is not allowed"))
 	}
 
 	statement := request.Statement
@@ -765,9 +855,9 @@ func (s *SQLService) Export(ctx context.Context, req *connect.Request[v1pb.Expor
 	if err != nil {
 		return nil, err
 	}
-	bytes, duration, exportErr := DoExport(ctx, s.store, s.dbFactory, s.licenseService, request, user, instance, database, s.accessCheck, s.schemaSyncer, dataSource)
+	bytes, duration, exportErr := doExport(ctx, s.store, s.dbFactory, s.licenseService, request, user, instance, database, s.accessCheck, s.schemaSyncer, dataSource)
 
-	s.createQueryHistory(database, store.QueryHistoryTypeExport, statement, user.ID, duration, exportErr)
+	s.createQueryHistory(database, store.QueryHistoryTypeExport, statement, user.Email, duration, exportErr)
 
 	if exportErr != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.New(exportErr.Error()))
@@ -780,37 +870,51 @@ func (s *SQLService) Export(ctx context.Context, req *connect.Request[v1pb.Expor
 
 func (s *SQLService) doExportFromIssue(ctx context.Context, requestName string) (*v1pb.ExportResponse, error) {
 	// Try to parse as rollout name first (more specific), then fallback to stage name
-	var rolloutID int
+	var planID int64
+	var projectID string
 	var err error
-	_, rolloutID, err = common.GetProjectIDRolloutID(requestName)
+	projectID, planID, err = common.GetProjectIDPlanIDFromRolloutName(requestName)
 	if err != nil {
 		// If rollout parsing fails, try parsing as stage name
-		_, rolloutID, _, err = common.GetProjectIDRolloutIDMaybeStageID(requestName)
+		projectID, planID, _, err = common.GetProjectIDPlanIDMaybeStageID(requestName)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("failed to parse request name as rollout or stage: %v", err))
 		}
 	}
-	rollout, err := s.store.GetRollout(ctx, rolloutID)
+
+	plan, err := s.store.GetPlan(ctx, &store.FindPlanMessage{
+		ProjectID: &projectID,
+		UID:       &planID,
+	})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to get rollout: %v", err))
 	}
-	if rollout == nil {
-		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("rollout %d not found", rolloutID))
+	if plan == nil {
+		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("rollout %d not found in project %s", planID, projectID))
 	}
 
-	tasks, err := s.store.ListTasks(ctx, &store.TaskFind{PipelineID: &rollout.ID})
+	tasks, err := s.store.ListTasks(ctx, &store.TaskFind{PlanID: &plan.UID})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to get tasks: %v", err))
 	}
 	if len(tasks) == 0 {
-		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("rollout %d has no task", rollout.ID))
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("rollout %d has no task", plan.UID))
+	}
+
+	// Get password from the plan spec
+	// For export data plans, there is always exactly one spec
+	var passwordStr string
+	if len(plan.Config.Specs) > 0 {
+		if exportConfig := plan.Config.Specs[0].GetExportDataConfig(); exportConfig != nil && exportConfig.Password != nil {
+			passwordStr = *exportConfig.Password
+		}
 	}
 
 	pendingEncrypts := []*encryptContent{}
 	targetTaskRunStatus := []storepb.TaskRun_Status{storepb.TaskRun_DONE}
 
 	for _, task := range tasks {
-		taskRuns, err := s.store.ListTaskRunsV2(ctx, &store.FindTaskRunMessage{
+		taskRuns, err := s.store.ListTaskRuns(ctx, &store.FindTaskRunMessage{
 			TaskUID: &task.ID,
 			Status:  &targetTaskRunStatus,
 		})
@@ -859,7 +963,7 @@ func (s *SQLService) doExportFromIssue(ctx context.Context, requestName string) 
 		}
 	}
 
-	encryptedBytes, err := doEncrypt(pendingEncrypts, tasks[0].Payload.GetPassword())
+	encryptedBytes, err := doEncrypt(pendingEncrypts, passwordStr)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to encrypt data: %v", err))
 	}
@@ -869,8 +973,10 @@ func (s *SQLService) doExportFromIssue(ctx context.Context, requestName string) 
 	}, nil
 }
 
-// DoExport does the export.
-func DoExport(
+// doExport performs SQL Editor exports with masking applied.
+// This is used for ad-hoc exports where users have the EXPORTER role.
+// For approved DATABASE_EXPORT tasks, see data_export_executor.go which exports without masking.
+func doExport(
 	ctx context.Context,
 	stores *store.Store,
 	dbFactory *dbfactory.DBFactory,
@@ -905,11 +1011,20 @@ func DoExport(
 		}
 		defer conn.Close()
 	}
-	queryRestriction := getMaximumSQLResultLimit(ctx, stores, licenseService, request.Limit)
+	queryRestriction := getEffectiveQueryDataPolicy(
+		ctx,
+		stores,
+		licenseService,
+		request.Limit,
+		database.ProjectID,
+	)
 	queryContext := db.QueryContext{
 		Limit:                int(queryRestriction.MaximumResultRows),
 		OperatorEmail:        user.Email,
 		MaximumSQLResultSize: queryRestriction.MaximumResultSize,
+	}
+	if queryRestriction.MaxQueryTimeoutInSeconds > 0 {
+		queryContext.Timeout = &durationpb.Duration{Seconds: queryRestriction.MaxQueryTimeoutInSeconds}
 	}
 	if request.Schema != nil {
 		queryContext.Schema = *request.Schema
@@ -927,7 +1042,6 @@ func DoExport(
 		licenseService,
 		optionalAccessCheck,
 		schemaSyncer,
-		storepb.MaskingExceptionPolicy_MaskingException_EXPORT,
 	)
 	if queryErr != nil {
 		return nil, duration, queryErr
@@ -935,57 +1049,142 @@ func DoExport(
 
 	if licenseService.IsFeatureEnabledForInstance(v1pb.PlanFeature_FEATURE_DATA_MASKING, instance) == nil {
 		masker := NewQueryResultMasker(stores)
-		if err := masker.MaskResults(ctx, spans, results, instance, user, storepb.MaskingExceptionPolicy_MaskingException_EXPORT); err != nil {
+		if err := masker.MaskResults(ctx, spans, results, instance, user); err != nil {
 			return nil, duration, err
 		}
 	}
 
-	pendingEncryptContents := []*encryptContent{}
+	var buf bytes.Buffer
+	zipw := zip.NewWriter(&buf)
+
+	exportCount := 0
 	for i, result := range results {
 		if result.GetError() != "" {
-			slog.Error("failed to query result",
-				slog.String("instance", database.InstanceID),
-				slog.String("database", database.DatabaseName),
-				slog.String("project", database.ProjectID),
-				slog.String("query_error", result.GetError()),
-			)
+			logExportError(database, "failed to query result", errors.New(result.GetError()))
 			continue
 		}
 
-		content, err := formatExport(ctx, stores, instance, database, result, request)
-		if err != nil {
-			slog.Error("failed to format export",
-				log.BBError(err),
-				slog.String("instance", database.InstanceID),
-				slog.String("database", database.DatabaseName),
-				slog.String("project", database.ProjectID),
-			)
+		if err := exportResultToZip(ctx, zipw, stores, instance, database, result, request, i+1); err != nil {
+			logExportError(database, "failed to export result to zip", err)
 			continue
 		}
-		filename := fmt.Sprintf("%s/%s/statement-%d", database.InstanceID, database.DatabaseName, i+1)
-		pendingEncryptContents = append(
-			pendingEncryptContents,
-			&encryptContent{
-				Name:    fmt.Sprintf("%s.sql", filename),
-				Content: []byte(result.Statement),
-			},
-			&encryptContent{
-				Name:    fmt.Sprintf("%s.result.%s", filename, strings.ToLower(request.Format.String())),
-				Content: content,
-			},
-		)
+
+		exportCount++
+		// Help GC by clearing the result data we've already processed
+		result.Rows = nil
 	}
 
-	if len(pendingEncryptContents) == 0 {
+	if exportCount == 0 {
 		return nil, duration, errors.Errorf("empty export data for database %s", database.DatabaseName)
 	}
 
-	// we will save both query result and statement into the result, so we always zip files.
-	encryptedBytes, err := doEncrypt(pendingEncryptContents, request.GetPassword())
-	if err != nil {
-		return nil, duration, errors.Wrap(err, "failed to encrypt data")
+	if err := zipw.Close(); err != nil {
+		return nil, duration, errors.Wrap(err, "failed to close zip writer")
 	}
-	return encryptedBytes, duration, nil
+
+	return buf.Bytes(), duration, nil
+}
+
+// logExportError logs export-related errors with consistent database context.
+func logExportError(database *store.DatabaseMessage, message string, err error) {
+	slog.Error(message,
+		log.BBError(err),
+		slog.String("instance", database.InstanceID),
+		slog.String("database", database.DatabaseName),
+		slog.String("project", database.ProjectID),
+	)
+}
+
+// exportResultToZip exports a single query result to the ZIP archive.
+// It writes both the SQL statement and the formatted result data.
+func exportResultToZip(
+	ctx context.Context,
+	zipw *zip.Writer,
+	stores *store.Store,
+	instance *store.InstanceMessage,
+	database *store.DatabaseMessage,
+	result *v1pb.QueryResult,
+	request *v1pb.ExportRequest,
+	statementNumber int,
+) error {
+	baseFilename := fmt.Sprintf("%s/%s/statement-%d", database.InstanceID, database.DatabaseName, statementNumber)
+
+	// Write statement file
+	statementFilename := fmt.Sprintf("%s.sql", baseFilename)
+	if err := export.WriteZipEntry(zipw, statementFilename, []byte(result.Statement), request.GetPassword()); err != nil {
+		return errors.Wrap(err, "failed to write statement")
+	}
+
+	// Write result file by streaming directly to ZIP
+	resultExt := strings.ToLower(request.Format.String())
+	resultFilename := fmt.Sprintf("%s.result.%s", baseFilename, resultExt)
+	if err := formatExportToZip(ctx, zipw, resultFilename, stores, instance, database, result, request); err != nil {
+		return errors.Wrap(err, "failed to write formatted result")
+	}
+
+	return nil
+}
+
+// formatExportToZip formats query results and writes them directly to a ZIP entry.
+// This function streams the formatted data to minimize memory usage.
+func formatExportToZip(
+	ctx context.Context,
+	zipw *zip.Writer,
+	filename string,
+	stores *store.Store,
+	instance *store.InstanceMessage,
+	database *store.DatabaseMessage,
+	result *v1pb.QueryResult,
+	request *v1pb.ExportRequest,
+) error {
+	writer, err := export.CreateZipWriter(zipw, filename, request.GetPassword())
+	if err != nil {
+		return err
+	}
+
+	switch request.Format {
+	case v1pb.ExportFormat_CSV:
+		return export.CSVToWriter(writer, result)
+	case v1pb.ExportFormat_JSON:
+		return export.JSONToWriter(writer, result)
+	case v1pb.ExportFormat_SQL:
+		return exportSQLWithContext(ctx, writer, stores, instance, database, result, request)
+	case v1pb.ExportFormat_XLSX:
+		return export.XLSXToWriter(writer, result)
+	default:
+		return errors.Errorf("unsupported export format: %s", request.Format.String())
+	}
+}
+
+// exportSQLWithContext exports SQL INSERT statements with proper context.
+func exportSQLWithContext(
+	ctx context.Context,
+	w io.Writer,
+	stores *store.Store,
+	instance *store.InstanceMessage,
+	database *store.DatabaseMessage,
+	result *v1pb.QueryResult,
+	request *v1pb.ExportRequest,
+) error {
+	resourceList, err := export.GetResources(
+		ctx,
+		stores,
+		instance.Metadata.GetEngine(),
+		database.DatabaseName,
+		request.Statement,
+		instance,
+		BuildGetDatabaseMetadataFunc(stores),
+		BuildListDatabaseNamesFunc(stores),
+		BuildGetLinkedDatabaseMetadataFunc(stores, instance.Metadata.GetEngine()),
+	)
+	if err != nil {
+		return errors.Wrapf(err, "failed to extract resource list")
+	}
+	statementPrefix, err := export.SQLStatementPrefix(instance.Metadata.GetEngine(), resourceList, result.ColumnNames)
+	if err != nil {
+		return err
+	}
+	return export.SQLToWriter(w, instance.Metadata.GetEngine(), statementPrefix, result)
 }
 
 type encryptContent struct {
@@ -1000,21 +1199,9 @@ func doEncrypt(exports []*encryptContent, password string) ([]byte, error) {
 	zipw := zip.NewWriter(fzip)
 	defer zipw.Close()
 
-	for _, export := range exports {
-		fh := &zip.FileHeader{
-			Name:   export.Name,
-			Method: zip.Deflate,
-		}
-		fh.ModifiedDate, fh.ModifiedTime = timeToMsDosTime(time.Now())
-		if password != "" {
-			fh.SetPassword(password)
-		}
-		writer, err := zipw.CreateHeader(fh)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to create encrypt export file")
-		}
-		if _, err := io.Copy(writer, bytes.NewReader(export.Content)); err != nil {
-			return nil, errors.Wrapf(err, "failed to write export file")
+	for _, exportContent := range exports {
+		if err := export.WriteZipEntry(zipw, exportContent.Name, exportContent.Content, password); err != nil {
+			return nil, err
 		}
 	}
 
@@ -1025,51 +1212,13 @@ func doEncrypt(exports []*encryptContent, password string) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func formatExport(
-	ctx context.Context,
-	stores *store.Store,
-	instance *store.InstanceMessage,
-	database *store.DatabaseMessage,
-	result *v1pb.QueryResult,
-	request *v1pb.ExportRequest,
-) ([]byte, error) {
-	switch request.Format {
-	case v1pb.ExportFormat_CSV:
-		return exportCSV(result)
-	case v1pb.ExportFormat_JSON:
-		return exportJSON(result)
-	case v1pb.ExportFormat_SQL:
-		resourceList, err := getResources(ctx, stores, instance.Metadata.GetEngine(), database.DatabaseName, request.Statement, instance)
-		if err != nil {
-			return nil, errors.Errorf("failed to extract resource list: %v", err)
-		}
-		statementPrefix, err := getSQLStatementPrefix(instance.Metadata.GetEngine(), resourceList, result.ColumnNames)
-		if err != nil {
-			return nil, err
-		}
-		return exportSQL(instance.Metadata.GetEngine(), statementPrefix, result)
-	case v1pb.ExportFormat_XLSX:
-		return exportXLSX(result)
-	default:
-		return nil, errors.Errorf("unsupported export format: %s", request.Format.String())
-	}
-}
-
-// timeToMsDosTime converts a time.Time to an MS-DOS date and time.
-// this is a modified copy for gihub.com/alexmullins/zip/struct.go cause the package has a bug, it will convert the time to UTC time and drop the timezone.
-func timeToMsDosTime(t time.Time) (uint16, uint16) {
-	fDate := uint16(t.Day() + int(t.Month())<<5 + (t.Year()-1980)<<9)
-	fTime := uint16(t.Second()/2 + t.Minute()<<5 + t.Hour()<<11)
-	return fDate, fTime
-}
-
-func (s *SQLService) createQueryHistory(database *store.DatabaseMessage, queryType store.QueryHistoryType, statement string, userUID int, duration time.Duration, queryErr error) {
+func (s *SQLService) createQueryHistory(database *store.DatabaseMessage, queryType store.QueryHistoryType, statement string, userEmail string, duration time.Duration, queryErr error) {
 	qh := &store.QueryHistoryMessage{
-		CreatorUID: userUID,
-		ProjectID:  database.ProjectID,
-		Database:   common.FormatDatabase(database.InstanceID, database.DatabaseName),
-		Statement:  statement,
-		Type:       queryType,
+		Creator:   userEmail,
+		ProjectID: database.ProjectID,
+		Database:  common.FormatDatabase(database.InstanceID, database.DatabaseName),
+		Statement: statement,
+		Type:      queryType,
 		Payload: &storepb.QueryHistoryPayload{
 			Error:    nil,
 			Duration: durationpb.New(duration),
@@ -1119,9 +1268,9 @@ func (s *SQLService) SearchQueryHistories(ctx context.Context, req *connect.Requ
 	}
 
 	find := &store.FindQueryHistoryMessage{
-		CreatorUID: &user.ID,
-		Limit:      &limitPlusOne,
-		Offset:     &offset.offset,
+		Creator: &user.Email,
+		Limit:   &limitPlusOne,
+		Offset:  &offset.offset,
 	}
 	filterQ, err := store.GetListQueryHistoryFilter(request.Filter)
 	if err != nil {
@@ -1138,7 +1287,7 @@ func (s *SQLService) SearchQueryHistories(ctx context.Context, req *connect.Requ
 	if len(historyList) == limitPlusOne {
 		historyList = historyList[:offset.limit]
 		if nextPageToken, err = offset.getNextPageToken(); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to marshal next page token, error: %v", err))
+			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to marshal next page token"))
 		}
 	}
 
@@ -1148,7 +1297,7 @@ func (s *SQLService) SearchQueryHistories(ctx context.Context, req *connect.Requ
 	for _, history := range historyList {
 		queryHistory, err := s.convertToV1QueryHistory(ctx, history)
 		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to convert log entity, error: %v", err))
+			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to convert log entity"))
 		}
 		if queryHistory == nil {
 			continue
@@ -1171,7 +1320,7 @@ func BuildGetLinkedDatabaseMetadataFunc(storeInstance *store.Store, engine store
 		if err != nil {
 			return "", "", nil, err
 		}
-		var linkedMeta *model.LinkedDatabaseMetadata
+		var linkedMeta *storepb.LinkedDatabaseMetadata
 		for _, database := range databases {
 			meta, err := storeInstance.GetDBSchema(ctx, &store.FindDBSchemaMessage{
 				InstanceID:   database.InstanceID,
@@ -1180,7 +1329,7 @@ func BuildGetLinkedDatabaseMetadataFunc(storeInstance *store.Store, engine store
 			if err != nil {
 				return "", "", nil, err
 			}
-			if linkedMeta = meta.GetDatabaseMetadata().GetLinkedDatabase(linkedDatabaseName); linkedMeta != nil {
+			if linkedMeta = meta.GetLinkedDatabase(linkedDatabaseName); linkedMeta != nil {
 				break
 			}
 		}
@@ -1201,7 +1350,7 @@ func BuildGetLinkedDatabaseMetadataFunc(storeInstance *store.Store, engine store
 			return "", "", nil, err
 		}
 		for _, database := range databaseList {
-			instance, err := storeInstance.GetInstanceV2(ctx, &store.FindInstanceMessage{ResourceID: &database.InstanceID})
+			instance, err := storeInstance.GetInstance(ctx, &store.FindInstanceMessage{ResourceID: &database.InstanceID})
 			if err != nil {
 				return "", "", nil, err
 			}
@@ -1231,22 +1380,12 @@ func BuildGetLinkedDatabaseMetadataFunc(storeInstance *store.Store, engine store
 		if linkedDatabaseMetadata == nil {
 			return "", "", nil, nil
 		}
-		return linkedDatabase.InstanceID, linkedDatabaseName, linkedDatabaseMetadata.GetDatabaseMetadata(), nil
+		return linkedDatabase.InstanceID, linkedDatabaseName, linkedDatabaseMetadata, nil
 	}
 }
 
 func BuildGetDatabaseMetadataFunc(storeInstance *store.Store) parserbase.GetDatabaseMetadataFunc {
 	return func(ctx context.Context, instanceID, databaseName string) (string, *model.DatabaseMetadata, error) {
-		database, err := storeInstance.GetDatabaseV2(ctx, &store.FindDatabaseMessage{
-			InstanceID:   &instanceID,
-			DatabaseName: &databaseName,
-		})
-		if err != nil {
-			return "", nil, err
-		}
-		if database == nil {
-			return "", nil, nil
-		}
 		databaseMetadata, err := storeInstance.GetDBSchema(ctx, &store.FindDBSchemaMessage{
 			InstanceID:   instanceID,
 			DatabaseName: databaseName,
@@ -1257,7 +1396,7 @@ func BuildGetDatabaseMetadataFunc(storeInstance *store.Store) parserbase.GetData
 		if databaseMetadata == nil {
 			return "", nil, nil
 		}
-		return databaseName, databaseMetadata.GetDatabaseMetadata(), nil
+		return databaseName, databaseMetadata, nil
 	}
 }
 
@@ -1277,6 +1416,7 @@ func BuildListDatabaseNamesFunc(storeInstance *store.Store) parserbase.ListDatab
 	}
 }
 
+// accessCheck check the access for the database. Do not support cross-project resources.
 func (s *SQLService) accessCheck(
 	ctx context.Context,
 	instance *store.InstanceMessage,
@@ -1285,7 +1425,7 @@ func (s *SQLService) accessCheck(
 	spans []*parserbase.QuerySpan,
 	isExplain bool,
 ) error {
-	project, err := s.store.GetProjectV2(ctx, &store.FindProjectMessage{ResourceID: &database.ProjectID})
+	project, err := s.store.GetProject(ctx, &store.FindProjectMessage{ResourceID: &database.ProjectID})
 	if err != nil {
 		return err
 	}
@@ -1293,10 +1433,52 @@ func (s *SQLService) accessCheck(
 		return connect.NewError(connect.CodeInvalidArgument, errors.Errorf("project %q not found", database.ProjectID))
 	}
 
+	workspacePolicy, err := s.store.GetWorkspaceIamPolicy(ctx)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get workspace iam policy"))
+	}
+
+	projectPolicy, err := s.store.GetProjectIamPolicy(ctx, project.ResourceID)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, errors.New(err.Error()))
+	}
+
+	checkDatabaseAccess := func(permission iam.Permission) error {
+		databaseFullName := common.FormatDatabase(instance.ResourceID, database.DatabaseName)
+		ok, err := s.hasDatabaseAccessRights(
+			ctx,
+			user,
+			permission,
+			map[string]any{
+				common.CELAttributeRequestTime:      time.Now(),
+				common.CELAttributeResourceDatabase: databaseFullName,
+			},
+			workspacePolicy.Policy,
+			projectPolicy.Policy,
+		)
+		if err != nil {
+			return connect.NewError(connect.CodeInternal, errors.Errorf("failed to check access control for database: %q, error %v", databaseFullName, err))
+		}
+		if !ok {
+			return connect.NewError(connect.CodePermissionDenied, errors.Errorf("user %q does not have permission for database %q", user.Email, databaseFullName))
+		}
+		return nil
+	}
+
+	// When spans is empty, it's an EXPLAIN query where GetQuerySpan is skipped (queryContext.Explain is true).
+	// Check at database level with EXPLAIN permission.
+	if len(spans) == 0 {
+		permission := iam.PermissionSQLSelect
+		if isExplain {
+			permission = iam.PermissionSQLExplain
+		}
+		return checkDatabaseAccess(permission)
+	}
+
 	for _, span := range spans {
+		var permission iam.Permission
 		// New query ACL experience.
 		if common.EngineSupportQueryNewACL(instance.Metadata.GetEngine()) {
-			var permission iam.Permission
 			switch span.Type {
 			case parserbase.QueryTypeUnknown:
 				return connect.NewError(connect.CodePermissionDenied, errors.New("disallowed query type"))
@@ -1309,82 +1491,72 @@ func (s *SQLService) accessCheck(
 			case parserbase.SelectInfoSchema:
 				permission = iam.PermissionSQLInfo
 			case parserbase.Select:
-				// Conditional permission check below.
+				permission = iam.PermissionSQLSelect
 			default:
-			}
-			if isExplain {
-				permission = iam.PermissionSQLExplain
 			}
 			if span.Type == parserbase.DDL || span.Type == parserbase.DML {
 				if err := checkDataSourceQueryPolicy(ctx, s.store, s.licenseService, database, span.Type); err != nil {
 					return err
 				}
 			}
-			if permission != "" {
-				ok, err := s.iamManager.CheckPermission(ctx, permission, user, project.ResourceID)
-				if err != nil {
-					return connect.NewError(connect.CodeInternal, errors.Errorf("failed to check permission with error: %v", err.Error()))
-				}
+		} else if span.Type == parserbase.Select {
+			permission = iam.PermissionSQLSelect
+		}
+
+		if permission == "" {
+			// always fallback to bb.sql.select
+			permission = iam.PermissionSQLSelect
+		}
+
+		// For non-SELECT queries or SELECT queries with no source columns (e.g., SELECT 1),
+		// check at database level and skip column-level checks
+		if span.Type != parserbase.Select || len(span.SourceColumns) == 0 {
+			if err := checkDatabaseAccess(permission); err != nil {
+				return err
+			}
+			continue
+		}
+
+		var deniedResources []string
+		for column := range span.SourceColumns {
+			attributes := map[string]any{
+				common.CELAttributeRequestTime:        time.Now(),
+				common.CELAttributeResourceDatabase:   common.FormatDatabase(instance.ResourceID, column.Database),
+				common.CELAttributeResourceSchemaName: column.Schema,
+				common.CELAttributeResourceTableName:  column.Table,
+			}
+			ok, err := s.hasDatabaseAccessRights(
+				ctx,
+				user,
+				permission,
+				attributes,
+				workspacePolicy.Policy,
+				projectPolicy.Policy,
+			)
+			if err != nil {
+				return connect.NewError(connect.CodeInternal, errors.Errorf("failed to check access control for database: %q, error %v", column.Database, err))
+			}
+			if !ok {
+				resource, ok := attributes[common.CELAttributeResourceDatabase].(string)
 				if !ok {
-					return connect.NewError(connect.CodePermissionDenied, errors.Errorf("user %q does not have permission %q on project %q", user.Email, permission, project.ResourceID))
+					resource = ""
 				}
+				if schema, ok := attributes[common.CELAttributeResourceSchemaName]; ok && schema != "" {
+					resource = fmt.Sprintf("%s/schemas/%s", resource, schema)
+				}
+				if table, ok := attributes[common.CELAttributeResourceTableName]; ok && table != "" {
+					resource = fmt.Sprintf("%s/tables/%s", resource, table)
+				}
+				deniedResources = append(deniedResources, resource)
 			}
 		}
-		if span.Type == parserbase.Select {
-			for column := range span.SourceColumns {
-				attributes := map[string]any{
-					common.CELAttributeRequestTime:        time.Now(),
-					common.CELAttributeResourceDatabase:   common.FormatDatabase(instance.ResourceID, column.Database),
-					common.CELAttributeResourceSchemaName: column.Schema,
-					common.CELAttributeResourceTableName:  column.Table,
-				}
-
-				databaseMessage, err := s.store.GetDatabaseV2(ctx, &store.FindDatabaseMessage{
-					InstanceID:      &instance.ResourceID,
-					DatabaseName:    &column.Database,
-					IsCaseSensitive: store.IsObjectCaseSensitive(instance),
-				})
-				if err != nil {
-					return err
-				}
-				if databaseMessage == nil {
-					return connect.NewError(connect.CodeInvalidArgument, errors.Errorf("database %q not found", column.Database))
-				}
-				project, err := s.store.GetProjectV2(ctx, &store.FindProjectMessage{ResourceID: &databaseMessage.ProjectID})
-				if err != nil {
-					return err
-				}
-				if project == nil {
-					return connect.NewError(connect.CodeInvalidArgument, errors.Errorf("project %q not found", databaseMessage.ProjectID))
-				}
-
-				workspacePolicy, err := s.store.GetWorkspaceIamPolicy(ctx)
-				if err != nil {
-					return connect.NewError(connect.CodeInternal, errors.Errorf("failed to get workspace iam policy, error: %v", err))
-				}
-				// Allow query databases across different projects.
-				projectPolicy, err := s.store.GetProjectIamPolicy(ctx, project.ResourceID)
-				if err != nil {
-					return connect.NewError(connect.CodeInternal, errors.New(err.Error()))
-				}
-
-				ok, err := s.hasDatabaseAccessRights(ctx, user, []*storepb.IamPolicy{workspacePolicy.Policy, projectPolicy.Policy}, attributes)
-				if err != nil {
-					return connect.NewError(connect.CodeInternal, errors.Errorf("failed to check access control for database: %q, error %v", column.Database, err))
-				}
-				if !ok {
-					resource := attributes[common.CELAttributeResourceDatabase]
-					if schema, ok := attributes[common.CELAttributeResourceSchemaName]; ok && schema != "" {
-						resource = fmt.Sprintf("%s/schemas/%s", resource, schema)
-					}
-					if table, ok := attributes[common.CELAttributeResourceTableName]; ok && table != "" {
-						resource = fmt.Sprintf("%s/tables/%s", resource, table)
-					}
-					return connect.NewError(
-						connect.CodePermissionDenied,
-						errors.Errorf("permission denied to access resource: %s", resource),
-					)
-				}
+		if len(deniedResources) > 0 {
+			return &queryError{
+				err: connect.NewError(
+					connect.CodePermissionDenied,
+					errors.Errorf("permission denied to access resources: %v", deniedResources),
+				),
+				resources: deniedResources,
 			}
 		}
 	}
@@ -1413,12 +1585,22 @@ func (s *SQLService) prepareRelatedMessage(ctx context.Context, requestName stri
 		return nil, nil, nil, connect.NewError(connect.CodeInternal, errors.New(err.Error()))
 	}
 
-	database, err := getDatabaseMessage(ctx, s.store, requestName)
+	instanceID, databaseName, err := common.GetInstanceDatabaseID(requestName)
 	if err != nil {
-		return nil, nil, nil, connect.NewError(connect.CodeInternal, errors.New(err.Error()))
+		return nil, nil, nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to parse %q", requestName))
+	}
+	database, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
+		InstanceID:   &instanceID,
+		DatabaseName: &databaseName,
+	})
+	if err != nil {
+		return nil, nil, nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get database"))
+	}
+	if database == nil {
+		return nil, nil, nil, connect.NewError(connect.CodeNotFound, errors.Errorf("database %q not found", requestName))
 	}
 
-	instance, err := s.store.GetInstanceV2(ctx, &store.FindInstanceMessage{
+	instance, err := s.store.GetInstance(ctx, &store.FindInstanceMessage{
 		ResourceID: &database.InstanceID,
 	})
 	if err != nil {
@@ -1437,7 +1619,7 @@ func validateQueryRequest(instance *store.InstanceMessage, statement string) err
 		if syntaxErr, ok := err.(*parserbase.SyntaxError); ok {
 			err := connect.NewError(connect.CodeInvalidArgument, syntaxErr)
 			if detail, detailErr := connect.NewErrorDetail(&v1pb.PlanCheckRun_Result{
-				Code:    int32(advisor.StatementSyntaxError),
+				Code:    int32(code.StatementSyntaxError),
 				Content: syntaxErr.Message,
 				Title:   "Syntax error",
 				Status:  v1pb.Advice_ERROR,
@@ -1454,26 +1636,28 @@ func validateQueryRequest(instance *store.InstanceMessage, statement string) err
 		return err
 	}
 	if !ok {
-		switch instance.Metadata.GetEngine() {
-		case storepb.Engine_REDIS, storepb.Engine_MONGODB:
-			return nonReadOnlyCommandError
-		default:
-			return nonSelectSQLError
+		return &queryError{
+			err:         connect.NewError(connect.CodeInvalidArgument, errors.New("Support read-only command statements only")),
+			commandType: v1pb.QueryResult_PermissionDenied_NON_READ_ONLY,
 		}
 	}
 	return nil
 }
 
-func (s *SQLService) hasDatabaseAccessRights(ctx context.Context, user *store.UserMessage, iamPolicies []*storepb.IamPolicy, attributes map[string]any) (bool, error) {
-	wantPermission := iam.PermissionSQLSelect
-
+func (s *SQLService) hasDatabaseAccessRights(
+	ctx context.Context,
+	user *store.UserMessage,
+	permission iam.Permission,
+	attributes map[string]any,
+	iamPolicies ...*storepb.IamPolicy,
+) (bool, error) {
 	bindings := utils.GetUserIAMPolicyBindings(ctx, s.store, user, iamPolicies...)
 	for _, binding := range bindings {
 		permissions, err := s.iamManager.GetPermissions(binding.Role)
 		if err != nil {
 			return false, errors.Wrapf(err, "failed to get permissions")
 		}
-		if !permissions[wantPermission] {
+		if !permissions[permission] {
 			continue
 		}
 
@@ -1500,46 +1684,6 @@ func (*SQLService) getUser(ctx context.Context) (*store.UserMessage, error) {
 	return user, nil
 }
 
-func getClassificationByProject(ctx context.Context, stores *store.Store, projectID string) *storepb.DataClassificationSetting_DataClassificationConfig {
-	project, err := stores.GetProjectV2(ctx, &store.FindProjectMessage{
-		ResourceID: &projectID,
-	})
-	if err != nil {
-		slog.Warn("failed to find project", slog.String("project", projectID), log.BBError(err))
-		return nil
-	}
-	if project == nil {
-		return nil
-	}
-	if project.DataClassificationConfigID == "" {
-		return nil
-	}
-	classificationConfig, err := stores.GetDataClassificationConfigByID(ctx, project.DataClassificationConfigID)
-	if err != nil {
-		slog.Warn("failed to find classification", slog.String("project", projectID), slog.String("classification", project.DataClassificationConfigID), log.BBError(err))
-		return nil
-	}
-	return classificationConfig
-}
-
-func getUseDatabaseOwner(ctx context.Context, stores *store.Store, instance *store.InstanceMessage, database *store.DatabaseMessage) (bool, error) {
-	if instance.Metadata.GetEngine() != storepb.Engine_POSTGRES {
-		return false, nil
-	}
-
-	// Check the project setting to see if we should use the database owner.
-	project, err := stores.GetProjectV2(ctx, &store.FindProjectMessage{ResourceID: &database.ProjectID})
-	if err != nil {
-		return false, errors.Wrapf(err, "failed to get project")
-	}
-
-	if project.Setting == nil {
-		return false, nil
-	}
-
-	return project.Setting.PostgresDatabaseTenantMode, nil
-}
-
 func (*SQLService) DiffMetadata(_ context.Context, req *connect.Request[v1pb.DiffMetadataRequest]) (*connect.Response[v1pb.DiffMetadataResponse], error) {
 	request := req.Msg
 	switch request.Engine {
@@ -1551,60 +1695,28 @@ func (*SQLService) DiffMetadata(_ context.Context, req *connect.Request[v1pb.Dif
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("source_metadata and target_metadata are required"))
 	}
 	storeSourceMetadata := convertV1DatabaseMetadata(request.SourceMetadata)
-
-	sourceConfig := convertDatabaseCatalog(request.GetSourceCatalog())
-	sanitizeCommentForSchemaMetadata(storeSourceMetadata, model.NewDatabaseConfig(sourceConfig), request.ClassificationFromConfig)
-
 	storeTargetMetadata := convertV1DatabaseMetadata(request.TargetMetadata)
 
-	targetConfig := convertDatabaseCatalog(request.GetTargetCatalog())
-	if err := checkDatabaseMetadata(storepb.Engine(request.Engine), storeTargetMetadata); err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Wrap(err, "invalid target metadata"))
-	}
-	sanitizeCommentForSchemaMetadata(storeTargetMetadata, model.NewDatabaseConfig(targetConfig), request.ClassificationFromConfig)
-
-	// Convert metadata to model.DatabaseSchema for diffing
+	// Convert metadata to model.DatabaseMetadata for diffing
 	isObjectCaseSensitive := true
-	sourceDBSchema := model.NewDatabaseSchema(storeSourceMetadata, nil, nil, storepb.Engine(request.Engine), isObjectCaseSensitive)
-	targetDBSchema := model.NewDatabaseSchema(storeTargetMetadata, nil, nil, storepb.Engine(request.Engine), isObjectCaseSensitive)
+	sourceDBSchema := model.NewDatabaseMetadata(storeSourceMetadata, nil, nil, storepb.Engine(request.Engine), isObjectCaseSensitive)
+	targetDBSchema := model.NewDatabaseMetadata(storeTargetMetadata, nil, nil, storepb.Engine(request.Engine), isObjectCaseSensitive)
 
 	// Get the metadata diff between source and target
 	metadataDiff, err := schema.GetDatabaseSchemaDiff(storepb.Engine(request.Engine), sourceDBSchema, targetDBSchema)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to compute diff between source and target schemas, error: %v", err))
+		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to compute diff between source and target schemas"))
 	}
 
 	// Generate migration SQL from the diff
 	diff, err := schema.GenerateMigration(storepb.Engine(request.Engine), metadataDiff)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to generate migration SQL, error: %v", err))
+		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to generate migration SQL"))
 	}
 
 	return connect.NewResponse(&v1pb.DiffMetadataResponse{
 		Diff: diff,
 	}), nil
-}
-
-func sanitizeCommentForSchemaMetadata(dbSchema *storepb.DatabaseSchemaMetadata, dbModelConfig *model.DatabaseConfig, classificationFromConfig bool) {
-	for _, schema := range dbSchema.Schemas {
-		schemaConfig := dbModelConfig.GetSchemaConfig(schema.Name)
-		for _, table := range schema.Tables {
-			tableConfig := schemaConfig.GetTableConfig(table.Name)
-			classificationID := ""
-			if !classificationFromConfig {
-				classificationID = tableConfig.Classification
-			}
-			table.Comment = common.GetCommentFromClassificationAndUserComment(classificationID, table.UserComment)
-			for _, col := range table.Columns {
-				columnConfig := tableConfig.GetColumnConfig(col.Name)
-				classificationID := ""
-				if !classificationFromConfig {
-					classificationID = columnConfig.Classification
-				}
-				col.Comment = common.GetCommentFromClassificationAndUserComment(classificationID, col.UserComment)
-			}
-		}
-	}
 }
 
 // GetQueriableDataSource try to returns the RO data source, and will returns the admin data source if not exist the RO data source.
@@ -1631,7 +1743,7 @@ func checkAndGetDataSourceQueriable(
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("data source id is required"))
 	}
 
-	instance, err := storeInstance.GetInstanceV2(ctx, &store.FindInstanceMessage{ResourceID: &database.InstanceID})
+	instance, err := storeInstance.GetInstance(ctx, &store.FindInstanceMessage{ResourceID: &database.InstanceID})
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to get instance %v with error: %v", database.InstanceID, err.Error()))
 	}
@@ -1682,7 +1794,7 @@ func checkAndGetDataSourceQueriable(
 
 		environmentResourceType := storepb.Policy_ENVIRONMENT
 		environmentResource := common.FormatEnvironment(environment.Id)
-		environmentPolicy, err := storeInstance.GetPolicyV2(ctx, &store.FindPolicyMessage{
+		environmentPolicy, err := storeInstance.GetPolicy(ctx, &store.FindPolicyMessage{
 			ResourceType: &environmentResourceType,
 			Resource:     &environmentResource,
 			Type:         &dataSourceQueryPolicyType,
@@ -1703,7 +1815,7 @@ func checkAndGetDataSourceQueriable(
 	var projectAdminDataSourceRestriction v1pb.DataSourceQueryPolicy_Restriction
 	projectResourceType := storepb.Policy_PROJECT
 	projectResource := common.FormatProject(database.ProjectID)
-	projectPolicy, err := storeInstance.GetPolicyV2(ctx, &store.FindPolicyMessage{
+	projectPolicy, err := storeInstance.GetPolicy(ctx, &store.FindPolicyMessage{
 		ResourceType: &projectResourceType,
 		Resource:     &projectResource,
 		Type:         &dataSourceQueryPolicyType,
@@ -1756,7 +1868,7 @@ func checkDataSourceQueryPolicy(ctx context.Context, storeInstance *store.Store,
 	resourceType := storepb.Policy_ENVIRONMENT
 	environmentResource := common.FormatEnvironment(environment.Id)
 	policyType := storepb.Policy_DATA_SOURCE_QUERY
-	dataSourceQueryPolicy, err := storeInstance.GetPolicyV2(ctx, &store.FindPolicyMessage{
+	dataSourceQueryPolicy, err := storeInstance.GetPolicy(ctx, &store.FindPolicyMessage{
 		ResourceType: &resourceType,
 		Resource:     &environmentResource,
 		Type:         &policyType,
@@ -1772,11 +1884,17 @@ func checkDataSourceQueryPolicy(ctx context.Context, storeInstance *store.Store,
 		switch statementTp {
 		case parserbase.DDL:
 			if policy.DisallowDdl {
-				return connect.NewError(connect.CodePermissionDenied, errors.Errorf("disallow execute DDL statement in environment %q", environment.Title))
+				return &queryError{
+					err:         connect.NewError(connect.CodePermissionDenied, errors.Errorf("disallow execute DDL statement in environment %q", environment.Title)),
+					commandType: v1pb.QueryResult_PermissionDenied_DDL,
+				}
 			}
 		case parserbase.DML:
 			if policy.DisallowDml {
-				return connect.NewError(connect.CodePermissionDenied, errors.Errorf("disallow execute DML statement in environment %q", environment.Title))
+				return &queryError{
+					err:         connect.NewError(connect.CodePermissionDenied, errors.Errorf("disallow execute DML statement in environment %q", environment.Title)),
+					commandType: v1pb.QueryResult_PermissionDenied_DML,
+				}
 			}
 		default:
 		}

@@ -1,6 +1,5 @@
 import vueI18n from "@intlify/eslint-plugin-vue-i18n";
 import vueTsEslintConfig from "@vue/eslint-config-typescript";
-import eslintPluginPrettierRecommended from "eslint-plugin-prettier/recommended";
 import pluginVue from "eslint-plugin-vue";
 
 export default [
@@ -14,7 +13,6 @@ export default [
     rootDir: import.meta.dirname,
   }),
   ...vueI18n.configs["flat/recommended"],
-  eslintPluginPrettierRecommended,
   {
     ignores: ["**/dist/**", "**/node_modules/**", "**/proto-es/**"],
   },
@@ -41,7 +39,7 @@ export default [
       ],
       "@intlify/vue-i18n/no-missing-keys": "error",
       "@intlify/vue-i18n/no-raw-text": "off",
-      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-explicit-any": "error",
       "vue/no-mutating-props": "error",
       "vue/no-unused-components": "error",
       "vue/no-useless-template-attributes": "error",

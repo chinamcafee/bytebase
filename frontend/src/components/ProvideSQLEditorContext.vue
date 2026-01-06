@@ -24,24 +24,26 @@ import { debounce, head, omit } from "lodash-es";
 import { computed, nextTick, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
+import { useEmitteryEventListener } from "@/composables/useEmitteryEventListener";
+import { useRouteChangeGuard } from "@/composables/useRouteChangeGuard";
 import { ProvideAIContext } from "@/plugins/ai";
 import {
+  SQL_EDITOR_DATABASE_MODULE,
   SQL_EDITOR_HOME_MODULE,
   SQL_EDITOR_INSTANCE_MODULE,
-  SQL_EDITOR_DATABASE_MODULE,
-  SQL_EDITOR_WORKSHEET_MODULE,
   SQL_EDITOR_PROJECT_MODULE,
+  SQL_EDITOR_WORKSHEET_MODULE,
 } from "@/router/sqlEditor";
 import {
+  pushNotification,
+  useDatabaseV1Store,
   usePolicyV1Store,
   useProjectV1Store,
-  useDatabaseV1Store,
   useSQLEditorStore,
   useSQLEditorTabStore,
   useWorkSheetStore,
-  pushNotification,
 } from "@/store";
-import type { SQLEditorConnection } from "@/types";
+import { migrateLegacyCache } from "@/store/modules/sqlEditor/legacy/migration";
 import {
   DEFAULT_PROJECT_NAME,
   DEFAULT_SQL_EDITOR_TAB_MODE,
@@ -52,25 +54,19 @@ import {
 import { PolicyResourceType } from "@/types/proto-es/v1/org_policy_service_pb";
 import {
   emptySQLEditorConnection,
+  extractInstanceResourceName,
   extractProjectResourceName,
+  extractWorksheetConnection,
+  extractWorksheetUID,
+  getDefaultPagination,
   getSheetStatement,
-  hasProjectPermissionV2,
   isDatabaseV1Queryable,
   isWorksheetReadableV1,
-  projectNameFromSheetSlug,
   suggestedTabTitleForSQLEditorConnection,
-  worksheetNameFromSlug,
-  extractWorksheetUID,
-  extractInstanceResourceName,
-  getDefaultPagination,
 } from "@/utils";
 import {
-  useSheetContext,
-  extractWorksheetConnection,
-} from "@/views/sql-editor/Sheet";
-import {
-  useSQLEditorContext,
   type AsidePanelTab,
+  useSQLEditorContext,
 } from "@/views/sql-editor/context";
 
 const { t } = useI18n();
@@ -82,12 +78,20 @@ const editorStore = useSQLEditorStore();
 const worksheetStore = useWorkSheetStore();
 const tabStore = useSQLEditorTabStore();
 const policyStore = usePolicyV1Store();
-const { isFetching: isFetchingWorksheet } = useSheetContext();
 const {
   asidePanelTab,
   events: editorEvents,
   maybeSwitchProject,
 } = useSQLEditorContext();
+
+useRouteChangeGuard(
+  computed(() => {
+    return (
+      tabStore.openTabList.find((tab) => tab.status === "DIRTY") !== undefined
+    );
+  }),
+  `${t("sql-editor.tab.unsaved-worksheet")} ${t("common.leave-without-saving")}`
+);
 
 const fallbackToFirstProject = async () => {
   const { projects } = await projectStore.fetchProjectList({
@@ -99,17 +103,7 @@ const fallbackToFirstProject = async () => {
   return head(projects)?.name ?? DEFAULT_PROJECT_NAME;
 };
 
-const initProject = async (project: string) => {
-  try {
-    await projectStore.getOrFetchProjectByName(project);
-    return true;
-  } catch {
-    // nothing
-  }
-  return false;
-};
-
-const initializeProjects = async () => {
+const initializeProject = async () => {
   const projectInQuery = route.query.project as string;
   const projectInParams = route.params.project as string;
   let project: string = "";
@@ -126,85 +120,34 @@ const initializeProjects = async () => {
     project = editorStore.storedLastViewedProject;
   }
 
-  if (isValidProjectName(project)) {
-    initializeSuccess = await initProject(project);
-  }
+  initializeSuccess = !!(await maybeSwitchProject(project));
   if (!initializeSuccess) {
     // Maybe the cached project name is valid, but users cannot get it any more (removed, not permission, etc).
     // So we need to fallback to the first accessible project.
     project = await fallbackToFirstProject();
-    initializeSuccess = await initProject(project);
+    initializeSuccess = !!(await maybeSwitchProject(project));
   }
 
-  if (initializeSuccess) {
-    editorStore.project = project;
-    tabStore.maybeInitProject(editorStore.project);
-  } else {
-    editorStore.project = "";
-    editorStore.storedLastViewedProject = "";
+  if (!initializeSuccess) {
+    // clear last visit project.
+    editorStore.setProject("");
   }
+  return editorStore.project;
 };
 
-const handleProjectSwitched = async () => {
-  const { project } = editorStore;
-  if (project) {
-    await projectStore.getOrFetchProjectByName(project, true /* silent */);
-  }
-};
+const switchWorksheet = async (sheetName: string) => {
+  const openedSheetTab = tabStore.getTabByWorksheet(sheetName);
 
-const connect = (connection: SQLEditorConnection) => {
-  tabStore.selectOrAddSimilarNewTab(
-    {
-      connection,
-      worksheet: "",
-      mode: DEFAULT_SQL_EDITOR_TAB_MODE,
-    },
-    /* beside */ false,
-    /* defaultTitle */ suggestedTabTitleForSQLEditorConnection(connection),
-    /* ignoreMode */ true
-  );
-  if (tabStore.currentTab?.mode === "ADMIN") {
-    // Don't enter ADMIN mode initially
-    tabStore.updateCurrentTab({
-      mode: DEFAULT_SQL_EDITOR_TAB_MODE,
-    });
-  }
-};
-
-const prepareSheetLegacy = async () => {
-  const sheetSlug = (route.params.sheetSlug as string) || "";
-  if (!sheetSlug) {
-    return false;
-  }
-
-  const projectName = projectNameFromSheetSlug(sheetSlug);
-
-  try {
-    const project = await projectStore.getOrFetchProjectByName(projectName);
-    if (!hasProjectPermissionV2(project, "bb.sql.select")) {
-      return false;
-    }
-  } catch {
-    // Nothing
-  }
-  await maybeSwitchProject(projectName);
-
-  const sheetName = worksheetNameFromSlug(sheetSlug);
-  const openingSheetTab = tabStore.tabList.find(
-    (tab) => tab.worksheet == sheetName
-  );
-
-  isFetchingWorksheet.value = true;
   const sheet = await worksheetStore.getOrFetchWorksheetByName(sheetName);
-  isFetchingWorksheet.value = false;
-
   if (!sheet) {
-    if (openingSheetTab) {
+    if (openedSheetTab) {
       // If a sheet is open in a tab but it returns 404 NOT_FOUND
       // that means the sheet has been deleted somewhere else.
       // We need to turn the sheet to an unsaved tab.
-      openingSheetTab.worksheet = "";
-      openingSheetTab.status = "DIRTY";
+      tabStore.updateTab(openedSheetTab.id, {
+        worksheet: "",
+        status: "DIRTY",
+      });
     }
     return false;
   }
@@ -217,23 +160,15 @@ const prepareSheetLegacy = async () => {
     return false;
   }
 
-  if (openingSheetTab) {
-    // Switch to a sheet tab if it's open already.
-    // and don't touch it
-    tabStore.setCurrentTabId(openingSheetTab.id);
-    return true;
-  }
-
   const connection = await extractWorksheetConnection(sheet);
-  // Open the sheet in a new tab otherwise.
   tabStore.addTab({
+    id: openedSheetTab?.id,
     connection,
     worksheet: sheet.name,
     title: sheet.title,
     statement: getSheetStatement(sheet),
     status: "CLEAN",
   });
-
   return true;
 };
 
@@ -247,66 +182,8 @@ const prepareSheet = async () => {
     return false;
   }
 
-  const projectName = `projects/${projectId}`;
-  const sheetName = `worksheets/${sheetId}`;
-
-  const project = await projectStore.getOrFetchProjectByName(projectName);
-  if (!hasProjectPermissionV2(project, "bb.sql.select")) {
-    return false;
-  }
-  await maybeSwitchProject(projectName);
-
-  const openingSheetTab = tabStore.tabList.find(
-    (tab) => tab.worksheet == sheetName
-  );
-
-  isFetchingWorksheet.value = true;
-  const sheet = await worksheetStore.getOrFetchWorksheetByName(sheetName);
-  isFetchingWorksheet.value = false;
-
-  if (!sheet) {
-    if (openingSheetTab) {
-      // If a sheet is open in a tab but it returns 404 NOT_FOUND
-      // that means the sheet has been deleted somewhere else.
-      // We need to turn the sheet to an unsaved tab.
-      openingSheetTab.worksheet = "";
-      openingSheetTab.status = "DIRTY";
-    }
-    return false;
-  }
-  if (!isWorksheetReadableV1(sheet)) {
-    pushNotification({
-      module: "bytebase",
-      style: "CRITICAL",
-      title: t("common.access-denied"),
-    });
-    return false;
-  }
-
-  const connection = await extractWorksheetConnection(sheet);
-  if (openingSheetTab) {
-    // Switch to a sheet tab if it's open already.
-    // and don't touch it
-    tabStore.setCurrentTabId(openingSheetTab.id);
-    tabStore.updateCurrentTab({
-      connection,
-      worksheet: sheet.name,
-      statement: getSheetStatement(sheet),
-      status: "CLEAN",
-    });
-    return true;
-  }
-
-  // Open the sheet in a new tab otherwise.
-  tabStore.addTab({
-    connection,
-    worksheet: sheet.name,
-    title: sheet.title,
-    statement: getSheetStatement(sheet),
-    status: "CLEAN",
-  });
-
-  return true;
+  await maybeSwitchProject(`projects/${projectId}`);
+  return await switchWorksheet(`worksheets/${sheetId}`);
 };
 
 const prepareConnectionParams = async () => {
@@ -317,36 +194,35 @@ const prepareConnectionParams = async () => {
   ) {
     return false;
   }
-  const instanceName = route.params.instance;
-  const databaseName = route.params.database;
-  if (
-    typeof instanceName !== "string" ||
-    !instanceName ||
-    typeof databaseName !== "string" ||
-    !databaseName
-  ) {
+
+  const databaseName = `instances/${route.params.instance}/databases/${route.params.database}`;
+  if (!isValidDatabaseName(databaseName)) {
     return false;
   }
 
-  const database = await useDatabaseV1Store().getOrFetchDatabaseByName(
-    `instances/${instanceName}/databases/${databaseName}`
-  );
-  if (isValidDatabaseName(database.name)) {
-    if (!isDatabaseV1Queryable(database)) {
-      router.push({
-        name: "error.403",
-      });
+  const database =
+    await useDatabaseV1Store().getOrFetchDatabaseByName(databaseName);
+  await maybeSwitchProject(database.project);
+  if (!isDatabaseV1Queryable(database)) {
+    const tabs = tabStore.openTabList.filter(
+      (tab) => tab.connection.database === database.name
+    );
+    for (const tab of tabs) {
+      tabStore.closeTab(tab.id);
     }
-
-    // connected to db
-    await maybeSwitchProject(database.project);
-    connect({
-      instance: database.instance,
-      database: database.name,
-    });
-    return true;
+    return false;
   }
-  return false;
+  // connected to db
+  const connection = {
+    instance: database.instance,
+    database: database.name,
+  };
+  tabStore.addTab({
+    connection,
+    mode: DEFAULT_SQL_EDITOR_TAB_MODE,
+    title: suggestedTabTitleForSQLEditorConnection(connection),
+  });
+  return true;
 };
 
 const initializeConnectionFromQuery = async () => {
@@ -355,14 +231,9 @@ const initializeConnectionFromQuery = async () => {
   // 2. instanceId and databaseId in connectionSlug
   // 3. database in global filter
   // 4. disconnected
-
-  if (await prepareSheetLegacy()) {
-    return true;
-  }
   if (await prepareSheet()) {
     return;
   }
-
   if (await prepareConnectionParams()) {
     return;
   }
@@ -425,47 +296,52 @@ const syncURLWithConnection = () => {
           }
         }
       }
-      if (databaseName) {
+      if (isValidDatabaseName(databaseName)) {
         const database =
           await databaseStore.getOrFetchDatabaseByName(databaseName);
-        if (isValidDatabaseName(database.name)) {
-          if (schema) {
-            query.schema = schema;
-          }
-          if (table) {
-            query.table = table;
-            query.schema = schema ?? "";
-          }
-          router.replace({
-            name: SQL_EDITOR_DATABASE_MODULE,
+        if (!isDatabaseV1Queryable(database)) {
+          return router.replace({
+            name: SQL_EDITOR_PROJECT_MODULE,
             params: {
               project: extractProjectResourceName(database.project),
-              instance: extractInstanceResourceName(database.instance),
-              database: database.databaseName,
             },
             query,
           });
-          return;
         }
-      }
-      if (instanceName) {
-        if (isValidInstanceName(instanceName)) {
-          if (table) {
-            query.table = table;
-            query.schema = schema ?? "";
-          }
-          router.replace({
-            name: SQL_EDITOR_INSTANCE_MODULE,
-            params: {
-              project: extractProjectResourceName(editorStore.project),
-              instance: extractInstanceResourceName(instanceName),
-            },
-            query,
-          });
-          return;
+        if (schema) {
+          query.schema = schema;
         }
+        if (table) {
+          query.table = table;
+          query.schema = schema ?? "";
+        }
+        router.replace({
+          name: SQL_EDITOR_DATABASE_MODULE,
+          params: {
+            project: extractProjectResourceName(database.project),
+            instance: extractInstanceResourceName(database.instance),
+            database: database.databaseName,
+          },
+          query,
+        });
+        return;
       }
-      if (projectName) {
+      if (isValidInstanceName(instanceName)) {
+        if (table) {
+          query.table = table;
+          query.schema = schema ?? "";
+        }
+        router.replace({
+          name: SQL_EDITOR_INSTANCE_MODULE,
+          params: {
+            project: extractProjectResourceName(editorStore.project),
+            instance: extractInstanceResourceName(instanceName),
+          },
+          query,
+        });
+        return;
+      }
+      if (isValidProjectName(projectName)) {
         router.replace({
           name: SQL_EDITOR_PROJECT_MODULE,
           params: {
@@ -500,37 +376,29 @@ const restoreLastVisitedSidebarTab = () => {
 
 onMounted(async () => {
   editorStore.projectContextReady = false;
-  await Promise.all([
+  const [_, project] = await Promise.all([
     policyStore.fetchPolicies({
       resourceType: PolicyResourceType.WORKSPACE,
     }),
-    initializeProjects(),
+    initializeProject(),
   ]);
-  tabStore.maybeInitProject(editorStore.project);
-  editorStore.projectContextReady = true;
-  nextTick(() => {
-    editorEvents.emit("project-context-ready", {
-      project: editorStore.project,
-    });
-    restoreLastVisitedSidebarTab();
-  });
 
-  watch(
-    () => editorStore.project,
-    async () => {
-      editorStore.projectContextReady = false;
-      await handleProjectSwitched();
-      tabStore.maybeInitProject(editorStore.project);
-      editorStore.projectContextReady = true;
-      nextTick(() => {
-        editorEvents.emit("project-context-ready", {
-          project: editorStore.project,
-        });
-      });
-    }
-  );
-
+  await migrateLegacyCache();
+  await tabStore.initProject(project);
   await initializeConnectionFromQuery();
   syncURLWithConnection();
 });
+
+useEmitteryEventListener(
+  editorEvents,
+  "project-context-ready",
+  ({ project }) => {
+    if (!project) {
+      return;
+    }
+    nextTick(() => {
+      restoreLastVisitedSidebarTab();
+    });
+  }
+);
 </script>

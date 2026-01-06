@@ -1,10 +1,6 @@
 import { isDBGroupChangeSpec } from "@/components/Plan/logic";
 import type { ComposedDatabase } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
-import {
-  DatabaseChangeType,
-  MigrationType,
-} from "@/types/proto-es/v1/common_pb";
 import { type Plan_Spec } from "@/types/proto-es/v1/plan_service_pb";
 import { semverCompare } from "@/utils";
 
@@ -32,16 +28,6 @@ export const allowGhostForDatabase = (database: ComposedDatabase) => {
   );
 };
 
-export const allowGhostForSpec = (spec: Plan_Spec | undefined) => {
-  const config =
-    spec?.config?.case === "changeDatabaseConfig"
-      ? spec.config.value
-      : undefined;
-  if (!config) return false;
-
-  return config.type === DatabaseChangeType.MIGRATE;
-};
-
 export const getGhostEnabledForSpec = (
   spec: Plan_Spec
 ): boolean | undefined => {
@@ -55,8 +41,10 @@ export const getGhostEnabledForSpec = (
   if (!config) {
     return undefined;
   }
-  if (config.type === DatabaseChangeType.MIGRATE) {
-    return config.migrationType === MigrationType.GHOST;
+  // Ghost is only available for sheet-based migrations (not release-based).
+  // Release-based migrations don't support ghost configuration.
+  if (!config.release) {
+    return config.enableGhost === true;
   }
   return undefined;
 };

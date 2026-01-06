@@ -11,6 +11,9 @@ const (
 	// SystemBotID is the ID of the system robot.
 	SystemBotID = 1
 
+	// SystemBotEmail is the email of the system robot.
+	SystemBotEmail = "support@bytebase.com"
+
 	// AllUsers is the email of the pseudo allUsers account.
 	AllUsers = "allUsers"
 
@@ -19,10 +22,10 @@ const (
 
 	// ServiceAccountAccessKeyPrefix is the prefix for service account access key.
 	ServiceAccountAccessKeyPrefix = "bbs_"
-)
 
-// DefaultInstanceMaximumConnections is the maximum number of connections outstanding per instance by default.
-const DefaultInstanceMaximumConnections = 10
+	// WorkloadIdentityEmailSuffix is the email suffix for workload identities.
+	WorkloadIdentityEmailSuffix = "@workload.bytebase.com"
+)
 
 const (
 	// ReservedTagReviewConfig is the tag for review config.

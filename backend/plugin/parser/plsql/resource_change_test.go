@@ -15,37 +15,26 @@ func TestExtractChangedResources(t *testing.T) {
 	CREATE VIEW hello AS SELECT * FROM world;
 	INSERT INTO T1 (c1) VALUES (1);
 	`
-	changedResources := model.NewChangedResources(nil /* dbSchema */)
+	changedResources := model.NewChangedResources(nil /* dbMetadata */)
 	changedResources.AddTable(
 		"DB",
 		"",
 		&storepb.ChangedResourceTable{
 			Name: "T1",
-			Ranges: []*storepb.Range{
-				{Start: 0, End: 25},
-				{Start: 70, End: 100},
-			},
 		},
 		false,
-	)
-	changedResources.AddView(
-		"DB",
-		"",
-		&storepb.ChangedResourceView{
-			Name: "HELLO",
-			Ranges: []*storepb.Range{
-				{Start: 27, End: 67},
-			},
-		},
 	)
 	want := &base.ChangeSummary{
 		ChangedResources: changedResources,
 		InsertCount:      1,
 	}
 
-	asts, _, err := ParsePLSQL(statement)
+	asts, err := base.Parse(storepb.Engine_ORACLE, statement)
 	require.NoError(t, err)
-	got, err := extractChangedResources("DB", "", nil /* dbSchema */, asts, statement)
+	require.NotEmpty(t, asts)
+
+	// Pass the full asts array to extractChangedResources
+	got, err := extractChangedResources("DB", "", nil /* dbMetadata */, asts, statement)
 	require.NoError(t, err)
 	require.Equal(t, want, got)
 }

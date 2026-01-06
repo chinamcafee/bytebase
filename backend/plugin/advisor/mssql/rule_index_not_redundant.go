@@ -4,19 +4,21 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/tsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/tsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/parser/tsql"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
+	tsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/tsql"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MSSQL, advisor.SchemaRuleIndexNotRedundant, &IndexNotRedundantAdvisor{})
+	advisor.Register(storepb.Engine_MSSQL, storepb.SQLReviewRule_INDEX_NOT_REDUNDANT, &IndexNotRedundantAdvisor{})
 }
 
 var dftMSSQLSchemaName = "dbo"
@@ -29,23 +31,28 @@ type IndexNotRedundantAdvisor struct{}
 
 // TODO(zp): we currently don't have runtime checks for indexes created in the statements.
 func (IndexNotRedundantAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to AST tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewIndexNotRedundantRule(level, string(checkCtx.Rule.Type), checkCtx.CurrentDatabase, checkCtx.DBSchema)
+	rule := NewIndexNotRedundantRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase, checkCtx.DBSchema)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList(), nil
 }
@@ -58,14 +65,14 @@ type IndexNotRedundantRule struct {
 }
 
 // NewIndexNotRedundantRule creates a new IndexNotRedundantRule.
-func NewIndexNotRedundantRule(level storepb.Advice_Status, title string, currentDB string, dbSchema *storepb.DatabaseSchemaMetadata) *IndexNotRedundantRule {
+func NewIndexNotRedundantRule(level storepb.Advice_Status, title string, currentDB string, dbMetadata *storepb.DatabaseSchemaMetadata) *IndexNotRedundantRule {
 	return &IndexNotRedundantRule{
 		BaseRule: BaseRule{
 			level: level,
 			title: title,
 		},
 		curDB:    currentDB,
-		indexMap: getIndexMapFromMetadata(dbSchema),
+		indexMap: getIndexMapFromMetadata(dbMetadata),
 	}
 }
 
@@ -97,18 +104,18 @@ func (r *IndexNotRedundantRule) enterCreateIndex(ctx *parser.Create_indexContext
 		// TODO(zp): we only check indexes in the current database due to the lack of necessary metadata.
 		// Case sensitive!
 		if database := fullTblName.GetDatabase(); database != nil {
-			if oriName, _ := tsql.NormalizeTSQLIdentifier(database); oriName != r.curDB {
+			if oriName, _ := tsqlparser.NormalizeTSQLIdentifier(database); oriName != r.curDB {
 				return
 			}
 		}
 		if schema := fullTblName.GetSchema(); schema != nil {
-			idxSchemaName, _ = tsql.NormalizeTSQLIdentifier(schema)
+			idxSchemaName, _ = tsqlparser.NormalizeTSQLIdentifier(schema)
 		}
-		idxTblName, _ = tsql.NormalizeTSQLIdentifier(fullTblName.GetTable())
+		idxTblName, _ = tsqlparser.NormalizeTSQLIdentifier(fullTblName.GetTable())
 	}
 
 	// Get index name from statement.
-	statIdxName, _ := tsql.NormalizeTSQLIdentifier(ctx.AllId_()[0])
+	statIdxName, _ := tsqlparser.NormalizeTSQLIdentifier(ctx.AllId_()[0])
 
 	// Get ordered index list from metadata.
 	findIdxKey := FindIndexesKey{
@@ -126,7 +133,7 @@ func (r *IndexNotRedundantRule) enterCreateIndex(ctx *parser.Create_indexContext
 		r.AddAdvice(&storepb.Advice{
 			Status: r.level,
 			Title:  r.title,
-			Code:   advisor.RedundantIndex.Int32(),
+			Code:   code.RedundantIndex.Int32(),
 			Content: fmt.Sprintf("Redundant indexes with the same prefix ('%s' and '%s') in '%s.%s' is not allowed",
 				metaIdxName, statIdxName, findIdxKey.schemaName, findIdxKey.tblName),
 			StartPosition: common.ConvertANTLRLineToPosition(ctx.GetStart().GetLine()),
@@ -146,7 +153,7 @@ type IndexMap = map[FindIndexesKey][]*storepb.IndexMetadata
 func containRedundantPrefix(metaIdxList []*storepb.IndexMetadata, statColumnList *parser.IColumn_name_list_with_orderContext) string {
 	for _, metaIndex := range metaIdxList {
 		if statColumnList != nil && len((*statColumnList).AllColumn_name_with_order()) != 0 && len(metaIdxList) != 0 {
-			statIdxCol, _ := tsql.NormalizeTSQLIdentifier((*statColumnList).AllColumn_name_with_order()[0].Id_())
+			statIdxCol, _ := tsqlparser.NormalizeTSQLIdentifier((*statColumnList).AllColumn_name_with_order()[0].Id_())
 			if metaIndex.Expressions[0] == statIdxCol {
 				return metaIndex.Name
 			}

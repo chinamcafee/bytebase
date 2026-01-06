@@ -6,12 +6,13 @@ import (
 	"fmt"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/plsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -19,7 +20,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_ORACLE, advisor.SchemaRuleTableRequirePK, &TableRequirePKAdvisor{})
+	advisor.Register(storepb.Engine_ORACLE, storepb.SQLReviewRule_TABLE_REQUIRE_PK, &TableRequirePKAdvisor{})
 }
 
 // TableRequirePKAdvisor is the advisor checking table requires PK.
@@ -28,20 +29,26 @@ type TableRequirePKAdvisor struct {
 
 // Check checks table requires PK.
 func (*TableRequirePKAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	rule := NewTableRequirePKRule(level, string(checkCtx.Rule.Type), checkCtx.CurrentDatabase)
+	rule := NewTableRequirePKRule(level, checkCtx.Rule.Type.String(), checkCtx.CurrentDatabase)
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList()
 }
@@ -111,7 +118,7 @@ func (r *TableRequirePKRule) GetAdviceList() ([]*storepb.Advice, error) {
 		if !hasPK {
 			r.AddAdvice(
 				r.level,
-				advisor.TableNoPK.Int32(),
+				code.TableNoPK.Int32(),
 				fmt.Sprintf("Table %s requires PRIMARY KEY.", normalizeIdentifierName(tableName)),
 				common.ConvertANTLRLineToPosition(r.tableLine[tableName]),
 			)
@@ -128,7 +135,7 @@ func (r *TableRequirePKRule) handleCreateTable(ctx *parser.Create_tableContext) 
 
 	r.tableName = fmt.Sprintf("%s.%s", schemaName, normalizeIdentifier(ctx.Table_name(), r.currentDatabase))
 	r.tableWitPK[r.tableName] = false
-	r.tableLine[r.tableName] = ctx.GetStop().GetLine()
+	r.tableLine[r.tableName] = r.baseLine + ctx.GetStop().GetLine()
 }
 
 func (r *TableRequirePKRule) handleInlineConstraint(ctx *parser.Inline_constraintContext) {
@@ -170,6 +177,6 @@ func (r *TableRequirePKRule) handleDropTable(ctx *parser.Drop_tableContext) {
 func (r *TableRequirePKRule) handleDropPrimaryKey(ctx *parser.Drop_primary_key_or_unique_or_generic_clauseContext) {
 	if _, exists := r.tableWitPK[r.tableName]; exists && ctx.PRIMARY() != nil {
 		r.tableWitPK[r.tableName] = false
-		r.tableLine[r.tableName] = ctx.GetStop().GetLine()
+		r.tableLine[r.tableName] = r.baseLine + ctx.GetStop().GetLine()
 	}
 }

@@ -17,7 +17,7 @@
       class="flex flex-col gap-y-2 items-start md:items-center gap-x-2 justify-center md:flex-row"
     >
       <BBTextField
-        class="flex-1 !text-xl !pl-0 px-0.5 font-bold truncate sql-review-title"
+        class="flex-1 text-xl! pl-0! px-0.5 font-bold truncate sql-review-title"
         :disabled="!hasUpdateReviwConfigPermission"
         :required="true"
         :focus-on-mount="false"
@@ -48,7 +48,7 @@
         </NButton>
       </div>
     </div>
-    <div class="mt-4 space-y-4">
+    <div class="mt-4 flex flex-col gap-y-4">
       <BBAttention
         v-if="reviewPolicy.resources.length === 0"
         type="warning"
@@ -57,14 +57,14 @@
         :action-text="$t('sql-review.attach-resource.self')"
         @click="state.showResourcePanel = true"
       />
-      <div class="space-y-2 space-x-2">
-        <BBBadge
+      <div class="flex flex-wrap gap-y-2 gap-x-2">
+        <NTag
           v-for="resource in reviewPolicy.resources"
           :key="resource"
-          :can-remove="false"
+          type="primary"
         >
           <Resource :resource="resource" :show-prefix="true" />
-        </BBBadge>
+        </NTag>
       </div>
     </div>
 
@@ -85,8 +85,9 @@
       </template>
     </SQLReviewTabsByEngine>
 
+
+    <NDivider />
     <BBButtonConfirm
-      class="!my-4"
       :disabled="!hasDeleteReviwConfigPermission"
       :type="'DELETE'"
       :button-text="$t('sql-review.delete')"
@@ -145,7 +146,7 @@
 
 <script lang="tsx" setup>
 import { useTitle } from "@vueuse/core";
-import { NButton } from "naive-ui";
+import { NButton, NDivider, NTag } from "naive-ui";
 import {
   computed,
   nextTick,
@@ -156,13 +157,7 @@ import {
 } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
-import {
-  BBAlert,
-  BBAttention,
-  BBBadge,
-  BBButtonConfirm,
-  BBTextField,
-} from "@/bbkit";
+import { BBAlert, BBAttention, BBButtonConfirm, BBTextField } from "@/bbkit";
 import { SQLReviewCreation } from "@/components/SQLReview";
 import SQLReviewAttachResourcesPanel from "@/components/SQLReview/components/SQLReviewAttachResourcesPanel.vue";
 import SQLReviewTabsByEngine from "@/components/SQLReview/components/SQLReviewTabsByEngine.vue";
@@ -175,10 +170,11 @@ import type { RuleTemplateV2 } from "@/types";
 import {
   convertRuleMapToPolicyRuleList,
   getRuleMapByEngine,
-  unknown,
   UNKNOWN_ID,
+  unknown,
 } from "@/types";
 import type { Engine } from "@/types/proto-es/v1/common_pb";
+import { SQLReviewRule_Type } from "@/types/proto-es/v1/review_config_service_pb";
 import { hasWorkspacePermissionV2, sqlReviewNameFromSlug } from "@/utils";
 
 const props = defineProps<{
@@ -190,7 +186,7 @@ interface LocalState {
   showEnableModal: boolean;
   selectedCategory?: string;
   editMode: boolean;
-  ruleMapByEngine: Map<Engine, Map<string, RuleTemplateV2>>;
+  ruleMapByEngine: Map<Engine, Map<SQLReviewRule_Type, RuleTemplateV2>>;
   rulesUpdated: boolean;
   updating: boolean;
   editingTitle: boolean;

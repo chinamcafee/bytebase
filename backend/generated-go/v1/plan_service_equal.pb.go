@@ -37,53 +37,13 @@ func (x *ListPlansRequest) Equal(y *ListPlansRequest) bool {
 	if x.PageToken != y.PageToken {
 		return false
 	}
-	return true
-}
-
-func (x *ListPlansResponse) Equal(y *ListPlansResponse) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if len(x.Plans) != len(y.Plans) {
-		return false
-	}
-	for i := 0; i < len(x.Plans); i++ {
-		if !x.Plans[i].Equal(y.Plans[i]) {
-			return false
-		}
-	}
-	if x.NextPageToken != y.NextPageToken {
-		return false
-	}
-	return true
-}
-
-func (x *SearchPlansRequest) Equal(y *SearchPlansRequest) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.Parent != y.Parent {
-		return false
-	}
-	if x.PageSize != y.PageSize {
-		return false
-	}
-	if x.PageToken != y.PageToken {
-		return false
-	}
 	if x.Filter != y.Filter {
 		return false
 	}
 	return true
 }
 
-func (x *SearchPlansResponse) Equal(y *SearchPlansResponse) bool {
+func (x *ListPlansResponse) Equal(y *ListPlansResponse) bool {
 	if x == y {
 		return true
 	}
@@ -220,12 +180,6 @@ func (x *Plan_ChangeDatabaseConfig) Equal(y *Plan_ChangeDatabaseConfig) bool {
 	if x.Release != y.Release {
 		return false
 	}
-	if x.Type != y.Type {
-		return false
-	}
-	if x.MigrationType != y.MigrationType {
-		return false
-	}
 	if len(x.GhostFlags) != len(y.GhostFlags) {
 		return false
 	}
@@ -239,6 +193,9 @@ func (x *Plan_ChangeDatabaseConfig) Equal(y *Plan_ChangeDatabaseConfig) bool {
 		}
 	}
 	if x.EnablePriorBackup != y.EnablePriorBackup {
+		return false
+	}
+	if x.EnableGhost != y.EnableGhost {
 		return false
 	}
 	return true
@@ -271,53 +228,6 @@ func (x *Plan_ExportDataConfig) Equal(y *Plan_ExportDataConfig) bool {
 	return true
 }
 
-func (x *Plan_Deployment_DatabaseGroupMapping) Equal(y *Plan_Deployment_DatabaseGroupMapping) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if x.DatabaseGroup != y.DatabaseGroup {
-		return false
-	}
-	if len(x.Databases) != len(y.Databases) {
-		return false
-	}
-	for i := 0; i < len(x.Databases); i++ {
-		if x.Databases[i] != y.Databases[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func (x *Plan_Deployment) Equal(y *Plan_Deployment) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if len(x.Environments) != len(y.Environments) {
-		return false
-	}
-	for i := 0; i < len(x.Environments); i++ {
-		if x.Environments[i] != y.Environments[i] {
-			return false
-		}
-	}
-	if len(x.DatabaseGroupMappings) != len(y.DatabaseGroupMappings) {
-		return false
-	}
-	for i := 0; i < len(x.DatabaseGroupMappings); i++ {
-		if !x.DatabaseGroupMappings[i].Equal(y.DatabaseGroupMappings[i]) {
-			return false
-		}
-	}
-	return true
-}
-
 func (x *Plan) Equal(y *Plan) bool {
 	if x == y {
 		return true
@@ -332,9 +242,6 @@ func (x *Plan) Equal(y *Plan) bool {
 		return false
 	}
 	if x.Issue != y.Issue {
-		return false
-	}
-	if x.Rollout != y.Rollout {
 		return false
 	}
 	if x.Title != y.Title {
@@ -372,45 +279,21 @@ func (x *Plan) Equal(y *Plan) bool {
 			return false
 		}
 	}
-	if !x.Deployment.Equal(y.Deployment) {
+	if x.HasRollout != y.HasRollout {
 		return false
 	}
 	return true
 }
 
-func (x *ListPlanCheckRunsRequest) Equal(y *ListPlanCheckRunsRequest) bool {
+func (x *GetPlanCheckRunRequest) Equal(y *GetPlanCheckRunRequest) bool {
 	if x == y {
 		return true
 	}
 	if x == nil || y == nil {
 		return x == nil && y == nil
 	}
-	if x.Parent != y.Parent {
+	if x.Name != y.Name {
 		return false
-	}
-	if x.LatestOnly != y.LatestOnly {
-		return false
-	}
-	if x.Filter != y.Filter {
-		return false
-	}
-	return true
-}
-
-func (x *ListPlanCheckRunsResponse) Equal(y *ListPlanCheckRunsResponse) bool {
-	if x == y {
-		return true
-	}
-	if x == nil || y == nil {
-		return x == nil && y == nil
-	}
-	if len(x.PlanCheckRuns) != len(y.PlanCheckRuns) {
-		return false
-	}
-	for i := 0; i < len(x.PlanCheckRuns); i++ {
-		if !x.PlanCheckRuns[i].Equal(y.PlanCheckRuns[i]) {
-			return false
-		}
 	}
 	return true
 }
@@ -441,28 +324,20 @@ func (x *RunPlanChecksResponse) Equal(y *RunPlanChecksResponse) bool {
 	return true
 }
 
-func (x *BatchCancelPlanCheckRunsRequest) Equal(y *BatchCancelPlanCheckRunsRequest) bool {
+func (x *CancelPlanCheckRunRequest) Equal(y *CancelPlanCheckRunRequest) bool {
 	if x == y {
 		return true
 	}
 	if x == nil || y == nil {
 		return x == nil && y == nil
 	}
-	if x.Parent != y.Parent {
+	if x.Name != y.Name {
 		return false
-	}
-	if len(x.PlanCheckRuns) != len(y.PlanCheckRuns) {
-		return false
-	}
-	for i := 0; i < len(x.PlanCheckRuns); i++ {
-		if x.PlanCheckRuns[i] != y.PlanCheckRuns[i] {
-			return false
-		}
 	}
 	return true
 }
 
-func (x *BatchCancelPlanCheckRunsResponse) Equal(y *BatchCancelPlanCheckRunsResponse) bool {
+func (x *CancelPlanCheckRunResponse) Equal(y *CancelPlanCheckRunResponse) bool {
 	if x == y {
 		return true
 	}
@@ -488,9 +363,6 @@ func (x *PlanCheckRun_Result_SqlSummaryReport) Equal(y *PlanCheckRun_Result_SqlS
 		}
 	}
 	if x.AffectedRows != y.AffectedRows {
-		return false
-	}
-	if !x.ChangedResources.Equal(y.ChangedResources) {
 		return false
 	}
 	return true
@@ -531,6 +403,12 @@ func (x *PlanCheckRun_Result) Equal(y *PlanCheckRun_Result) bool {
 	if x.Code != y.Code {
 		return false
 	}
+	if x.Target != y.Target {
+		return false
+	}
+	if x.Type != y.Type {
+		return false
+	}
 	if !x.GetSqlSummaryReport().Equal(y.GetSqlSummaryReport()) {
 		return false
 	}
@@ -550,16 +428,7 @@ func (x *PlanCheckRun) Equal(y *PlanCheckRun) bool {
 	if x.Name != y.Name {
 		return false
 	}
-	if x.Type != y.Type {
-		return false
-	}
 	if x.Status != y.Status {
-		return false
-	}
-	if x.Target != y.Target {
-		return false
-	}
-	if x.Sheet != y.Sheet {
 		return false
 	}
 	if len(x.Results) != len(y.Results) {

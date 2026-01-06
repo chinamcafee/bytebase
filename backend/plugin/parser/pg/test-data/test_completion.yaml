@@ -6,11 +6,35 @@
       type: SCHEMA
       definition: ""
       comment: ""
+    - text: test
+      type: SCHEMA
+      definition: ""
+      comment: ""
+    - text: seq1
+      type: SEQUENCE
+      definition: ""
+      comment: ""
+    - text: test.order_id_seq
+      type: SEQUENCE
+      definition: ""
+      comment: ""
+    - text: user_id_seq
+      type: SEQUENCE
+      definition: ""
+      comment: ""
     - text: t1
       type: TABLE
       definition: ""
       comment: ""
     - text: t2
+      type: TABLE
+      definition: ""
+      comment: ""
+    - text: test.auto
+      type: TABLE
+      definition: ""
+      comment: ""
+    - text: test.users
       type: TABLE
       definition: ""
       comment: ""
@@ -62,6 +86,10 @@
       type: SCHEMA
       definition: ""
       comment: ""
+    - text: test
+      type: SCHEMA
+      definition: ""
+      comment: ""
     - text: t1
       type: TABLE
       definition: ""
@@ -100,6 +128,10 @@
       type: SCHEMA
       definition: ""
       comment: ""
+    - text: test
+      type: SCHEMA
+      definition: ""
+      comment: ""
     - text: t1
       type: TABLE
       definition: ""
@@ -126,6 +158,10 @@
       type: SCHEMA
       definition: ""
       comment: ""
+    - text: test
+      type: SCHEMA
+      definition: ""
+      comment: ""
     - text: t1
       type: TABLE
       definition: ""
@@ -148,6 +184,10 @@
       type: SCHEMA
       definition: ""
       comment: ""
+    - text: test
+      type: SCHEMA
+      definition: ""
+      comment: ""
     - text: t1
       type: TABLE
       definition: ""
@@ -167,6 +207,10 @@
       definition: ""
       comment: ""
     - text: public
+      type: SCHEMA
+      definition: ""
+      comment: ""
+    - text: test
       type: SCHEMA
       definition: ""
       comment: ""
@@ -234,11 +278,35 @@
       type: SCHEMA
       definition: ""
       comment: ""
+    - text: test
+      type: SCHEMA
+      definition: ""
+      comment: ""
+    - text: seq1
+      type: SEQUENCE
+      definition: ""
+      comment: ""
+    - text: test.order_id_seq
+      type: SEQUENCE
+      definition: ""
+      comment: ""
+    - text: user_id_seq
+      type: SEQUENCE
+      definition: ""
+      comment: ""
     - text: t1
       type: TABLE
       definition: ""
       comment: ""
     - text: t2
+      type: TABLE
+      definition: ""
+      comment: ""
+    - text: test.auto
+      type: TABLE
+      definition: ""
+      comment: ""
+    - text: test.users
       type: TABLE
       definition: ""
       comment: ""
@@ -253,6 +321,10 @@
       definition: public.t1 | int, NOT NULL
       comment: ""
     - text: public
+      type: SCHEMA
+      definition: ""
+      comment: ""
+    - text: test
       type: SCHEMA
       definition: ""
       comment: ""
@@ -280,6 +352,127 @@
       comment: ""
     - text: public
       type: SCHEMA
+      definition: ""
+      comment: ""
+    - text: test
+      type: SCHEMA
+      definition: ""
+      comment: ""
+    - text: t1
+      type: TABLE
+      definition: ""
+      comment: ""
+    - text: t2
+      type: TABLE
+      definition: ""
+      comment: ""
+    - text: v1
+      type: VIEW
+      definition: ""
+      comment: ""
+- input: SELECT * FROM |
+  want:
+    - text: public
+      type: SCHEMA
+      definition: ""
+      comment: ""
+    - text: test
+      type: SCHEMA
+      definition: ""
+      comment: ""
+    - text: seq1
+      type: SEQUENCE
+      definition: ""
+      comment: ""
+    - text: test.order_id_seq
+      type: SEQUENCE
+      definition: ""
+      comment: ""
+    - text: user_id_seq
+      type: SEQUENCE
+      definition: ""
+      comment: ""
+    - text: t1
+      type: TABLE
+      definition: ""
+      comment: ""
+    - text: t2
+      type: TABLE
+      definition: ""
+      comment: ""
+    - text: test.auto
+      type: TABLE
+      definition: ""
+      comment: ""
+    - text: test.users
+      type: TABLE
+      definition: ""
+      comment: ""
+    - text: v1
+      type: VIEW
+      definition: ""
+      comment: ""
+- input: SELECT * FROM test.|
+  want:
+    - text: order_id_seq
+      type: SEQUENCE
+      definition: ""
+      comment: ""
+    - text: auto
+      type: TABLE
+      definition: ""
+      comment: ""
+    - text: users
+      type: TABLE
+      definition: ""
+      comment: ""
+- input: SELECT * FROM test.auto WHERE |
+  want:
+    - text: id
+      type: COLUMN
+      definition: test.auto | int, NOT NULL
+      comment: ""
+    - text: name
+      type: COLUMN
+      definition: test.auto | varchar, NOT NULL
+      comment: ""
+    - text: public
+      type: SCHEMA
+      definition: ""
+      comment: ""
+    - text: test
+      type: SCHEMA
+      definition: ""
+      comment: ""
+    - text: auto
+      type: TABLE
+      definition: ""
+      comment: ""
+    - text: t1
+      type: TABLE
+      definition: ""
+      comment: ""
+    - text: t2
+      type: TABLE
+      definition: ""
+      comment: ""
+    - text: users
+      type: TABLE
+      definition: ""
+      comment: ""
+    - text: v1
+      type: VIEW
+      definition: ""
+      comment: ""
+# Sequence-specific tests
+- input: SELECT * FROM public.|
+  want:
+    - text: seq1
+      type: SEQUENCE
+      definition: ""
+      comment: ""
+    - text: user_id_seq
+      type: SEQUENCE
       definition: ""
       comment: ""
     - text: t1

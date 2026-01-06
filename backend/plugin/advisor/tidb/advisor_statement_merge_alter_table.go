@@ -8,11 +8,11 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 )
 
 var (
@@ -21,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleStatementMergeAlterTable, &StatementMergeAlterTableAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_STATEMENT_MERGE_ALTER_TABLE, &StatementMergeAlterTableAdvisor{})
 }
 
 // StatementMergeAlterTableAdvisor is the advisor checking for merging ALTER TABLE statements.
@@ -30,9 +30,10 @@ type StatementMergeAlterTableAdvisor struct {
 
 // Check checks for merging ALTER TABLE statements.
 func (*StatementMergeAlterTableAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -41,7 +42,7 @@ func (*StatementMergeAlterTableAdvisor) Check(_ context.Context, checkCtx adviso
 	}
 	checker := &statementMergeAlterTableChecker{
 		level:    level,
-		title:    string(checkCtx.Rule.Type),
+		title:    checkCtx.Rule.Type.String(),
 		tableMap: make(map[string]tableStatement),
 	}
 
@@ -119,7 +120,7 @@ func (checker *statementMergeAlterTableChecker) generateAdvice() []*storepb.Advi
 		if table.count > 1 {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.StatementRedundantAlterTable.Int32(),
+				Code:          code.StatementRedundantAlterTable.Int32(),
 				Title:         checker.title,
 				Content:       fmt.Sprintf("There are %d statements to modify table `%s`", table.count, table.name),
 				StartPosition: common.ConvertANTLRLineToPosition(table.lastLine),

@@ -2,8 +2,8 @@ import { create } from "@bufbuild/protobuf";
 import { EMPTY_ID, UNKNOWN_ID } from "@/types/const";
 import {
   StageSchema,
-  TaskSchema,
   Task_Type,
+  TaskSchema,
 } from "@/types/proto-es/v1/rollout_service_pb";
 import { EMPTY_ROLLOUT_NAME, UNKNOWN_ROLLOUT_NAME } from "@/types/rollout";
 import {
@@ -44,6 +44,6 @@ export const TaskTypeListWithStatement: Task_Type[] = [
   Task_Type.GENERAL,
   Task_Type.DATABASE_CREATE,
   Task_Type.DATABASE_MIGRATE,
-  Task_Type.DATABASE_SDL,
+
   Task_Type.DATABASE_EXPORT,
 ];

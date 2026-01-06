@@ -4,13 +4,15 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/tsql-parser"
-	"github.com/pkg/errors"
+	parser "github.com/bytebase/parser/tsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	tsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/tsql"
 )
 
@@ -19,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MSSQL, advisor.SchemaRuleTableNoFK, &TableNoForeignKeyAdvisor{})
+	advisor.Register(storepb.Engine_MSSQL, storepb.SQLReviewRule_TABLE_NO_FOREIGN_KEY, &TableNoForeignKeyAdvisor{})
 }
 
 // TableNoForeignKeyAdvisor is the advisor checking for table disallow foreign key..
@@ -28,23 +30,28 @@ type TableNoForeignKeyAdvisor struct {
 
 // Check checks for table disallow foreign key..
 func (*TableNoForeignKeyAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewTableNoForeignKeyRule(level, string(checkCtx.Rule.Type))
+	rule := NewTableNoForeignKeyRule(level, checkCtx.Rule.Type.String())
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	// Process the final advice after walking
 	rule.generateFinalAdvice()
@@ -122,7 +129,8 @@ func (r *TableNoForeignKeyRule) enterCreateTable(ctx *parser.Create_tableContext
 
 	r.tableHasForeignKey[normalizedTableName] = false
 	r.tableOriginalName[normalizedTableName] = tableName.GetText()
-	r.tableLine[normalizedTableName] = tableName.GetStart().GetLine()
+	// Store absolute line number (with baseLine offset) so generateFinalAdvice can use it directly
+	r.tableLine[normalizedTableName] = tableName.GetStart().GetLine() + r.baseLine
 
 	r.currentNormalizedTableName = normalizedTableName
 	r.currentConstraintAction = currentConstraintActionAdd
@@ -147,7 +155,8 @@ func (r *TableNoForeignKeyRule) enterColumnDefTableConstraints(ctx *parser.Colum
 					if v.Foreign_key_options() != nil {
 						if r.currentConstraintAction == currentConstraintActionAdd {
 							r.tableHasForeignKey[r.currentNormalizedTableName] = true
-							r.tableLine[r.currentNormalizedTableName] = v.Foreign_key_options().GetStart().GetLine()
+							// Store absolute line number (with baseLine offset)
+							r.tableLine[r.currentNormalizedTableName] = v.Foreign_key_options().GetStart().GetLine() + r.baseLine
 						}
 						return
 					}
@@ -157,7 +166,8 @@ func (r *TableNoForeignKeyRule) enterColumnDefTableConstraints(ctx *parser.Colum
 			if v.Foreign_key_options() != nil {
 				if r.currentConstraintAction == currentConstraintActionAdd {
 					r.tableHasForeignKey[r.currentNormalizedTableName] = true
-					r.tableLine[r.currentNormalizedTableName] = v.Foreign_key_options().GetStart().GetLine()
+					// Store absolute line number (with baseLine offset)
+					r.tableLine[r.currentNormalizedTableName] = v.Foreign_key_options().GetStart().GetLine() + r.baseLine
 				}
 				return
 			}
@@ -188,9 +198,11 @@ func (r *TableNoForeignKeyRule) exitAlterTable(*parser.Alter_tableContext) {
 func (r *TableNoForeignKeyRule) generateFinalAdvice() {
 	for tableName, hasForeignKey := range r.tableHasForeignKey {
 		if hasForeignKey {
-			r.AddAdvice(&storepb.Advice{
+			// Directly append to adviceList instead of using AddAdvice,
+			// because tableLine already contains the absolute line number
+			r.adviceList = append(r.adviceList, &storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.TableHasFK.Int32(),
+				Code:          code.TableHasFK.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("FOREIGN KEY is not allowed in the table %s.", r.tableOriginalName[tableName]),
 				StartPosition: common.ConvertANTLRLineToPosition(r.tableLine[tableName]),

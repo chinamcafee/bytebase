@@ -60,20 +60,22 @@ export declare type Position = Message<"bytebase.v1.Position"> & {
 export declare const PositionSchema: GenMessage<Position>;
 
 /**
- * Range of positions in text or sequence.
+ * Range represents a span within a text or sequence.
+ * Whether the indices are byte offsets or character indices depends on the context.
+ * Check the documentation of the field using Range for specific semantics.
  *
  * @generated from message bytebase.v1.Range
  */
 export declare type Range = Message<"bytebase.v1.Range"> & {
   /**
-   * Start position (inclusive).
+   * Start index (inclusive).
    *
    * @generated from field: int32 start = 1;
    */
   start: number;
 
   /**
-   * End position (exclusive).
+   * End index (exclusive).
    *
    * @generated from field: int32 end = 2;
    */
@@ -85,6 +87,41 @@ export declare type Range = Message<"bytebase.v1.Range"> & {
  * Use `create(RangeSchema)` to create a new message.
  */
 export declare const RangeSchema: GenMessage<Range>;
+
+/**
+ * PermissionDeniedDetail provides structured information about permission failures.
+ * Used as error detail when returning CodePermissionDenied errors.
+ *
+ * @generated from message bytebase.v1.PermissionDeniedDetail
+ */
+export declare type PermissionDeniedDetail = Message<"bytebase.v1.PermissionDeniedDetail"> & {
+  /**
+   * The API method that was called.
+   *
+   * @generated from field: string method = 1;
+   */
+  method: string;
+
+  /**
+   * The permissions required but not granted to the user.
+   *
+   * @generated from field: repeated string required_permissions = 2;
+   */
+  requiredPermissions: string[];
+
+  /**
+   * The resources the user was trying to access.
+   *
+   * @generated from field: repeated string resources = 3;
+   */
+  resources: string[];
+};
+
+/**
+ * Describes the message bytebase.v1.PermissionDeniedDetail.
+ * Use `create(PermissionDeniedDetailSchema)` to create a new message.
+ */
+export declare const PermissionDeniedDetailSchema: GenMessage<PermissionDeniedDetail>;
 
 /**
  * Resource lifecycle state.
@@ -231,79 +268,79 @@ export enum Engine {
   /**
    * StarRocks analytics database.
    *
-   * @generated from enum value: STARROCKS = 18;
+   * @generated from enum value: STARROCKS = 15;
    */
-  STARROCKS = 18,
+  STARROCKS = 15,
 
   /**
    * Apache Doris analytics database.
    *
-   * @generated from enum value: DORIS = 19;
+   * @generated from enum value: DORIS = 16;
    */
-  DORIS = 19,
+  DORIS = 16,
 
   /**
    * Apache Hive data warehouse.
    *
-   * @generated from enum value: HIVE = 20;
+   * @generated from enum value: HIVE = 17;
    */
-  HIVE = 20,
+  HIVE = 17,
 
   /**
    * Elasticsearch search engine.
    *
-   * @generated from enum value: ELASTICSEARCH = 21;
+   * @generated from enum value: ELASTICSEARCH = 18;
    */
-  ELASTICSEARCH = 21,
+  ELASTICSEARCH = 18,
 
   /**
    * Google BigQuery data warehouse.
    *
-   * @generated from enum value: BIGQUERY = 22;
+   * @generated from enum value: BIGQUERY = 19;
    */
-  BIGQUERY = 22,
+  BIGQUERY = 19,
 
   /**
    * Amazon DynamoDB NoSQL database.
    *
-   * @generated from enum value: DYNAMODB = 23;
+   * @generated from enum value: DYNAMODB = 20;
    */
-  DYNAMODB = 23,
+  DYNAMODB = 20,
 
   /**
    * Databricks lakehouse platform.
    *
-   * @generated from enum value: DATABRICKS = 24;
+   * @generated from enum value: DATABRICKS = 21;
    */
-  DATABRICKS = 24,
+  DATABRICKS = 21,
 
   /**
    * CockroachDB distributed SQL database.
    *
-   * @generated from enum value: COCKROACHDB = 25;
+   * @generated from enum value: COCKROACHDB = 22;
    */
-  COCKROACHDB = 25,
+  COCKROACHDB = 22,
 
   /**
    * Azure Cosmos DB multi-model database.
    *
-   * @generated from enum value: COSMOSDB = 26;
+   * @generated from enum value: COSMOSDB = 23;
    */
-  COSMOSDB = 26,
+  COSMOSDB = 23,
 
   /**
    * Trino distributed SQL query engine.
    *
-   * @generated from enum value: TRINO = 27;
+   * @generated from enum value: TRINO = 24;
    */
-  TRINO = 27,
+  TRINO = 24,
 
   /**
    * Apache Cassandra NoSQL database.
    *
-   * @generated from enum value: CASSANDRA = 28;
+   * @generated from enum value: CASSANDRA = 25;
    */
-  CASSANDRA = 28,
+  CASSANDRA = 25,
 }
 
 /**
@@ -406,75 +443,6 @@ export enum ExportFormat {
 export declare const ExportFormatSchema: GenEnum<ExportFormat>;
 
 /**
- * DatabaseChangeType is the database change type.
- *
- * @generated from enum bytebase.v1.DatabaseChangeType
- */
-export enum DatabaseChangeType {
-  /**
-   * @generated from enum value: DATABASE_CHANGE_TYPE_UNSPECIFIED = 0;
-   */
-  DATABASE_CHANGE_TYPE_UNSPECIFIED = 0,
-
-  /**
-   * Used for imperative schema migration including CREATE DATABASE.
-   *
-   * @generated from enum value: MIGRATE = 2;
-   */
-  MIGRATE = 2,
-
-  /**
-   * Used for state-based declarative schema migration including CREATE DATABASE.
-   *
-   * @generated from enum value: SDL = 3;
-   */
-  SDL = 3,
-}
-
-/**
- * Describes the enum bytebase.v1.DatabaseChangeType.
- */
-export declare const DatabaseChangeTypeSchema: GenEnum<DatabaseChangeType>;
-
-/**
- * MigrationType is the type for imperative schema migration.
- *
- * @generated from enum bytebase.v1.MigrationType
- */
-export enum MigrationType {
-  /**
-   * @generated from enum value: MIGRATION_TYPE_UNSPECIFIED = 0;
-   */
-  MIGRATION_TYPE_UNSPECIFIED = 0,
-
-  /**
-   * Used for DDL changes.
-   *
-   * @generated from enum value: DDL = 1;
-   */
-  DDL = 1,
-
-  /**
-   * Used for DML changes.
-   *
-   * @generated from enum value: DML = 2;
-   */
-  DML = 2,
-
-  /**
-   * Used for DDL changes using gh-ost.
-   *
-   * @generated from enum value: GHOST = 3;
-   */
-  GHOST = 3,
-}
-
-/**
- * Describes the enum bytebase.v1.MigrationType.
- */
-export declare const MigrationTypeSchema: GenEnum<MigrationType>;
-
-/**
  * RiskLevel is the risk level.
  *
  * @generated from enum bytebase.v1.RiskLevel
@@ -513,4 +481,72 @@ export enum RiskLevel {
  * Describes the enum bytebase.v1.RiskLevel.
  */
 export declare const RiskLevelSchema: GenEnum<RiskLevel>;
+
+/**
+ * Webhook integration type.
+ *
+ * @generated from enum bytebase.v1.WebhookType
+ */
+export enum WebhookType {
+  /**
+   * Unspecified type.
+   *
+   * @generated from enum value: WEBHOOK_TYPE_UNSPECIFIED = 0;
+   */
+  WEBHOOK_TYPE_UNSPECIFIED = 0,
+
+  /**
+   * Slack integration.
+   *
+   * @generated from enum value: SLACK = 1;
+   */
+  SLACK = 1,
+
+  /**
+   * Discord integration.
+   *
+   * @generated from enum value: DISCORD = 2;
+   */
+  DISCORD = 2,
+
+  /**
+   * Microsoft Teams integration.
+   *
+   * @generated from enum value: TEAMS = 3;
+   */
+  TEAMS = 3,
+
+  /**
+   * DingTalk integration.
+   *
+   * @generated from enum value: DINGTALK = 4;
+   */
+  DINGTALK = 4,
+
+  /**
+   * Feishu integration.
+   *
+   * @generated from enum value: FEISHU = 5;
+   */
+  FEISHU = 5,
+
+  /**
+   * WeCom (WeChat Work) integration.
+   *
+   * @generated from enum value: WECOM = 6;
+   */
+  WECOM = 6,
+
+  /**
+   * Lark integration.
+   *
+   * @generated from enum value: LARK = 7;
+   */
+  LARK = 7,
+}
+
+/**
+ * Describes the enum bytebase.v1.WebhookType.
+ */
+export declare const WebhookTypeSchema: GenEnum<WebhookType>;
 

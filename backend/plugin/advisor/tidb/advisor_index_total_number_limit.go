@@ -7,13 +7,16 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pkg/errors"
+
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
+	"github.com/pingcap/tidb/pkg/parser/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -22,7 +25,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleIndexTotalNumberLimit, &IndexTotalNumberLimitAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_INDEX_TOTAL_NUMBER_LIMIT, &IndexTotalNumberLimitAdvisor{})
 }
 
 // IndexTotalNumberLimitAdvisor is the advisor checking for index total number limit.
@@ -31,25 +34,26 @@ type IndexTotalNumberLimitAdvisor struct {
 
 // Check checks for index total number limit.
 func (*IndexTotalNumberLimitAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalNumberTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	numberPayload := checkCtx.Rule.GetNumberPayload()
+	if numberPayload == nil {
+		return nil, errors.New("number_payload is required for index total number limit rule")
 	}
 	checker := &indexTotalNumberLimitChecker{
-		level:        level,
-		title:        string(checkCtx.Rule.Type),
-		max:          payload.Number,
-		lineForTable: make(map[string]int),
-		catalog:      checkCtx.Catalog,
+		level:         level,
+		title:         checkCtx.Rule.Type.String(),
+		max:           int(numberPayload.Number),
+		lineForTable:  make(map[string]int),
+		finalMetadata: checkCtx.FinalMetadata,
 	}
 
 	for _, stmt := range stmtList {
@@ -62,14 +66,14 @@ func (*IndexTotalNumberLimitAdvisor) Check(_ context.Context, checkCtx advisor.C
 }
 
 type indexTotalNumberLimitChecker struct {
-	adviceList   []*storepb.Advice
-	level        storepb.Advice_Status
-	title        string
-	text         string
-	line         int
-	max          int
-	lineForTable map[string]int
-	catalog      *catalog.Finder
+	adviceList    []*storepb.Advice
+	level         storepb.Advice_Status
+	title         string
+	text          string
+	line          int
+	max           int
+	lineForTable  map[string]int
+	finalMetadata *model.DatabaseMetadata
 }
 
 func (checker *indexTotalNumberLimitChecker) generateAdvice() []*storepb.Advice {
@@ -96,13 +100,17 @@ func (checker *indexTotalNumberLimitChecker) generateAdvice() []*storepb.Advice 
 	})
 
 	for _, table := range tableList {
-		tableInfo := checker.catalog.Final.FindTable(&catalog.TableFind{TableName: table.name})
-		if tableInfo != nil && tableInfo.CountIndex() > checker.max {
+		schema := checker.finalMetadata.GetSchemaMetadata("")
+		if schema == nil {
+			continue
+		}
+		tableInfo := schema.GetTable(table.name)
+		if tableInfo != nil && len(tableInfo.GetProto().Indexes) > checker.max {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.IndexCountExceedsLimit.Int32(),
+				Code:          code.IndexCountExceedsLimit.Int32(),
 				Title:         checker.title,
-				Content:       fmt.Sprintf("The count of index in table `%s` should be no more than %d, but found %d", table.name, checker.max, tableInfo.CountIndex()),
+				Content:       fmt.Sprintf("The count of index in table `%s` should be no more than %d, but found %d", table.name, checker.max, len(tableInfo.GetProto().Indexes)),
 				StartPosition: common.ConvertANTLRLineToPosition(table.line),
 			})
 		}

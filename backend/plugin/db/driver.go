@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/bytebase/bytebase/backend/common/log"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -93,15 +94,17 @@ type ConnectionContext struct {
 	EnvironmentID string
 	InstanceID    string
 	EngineVersion string
-	// UseDatabaseOwner is used by Postgres for using role of database owner.
-	UseDatabaseOwner bool
-	DatabaseName     string
+	// TenantMode indicates whether to use database owner role for PostgreSQL tenant mode.
+	TenantMode   bool
+	DatabaseName string
 	// It's only set for Redshift datashare database.
 	DataShare bool
 	// ReadOnly is only supported for Postgres at the moment.
 	ReadOnly bool
 	// MessageBuffer is used for logging messages from the database server.
 	MessageBuffer []*v1pb.QueryResult_Message
+	// TaskRunUID is set when executing a task run, used to set application_name for connection identification.
+	TaskRunUID *int
 }
 
 // AppendMessage appends a message to the message buffer.
@@ -124,6 +127,7 @@ type QueryContext struct {
 	Option        *v1pb.QueryOption
 	// The maximum number of bytes for sql results in response body.
 	MaximumSQLResultSize int64
+	Timeout              *durationpb.Duration
 }
 
 // Driver is the interface for database driver.
@@ -148,7 +152,7 @@ type Driver interface {
 	SyncDBSchema(ctx context.Context) (*storepb.DatabaseSchemaMetadata, error)
 
 	// Dump dumps the schema of database.
-	Dump(ctx context.Context, out io.Writer, dbSchema *storepb.DatabaseSchemaMetadata) error
+	Dump(ctx context.Context, out io.Writer, dbMetadata *storepb.DatabaseSchemaMetadata) error
 }
 
 // Register makes a database driver available by the provided type.
@@ -190,10 +194,6 @@ type ExecuteOptions struct {
 	// If true, log the statement of the command.
 	// else only log the command index.
 	LogCommandStatement bool
-
-	// Record the connection id first before executing.
-	SetConnectionID    func(id string)
-	DeleteConnectionID func()
 
 	// The maximum number of retries for lock timeout statements.
 	MaximumRetries int
@@ -283,7 +283,8 @@ func (o *ExecuteOptions) LogSchemaDumpEnd(derr string) {
 	}
 }
 
-func (o *ExecuteOptions) LogCommandExecute(commandIndexes []int32, commandText string) {
+// LogCommandExecute logs the execution of a command.
+func (o *ExecuteOptions) LogCommandExecute(commandRange *storepb.Range, commandText string) {
 	if o == nil || o.CreateTaskRunLog == nil {
 		return
 	}
@@ -291,7 +292,7 @@ func (o *ExecuteOptions) LogCommandExecute(commandIndexes []int32, commandText s
 	if o.LogCommandStatement {
 		ce.Statement = commandText
 	} else {
-		ce.CommandIndexes = commandIndexes
+		ce.Range = commandRange
 	}
 	err := o.CreateTaskRunLog(time.Now(), &storepb.TaskRunLog{
 		Type:           storepb.TaskRunLog_COMMAND_EXECUTE,
@@ -350,19 +351,4 @@ func (o *ExecuteOptions) LogTransactionControl(t storepb.TaskRunLog_TransactionC
 	if err != nil {
 		slog.Warn("failed to log command transaction control", log.BBError(err))
 	}
-}
-
-// ErrorWithPosition is the error with the position information.
-type ErrorWithPosition struct {
-	Err   error
-	Start *storepb.Position
-	End   *storepb.Position
-}
-
-func (e *ErrorWithPosition) Error() string {
-	return e.Err.Error()
-}
-
-func (e *ErrorWithPosition) Unwrap() error {
-	return e.Err
 }

@@ -1,56 +1,110 @@
-// Package pg implements the SQL advisor rules for PostgreSQL.
 package pg
 
 import (
-	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 
-	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
-	"github.com/bytebase/bytebase/backend/plugin/parser/pg/legacy/ast"
+	"github.com/antlr4-go/antlr/v4"
+	parser "github.com/bytebase/parser/postgresql"
+	"github.com/pkg/errors"
+
+	"github.com/bytebase/bytebase/backend/plugin/parser/pg"
 )
 
-const (
-	// PostgreSQLPublicSchema is the string for PostgreSQL public schema.
-	PostgreSQLPublicSchema = "public"
-)
+// isTopLevel checks if the context is at the top level of the parse tree.
+// Top level contexts are: RootContext, StmtblockContext, StmtmultiContext, or StmtContext.
+func isTopLevel(ctx antlr.Tree) bool {
+	if ctx == nil {
+		return true
+	}
 
-type columnName struct {
-	schema string
-	table  string
-	column string
+	switch ctx := ctx.(type) {
+	case *parser.RootContext, *parser.StmtblockContext:
+		return true
+	case *parser.StmtmultiContext, *parser.StmtContext:
+		return isTopLevel(ctx.GetParent())
+	default:
+		return false
+	}
 }
 
-func (c columnName) normalizeTableName() string {
-	schema := c.schema
-	if schema == "" {
-		schema = "public"
+// getTextFromTokens extracts the original text for a rule context from the token stream.
+// Uses GetTextFromRuleContext to include hidden channel tokens (whitespace, comments).
+// Returns clean text without leading/trailing whitespace.
+func getTextFromTokens(tokens *antlr.CommonTokenStream, ctx antlr.ParserRuleContext) string {
+	if tokens == nil || ctx == nil {
+		return ""
 	}
-	return fmt.Sprintf(`"%s"."%s"`, schema, c.table)
+	text := tokens.GetTextFromRuleContext(ctx)
+	return strings.TrimSpace(text)
 }
 
-type columnMap map[columnName]int
-
-func normalizeSchemaName(name string) string {
-	if name != "" {
-		return name
+// extractTableName extracts the table name (last component) from a qualified name.
+// Handles both "schema.table" and "table" formats.
+func extractTableName(ctx parser.IQualified_nameContext) string {
+	parts := pg.NormalizePostgreSQLQualifiedName(ctx)
+	if len(parts) == 0 {
+		return ""
 	}
-	return "public"
+	return parts[len(parts)-1]
 }
 
-func normalizeTableName(table *ast.TableDef) string {
-	schema := table.Schema
-
-	if schema == "" {
-		return fmt.Sprintf("%q", table.Name)
+// extractSchemaName extracts the schema name (first component) from a qualified name.
+// Returns empty string if only table name is provided (implying default schema).
+func extractSchemaName(ctx parser.IQualified_nameContext) string {
+	parts := pg.NormalizePostgreSQLQualifiedName(ctx)
+	if len(parts) <= 1 {
+		return ""
 	}
-	return fmt.Sprintf("%q.%q", schema, table.Name)
+	return parts[0]
 }
 
-// newPositionAtLineStart creates a Position at the start of the given line.
-// The line number is used as-is (typically from PostgreSQL parser which uses
-// 0-based line numbers), and column is set to 0.
-func newPositionAtLineStart(line int) *storepb.Position {
-	return &storepb.Position{
-		Line:   int32(line),
-		Column: 0,
+// extractIntegerConstant extracts an integer value from an Iconst context.
+// Returns the integer value and an error if parsing fails.
+func extractIntegerConstant(ctx parser.IIconstContext) (int, error) {
+	if ctx == nil {
+		return 0, errors.New("iconst context is nil")
 	}
+	text := ctx.GetText()
+	val, err := strconv.Atoi(text)
+	if err != nil {
+		return 0, errors.Wrapf(err, "failed to parse integer constant: %s", text)
+	}
+	return val, nil
+}
+
+// extractStringConstant extracts a string value from an Sconst context.
+// Removes surrounding quotes and handles basic escape sequences.
+func extractStringConstant(ctx parser.ISconstContext) string {
+	if ctx == nil {
+		return ""
+	}
+
+	text := ctx.GetText()
+	// Remove surrounding single quotes
+	if len(text) >= 2 && text[0] == '\'' && text[len(text)-1] == '\'' {
+		return text[1 : len(text)-1]
+	}
+	return text
+}
+
+// getTemplateRegexp generates a regex pattern by replacing tokens in the template with actual values.
+// Used by naming convention advisors to dynamically build patterns based on metadata.
+func getTemplateRegexp(template string, templateList []string, tokens map[string]string) (*regexp.Regexp, error) {
+	for _, key := range templateList {
+		if token, ok := tokens[key]; ok {
+			template = strings.ReplaceAll(template, key, token)
+		}
+	}
+
+	return regexp.Compile(template)
+}
+
+// normalizeSchemaName normalizes empty schema names to "public" (PostgreSQL default schema).
+func normalizeSchemaName(schemaName string) string {
+	if schemaName == "" {
+		return "public"
+	}
+	return schemaName
 }

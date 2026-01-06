@@ -114,6 +114,9 @@ func (x *QueryOption) Equal(y *QueryOption) bool {
 	if x.RedisRunCommandsOn != y.RedisRunCommandsOn {
 		return false
 	}
+	if x.MssqlExplainFormat != y.MssqlExplainFormat {
+		return false
+	}
 	return true
 }
 
@@ -173,6 +176,40 @@ func (x *QueryResult_PostgresError) Equal(y *QueryResult_PostgresError) bool {
 		return false
 	}
 	if x.Routine != y.Routine {
+		return false
+	}
+	return true
+}
+
+func (x *QueryResult_SyntaxError) Equal(y *QueryResult_SyntaxError) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if !x.StartPosition.Equal(y.StartPosition) {
+		return false
+	}
+	return true
+}
+
+func (x *QueryResult_PermissionDenied) Equal(y *QueryResult_PermissionDenied) bool {
+	if x == y {
+		return true
+	}
+	if x == nil || y == nil {
+		return x == nil && y == nil
+	}
+	if len(x.Resources) != len(y.Resources) {
+		return false
+	}
+	for i := 0; i < len(x.Resources); i++ {
+		if x.Resources[i] != y.Resources[i] {
+			return false
+		}
+	}
+	if x.CommandType != y.CommandType {
 		return false
 	}
 	return true
@@ -240,7 +277,10 @@ func (x *QueryResult) Equal(y *QueryResult) bool {
 	if !x.GetPostgresError().Equal(y.GetPostgresError()) {
 		return false
 	}
-	if x.AllowExport != y.AllowExport {
+	if !x.GetSyntaxError().Equal(y.GetSyntaxError()) {
+		return false
+	}
+	if !x.GetPermissionDenied().Equal(y.GetPermissionDenied()) {
 		return false
 	}
 	if len(x.Messages) != len(y.Messages) {
@@ -425,6 +465,9 @@ func (x *Advice) Equal(y *Advice) bool {
 	if !x.EndPosition.Equal(y.EndPosition) {
 		return false
 	}
+	if x.RuleType != y.RuleType {
+		return false
+	}
 	return true
 }
 
@@ -488,16 +531,7 @@ func (x *DiffMetadataRequest) Equal(y *DiffMetadataRequest) bool {
 	if !x.TargetMetadata.Equal(y.TargetMetadata) {
 		return false
 	}
-	if !x.SourceCatalog.Equal(y.SourceCatalog) {
-		return false
-	}
-	if !x.TargetCatalog.Equal(y.TargetCatalog) {
-		return false
-	}
 	if x.Engine != y.Engine {
-		return false
-	}
-	if x.ClassificationFromConfig != y.ClassificationFromConfig {
 		return false
 	}
 	return true

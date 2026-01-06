@@ -1,11 +1,11 @@
 <template>
-  <div class="w-full relative space-y-2">
+  <div class="w-full relative flex flex-col gap-y-2">
     <AdvancedSearch
       v-model:params="params"
       :autofocus="false"
       :placeholder="$t('database.filter-database')"
       :scope-options="scopeOptions"
-      :override-route-query="false"
+      :cache-query="false"
     />
     <NTransfer
       id="database-resource-selector"
@@ -17,7 +17,7 @@
       :render-target-list="renderTargetList"
     />
     <div
-      v-if="initializing"
+      v-if="initializeStatus !== 'DONE'"
       class="z-1 absolute inset-0 bg-white bg-opacity-80 flex flex-row justify-center items-center"
     >
       <BBSpin size="large" />
@@ -29,8 +29,8 @@
 import { useDebounceFn } from "@vueuse/core";
 import { orderBy, uniqBy } from "lodash-es";
 import type { TransferRenderSourceList, TreeOption } from "naive-ui";
-import { NTransfer, NTree, NButton } from "naive-ui";
-import { computed, h, onMounted, ref, watch } from "vue";
+import { NButton, NTransfer, NTree } from "naive-ui";
+import { computed, h, onMounted, ref, watch, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { BBSpin } from "@/bbkit";
 import AdvancedSearch from "@/components/AdvancedSearch";
@@ -39,25 +39,25 @@ import {
   type DatabaseFilter,
   useDatabaseV1Store,
   useDBSchemaV1Store,
-  batchGetOrFetchDatabases,
 } from "@/store";
 import {
-  instanceNamePrefix,
   environmentNamePrefix,
+  instanceNamePrefix,
 } from "@/store/modules/v1/common";
 import {
-  DEBOUNCE_SEARCH_DELAY,
   type ComposedDatabase,
   type DatabaseResource,
+  DEBOUNCE_SEARCH_DELAY,
 } from "@/types";
+import { Engine } from "@/types/proto-es/v1/common_pb";
 import {
-  getDefaultPagination,
-  type SearchParams,
   CommonFilterScopeIdList,
   extractProjectResourceName,
+  getDefaultPagination,
+  getValueFromSearchParams,
+  getValuesFromSearchParams,
+  type SearchParams,
 } from "@/utils";
-import { convertScopeValueToEngine } from "@/utils/v1/common-conversions";
-import Label from "./Label.vue";
 import type { DatabaseTreeOption } from "./common";
 import {
   flattenTreeOptions,
@@ -65,6 +65,7 @@ import {
   mapTreeOptions,
   parseStringToResource,
 } from "./common";
+import Label from "./Label.vue";
 
 const props = defineProps<{
   disabled?: boolean;
@@ -147,7 +148,7 @@ watch(
 const selectedValueList = ref<string[]>([]);
 const expandedKeys = ref<string[]>([]);
 const indeterminateKeys = ref<string[]>([]);
-const initializing = ref(true);
+const initializeStatus = ref<"PENDING" | "PROCESSING" | "DONE">("PENDING");
 const databaseList = ref<ComposedDatabase[]>([]);
 const fetchDataState = ref<{
   nextPageToken?: string;
@@ -167,27 +168,19 @@ const cascadeLoopTreeNode = (
 };
 
 const selectedInstance = computed(() => {
-  const instanceId = params.value.scopes.find(
-    (scope) => scope.id === "instance"
-  )?.value;
-  if (!instanceId) {
-    return;
-  }
-  return `${instanceNamePrefix}${instanceId}`;
+  return getValueFromSearchParams(params.value, "instance", instanceNamePrefix);
 });
 
 const selectedEnvironment = computed(() => {
-  const environmentId = params.value.scopes.find(
-    (scope) => scope.id === "environment"
-  )?.value;
-  if (!environmentId) {
-    return;
-  }
-  return `${environmentNamePrefix}${environmentId}`;
+  return getValueFromSearchParams(
+    params.value,
+    "environment",
+    environmentNamePrefix
+  );
 });
 
 const selectedTable = computed(() => {
-  return params.value.scopes.find((scope) => scope.id === "table")?.value;
+  return getValueFromSearchParams(params.value, "table");
 });
 
 const collectExpandedKeys = async ({
@@ -225,15 +218,13 @@ const filterTableList = computed(() => {
 });
 
 const selectedLabels = computed(() => {
-  return params.value.scopes
-    .filter((scope) => scope.id === "label")
-    .map((scope) => scope.value);
+  return getValuesFromSearchParams(params.value, "label");
 });
 
 const selectedEngines = computed(() => {
-  return params.value.scopes
-    .filter((scope) => scope.id === "engine")
-    .map((scope) => convertScopeValueToEngine(scope.value));
+  return getValuesFromSearchParams(params.value, "engine").map(
+    (engine) => Engine[engine as keyof typeof Engine]
+  );
 });
 
 const databaseFilter = computed(
@@ -271,114 +262,51 @@ const fetchDatabaseList = useDebounceFn(async () => {
   }
 }, DEBOUNCE_SEARCH_DELAY);
 
+const refreshData = async () => {
+  fetchDataState.value.nextPageToken = "";
+  expandedKeys.value = [];
+  await fetchDatabaseList();
+
+  if (!params.value.query && params.value.scopes.length === 1) {
+    databaseList.value = uniqBy(
+      [
+        ...databaseList.value,
+        ...props.databaseResources.map((resource) =>
+          databaseStore.getDatabaseByName(resource.databaseFullName)
+        ),
+      ],
+      (db) => db.name
+    );
+  }
+
+  if (databaseFilter.value.table) {
+    // expand all
+    for (const database of databaseList.value) {
+      await collectExpandedKeys({
+        database: database.name,
+        table: databaseFilter.value.table,
+      });
+    }
+  }
+};
+
 watch(
   () => databaseFilter.value,
   async () => {
-    fetchDataState.value.nextPageToken = "";
-    expandedKeys.value = [];
-    await fetchDatabaseList();
-    if (!params.value.query && params.value.scopes.length === 1) {
-      databaseList.value = uniqBy(
-        [
-          ...databaseList.value,
-          ...props.databaseResources.map((resource) =>
-            databaseStore.getDatabaseByName(resource.databaseFullName)
-          ),
-        ],
-        (db) => db.name
-      );
-    }
-
-    if (databaseFilter.value.table) {
-      // expand all
-      for (const database of databaseList.value) {
-        await collectExpandedKeys({
-          database: database.name,
-          table: databaseFilter.value.table,
-        });
-      }
-    }
+    await refreshData();
   },
-  {
-    deep: true,
-    immediate: true,
-  }
+  { deep: true }
 );
 
 onMounted(async () => {
-  await batchGetOrFetchDatabases(
+  await databaseStore.batchGetOrFetchDatabases(
     props.databaseResources.map((resource) => resource.databaseFullName)
   );
+  await refreshData();
 
-  const selectedKeys: string[] = [];
-  for (const databaseResource of props.databaseResources) {
-    selectedKeys.push(...parseResourceToKeys(databaseResource));
+  if (databaseList.value.length === 0) {
+    initializeStatus.value = "DONE";
   }
-
-  const databaseNames = new Set(
-    selectedKeys.map((key) => key.split("/schemas/")[0]).filter((key) => key)
-  );
-  await Promise.all(
-    [...databaseNames].map(async (databaseName) => {
-      await dbSchemaStore.getOrFetchDatabaseMetadata({
-        database: databaseName,
-      });
-    })
-  );
-
-  const newCheckedKeys = new Set(selectedKeys);
-  const newIndeterminateKeys = new Set<string>([]);
-  const newExpandedKeys = new Set(
-    // expand parents for selected keys
-    selectedKeys
-      .map((key) => {
-        const pathes = parseKeyToPathes(key);
-        // key: {db}/schemas/{schema}
-        // expaned: [{db}]
-        //
-        // key: {db}/schemas/{schema}/tables/{table}
-        // expaned: [{db}, {db}/schemas/{schema}]
-        //
-        // key: {db}/schemas/{schema}/tables/{table}/columns/{column}
-        // expaned: [{db}, {db}/schemas/{schema}, {db}/schemas/{schema}/tables/{table}]
-        pathes.pop();
-        return pathes;
-      })
-      .flat()
-  );
-
-  for (const selectedKey of selectedKeys) {
-    const checkedNode = sourceTransferOptions.value.find(
-      (option) => option.value === selectedKey
-    );
-    if (!checkedNode) {
-      continue;
-    }
-    // loop to check and expand all children
-    cascadeLoopTreeNode(checkedNode, (treeNode) => {
-      newCheckedKeys.add(treeNode.value);
-      if (treeNode.children) {
-        newExpandedKeys.add(treeNode.value);
-      }
-    });
-
-    // add parent pathes to indeterminate keys
-    const parentPathes = parseKeyToPathes(checkedNode.value);
-    parentPathes.pop();
-    while (parentPathes.length > 0) {
-      const parentPath = parentPathes.pop() as string;
-      // move the parent to the indeterminate keys.
-      if (!newCheckedKeys.has(parentPath)) {
-        newIndeterminateKeys.add(parentPath);
-      }
-    }
-  }
-
-  selectedValueList.value = [...newCheckedKeys];
-  expandedKeys.value = [...newExpandedKeys];
-  indeterminateKeys.value = [...newIndeterminateKeys];
-
-  initializing.value = false;
 });
 
 const parseKeyToPathes = (key: string): string[] => {
@@ -418,6 +346,87 @@ const sourceTransferOptions = computed((): DatabaseTreeOption[] => {
   return options;
 });
 
+watchEffect(async () => {
+  if (initializeStatus.value !== "PENDING") {
+    return;
+  }
+  if (sourceTransferOptions.value.length === 0) {
+    return;
+  }
+
+  initializeStatus.value = "PROCESSING";
+
+  const selectedKeys: string[] = [];
+  const databaseNames = new Set<string>();
+  for (const databaseResource of props.databaseResources) {
+    selectedKeys.push(...parseResourceToKeys(databaseResource));
+    databaseNames.add(databaseResource.databaseFullName);
+  }
+
+  await Promise.all(
+    [...databaseNames].map(async (databaseName) => {
+      await dbSchemaStore.getOrFetchDatabaseMetadata({
+        database: databaseName,
+      });
+    })
+  );
+
+  const newCheckedKeys = new Set<string>([]);
+  const newIndeterminateKeys = new Set<string>([]);
+  const newExpandedKeys = new Set(
+    // expand parents for selected keys
+    selectedKeys
+      .map((key) => {
+        const pathes = parseKeyToPathes(key);
+        // key: {db}/schemas/{schema}
+        // expaned: [{db}]
+        //
+        // key: {db}/schemas/{schema}/tables/{table}
+        // expaned: [{db}, {db}/schemas/{schema}]
+        //
+        // key: {db}/schemas/{schema}/tables/{table}/columns/{column}
+        // expaned: [{db}, {db}/schemas/{schema}, {db}/schemas/{schema}/tables/{table}]
+        pathes.pop();
+        return pathes;
+      })
+      .flat()
+  );
+
+  for (const selectedKey of selectedKeys) {
+    const checkedNode = sourceTransferOptions.value.find(
+      (option) => option.value === selectedKey
+    );
+    if (!checkedNode) {
+      continue;
+    }
+    newCheckedKeys.add(selectedKey);
+    // loop to check and expand all children
+    cascadeLoopTreeNode(checkedNode, (treeNode) => {
+      newCheckedKeys.add(treeNode.value);
+      if (treeNode.children) {
+        newExpandedKeys.add(treeNode.value);
+      }
+    });
+
+    // add parent pathes to indeterminate keys
+    const parentPathes = parseKeyToPathes(checkedNode.value);
+    parentPathes.pop();
+    while (parentPathes.length > 0) {
+      const parentPath = parentPathes.pop() as string;
+      // move the parent to the indeterminate keys.
+      if (!newCheckedKeys.has(parentPath)) {
+        newIndeterminateKeys.add(parentPath);
+      }
+    }
+  }
+
+  selectedValueList.value = [...newCheckedKeys];
+  expandedKeys.value = [...newExpandedKeys];
+  indeterminateKeys.value = [...newIndeterminateKeys];
+
+  initializeStatus.value = "DONE";
+});
+
 const onTreeNodeLoad = async (node: TreeOption) => {
   const treeNode = node as DatabaseTreeOption;
   if (treeNode.level === "databases") {
@@ -443,7 +452,7 @@ const onTreeNodeLoad = async (node: TreeOption) => {
 const renderSourceList: TransferRenderSourceList = ({ onCheck, pattern }) => {
   return h(
     "div",
-    { class: "flex flex-col space-y-2 pb-4" },
+    { class: "flex flex-col gap-y-2 pb-4" },
     {
       default: () => [
         h(NTree, {

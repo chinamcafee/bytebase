@@ -9,7 +9,7 @@
     <DrawerContent
       :title="$t('database.sync-schema.target-databases')"
       :closable="true"
-      class="w-[64rem] max-w-[100vw] relative"
+      class="w-5xl max-w-[100vw] relative"
     >
       <AdvancedSearch
         v-model:params="state.params"
@@ -17,7 +17,7 @@
         :autofocus="false"
         :placeholder="$t('database.filter-database')"
         :scope-options="scopeOptions"
-        :override-route-query="false"
+        :cache-query="false"
       />
 
       <PagedDatabaseTable
@@ -71,12 +71,16 @@ import { computed, reactive, watch } from "vue";
 import { Drawer, DrawerContent } from "@/components/v2";
 import { useDatabaseV1Store } from "@/store";
 import {
-  instanceNamePrefix,
   environmentNamePrefix,
+  instanceNamePrefix,
 } from "@/store/modules/v1/common";
 import type { Engine } from "@/types/proto-es/v1/common_pb";
-import { CommonFilterScopeIdList, extractProjectResourceName } from "@/utils";
 import type { SearchParams, SearchScope } from "@/utils";
+import {
+  CommonFilterScopeIdList,
+  extractProjectResourceName,
+  getValueFromSearchParams,
+} from "@/utils";
 import AdvancedSearch from "../AdvancedSearch";
 import { useCommonSearchScopeOptions } from "../AdvancedSearch/useCommonSearchScopeOptions";
 import { PagedDatabaseTable } from "../v2/Model/DatabaseV1Table";
@@ -135,23 +139,15 @@ const selectedDatabaseList = computed(() =>
 );
 
 const selectedInstance = computed(() => {
-  const instanceId = state.params.scopes.find(
-    (scope) => scope.id === "instance"
-  )?.value;
-  if (!instanceId) {
-    return;
-  }
-  return `${instanceNamePrefix}${instanceId}`;
+  return getValueFromSearchParams(state.params, "instance", instanceNamePrefix);
 });
 
 const selectedEnvironment = computed(() => {
-  const environmentId = state.params.scopes.find(
-    (scope) => scope.id === "environment"
-  )?.value;
-  if (!environmentId) {
-    return;
-  }
-  return `${environmentNamePrefix}${environmentId}`;
+  return getValueFromSearchParams(
+    state.params,
+    "environment",
+    environmentNamePrefix
+  );
 });
 
 const filter = computed(() => ({

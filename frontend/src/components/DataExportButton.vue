@@ -31,7 +31,7 @@
   <Drawer v-if="viewMode === 'DRAWER'" v-model:show="state.showDrawer">
     <DrawerContent
       :title="$t('custom-approval.risk-rule.risk.namespace.data_export')"
-      class="w-[50rem] max-w-[100vw] relative"
+      class="w-200 max-w-[100vw] relative"
     >
       <template #default>
         <NForm
@@ -42,7 +42,11 @@
         >
           <slot name="form" />
           <NFormItem path="limit" :label="$t('export-data.export-rows')">
-            <MaxRowCountSelect v-model:value="formData.limit" />
+            <MaxRowCountSelect
+              ref="maxRowCountSelectRef"
+              :maximum-export-count="maximumExportCount"
+              v-model:value="formData.limit"
+            />
           </NFormItem>
           <NFormItem path="format" :label="$t('export-data.export-format')">
             <NRadioGroup v-model:value="formData.format">
@@ -95,7 +99,7 @@
   <BBModal
     :show="state.showModal"
     :title="$t('export-data.password-optional')"
-    class="shadow-inner outline outline-gray-200"
+    class="shadow-inner outline-solid outline-gray-200"
     @close="state.showModal = false"
   >
     <div class="w-80">
@@ -106,7 +110,7 @@
         :focus-on-mount="true"
       />
     </div>
-    <div class="w-full flex items-center justify-end mt-2 space-x-3">
+    <div class="w-full flex items-center justify-end mt-2 gap-x-3">
       <NButton @click="state.showModal = false">
         {{ $t("common.cancel") }}
       </NButton>
@@ -133,7 +137,7 @@ import {
   NRadioGroup,
   NTooltip,
 } from "naive-ui";
-import { computed, reactive, ref, watch } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
 import { BBModal, BBTextField } from "@/bbkit";
 import { t } from "@/plugins/i18n";
 import { pushNotification } from "@/store";
@@ -169,6 +173,7 @@ const props = withDefaults(
     tooltip?: string;
     text?: string;
     validate?: (option: ExportOption) => boolean;
+    maximumExportCount?: number;
   }>(),
   {
     size: "small",
@@ -177,11 +182,17 @@ const props = withDefaults(
     supportPassword: false,
     text: () => t("common.export"),
     validate: (_: ExportOption) => true,
+    maximumExportCount: Number.MAX_VALUE,
   }
 );
 
+const maxRowCountSelectRef = ref<InstanceType<typeof MaxRowCountSelect>>();
+
 const defaultFormData = (): ExportOption => ({
-  limit: 1000,
+  limit: Math.min(
+    maxRowCountSelectRef.value?.maximum ?? Number.MAX_VALUE,
+    1000
+  ),
   format: props.supportFormats[0],
   password: "",
 });
@@ -191,7 +202,7 @@ const emit = defineEmits<{
     event: "export",
     option: {
       resolve: (content: DownloadContent[]) => void;
-      reject: (reason?: any) => void;
+      reject: (reason?: unknown) => void;
       options: ExportOption;
     }
   ): Promise<void>;
@@ -218,7 +229,7 @@ const rules: FormRules = {
         }
         return true;
       },
-      trigger: ["input", "blur"],
+      trigger: ["input", "blur-sm"],
     },
   ],
   format: [
@@ -370,10 +381,13 @@ const doDownload = async (content: DownloadContent[], format: ExportFormat) => {
   }
 
   const zip = new JSZip();
-  for (const c of content) {
-    const blob = await convertSingleFile(c, format);
-    zip.file(c.filename, blob);
-  }
+
+  await Promise.all(
+    content.map(async (c) => {
+      const blob = await convertSingleFile(c, format);
+      zip.file(c.filename, blob);
+    })
+  );
 
   const zipFile = await zip.generateAsync({ type: "blob" });
   const fileName = `download_${dayjs().format("YYYY-MM-DDTHH-mm-ss")}.zip`;
@@ -385,6 +399,12 @@ watch(
   ([showDrawer, showModal]) => {
     if (showDrawer) {
       formData.value = defaultFormData();
+      nextTick(() => {
+        formData.value.limit = Math.min(
+          maxRowCountSelectRef.value?.maximum ?? Number.MAX_VALUE,
+          formData.value.limit
+        );
+      });
     } else if (showModal) {
       formData.value.password = "";
     }

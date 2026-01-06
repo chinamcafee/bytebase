@@ -5,14 +5,13 @@
     </template>
     <!-- Default display mode: show all status counts with icons -->
     <template v-else>
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-3 flex-wrap">
         <div
           v-if="statusSummary.running > 0"
           class="flex items-center gap-1 text-control"
         >
           <LoaderIcon :class="iconSizeClass" class="animate-spin" />
-          <span v-if="showLabel">{{ $t("task.status.running") }}</span>
-          <span>{{ statusSummary.running }}</span>
+          <span>{{ $t("task.status.running") }}</span>
         </div>
         <div
           v-if="statusSummary.error > 0"
@@ -51,10 +50,10 @@
 
 <script setup lang="ts">
 import {
-  CheckCircleIcon,
   AlertCircleIcon,
-  XCircleIcon,
+  CheckCircleIcon,
   LoaderIcon,
+  XCircleIcon,
 } from "lucide-vue-next";
 import { computed, type PropType } from "vue";
 import type { Plan } from "@/types/proto-es/v1/plan_service_pb";

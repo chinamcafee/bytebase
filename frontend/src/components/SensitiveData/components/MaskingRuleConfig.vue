@@ -1,14 +1,16 @@
 <template>
-  <div class="space-y-4 w-full">
+  <div class="flex flex-col gap-y-4 w-full">
     <div
       class="flex flex-col md:flex-row items-start md:items-stretch gap-x-4 gap-y-4 overflow-hidden"
     >
-      <div class="flex-1 space-y-2 overflow-x-hidden overflow-y-auto">
-        <div class="flex items-center h-[36px]">
+      <div
+        class="flex-1 flex flex-col gap-y-2 overflow-x-hidden overflow-y-auto"
+      >
+        <div class="flex items-center h-9">
           <NInput
             v-if="!readonly"
             v-model:value="state.title"
-            class="!w-64"
+            class="w-64!"
             :placeholder="defaultTitle"
             type="text"
             size="small"
@@ -21,7 +23,7 @@
         </div>
         <ExprEditor
           :expr="state.expr"
-          :allow-admin="!readonly"
+          :readonly="readonly"
           :factor-list="factorList"
           :option-config-map="optionConfigMap"
           :factor-operator-override-map="factorOperatorOverrideMap"
@@ -70,13 +72,22 @@
         <NButton :disabled="disabled" @click="onCancel">
           {{ $t("common.cancel") }}
         </NButton>
-        <NButton
-          type="primary"
-          :disabled="!isValid || disabled || !state.dirty"
-          @click="onConfirm"
-        >
-          {{ $t("common.confirm") }}
-        </NButton>
+        <NTooltip :disabled="errorMessages.length === 0">
+          <template #trigger>
+            <NButton
+              type="primary"
+              :disabled="errorMessages.length !== 0 || disabled || !state.dirty"
+              @click="onConfirm"
+            >
+              {{ $t("common.confirm") }}
+            </NButton>
+          </template>
+          <ul class="list-disc pl-4">
+            <li v-for="(msg, i) in errorMessages" :key="i">
+              {{ msg }}
+            </li>
+          </ul>
+        </NTooltip>
       </div>
     </div>
   </div>
@@ -87,18 +98,18 @@ import { create } from "@bufbuild/protobuf";
 import { head } from "lodash-es";
 import { TrashIcon } from "lucide-vue-next";
 import type { SelectOption } from "naive-ui";
-import { NSelect, NPopconfirm, NInput, NButton } from "naive-ui";
-import { computed, reactive, onMounted, nextTick } from "vue";
+import { NButton, NInput, NPopconfirm, NSelect, NTooltip } from "naive-ui";
+import { computed, nextTick, onMounted, reactive } from "vue";
 import { useI18n } from "vue-i18n";
 import ExprEditor from "@/components/ExprEditor";
 import { type OptionConfig } from "@/components/ExprEditor/context";
 import type { ConditionGroupExpr, Factor, SimpleExpr } from "@/plugins/cel";
 import {
-  resolveCELExpr,
-  wrapAsGroup,
   buildCELExpr,
-  validateSimpleExpr,
   emptySimpleExpr,
+  resolveCELExpr,
+  validateSimpleExpr,
+  wrapAsGroup,
 } from "@/plugins/cel";
 import { useSettingV1Store } from "@/store";
 import { ExprSchema } from "@/types/proto-es/google/type/expr_pb";
@@ -147,11 +158,24 @@ const state = reactive<LocalState>({
 });
 const settingStore = useSettingV1Store();
 
+const errorMessages = computed(() => {
+  const msg: string[] = [];
+  if (!state.semanticType) {
+    msg.push(
+      t("settings.sensitive-data.global-rules.error.missing-semantic-type")
+    );
+  }
+  if (!validateSimpleExpr(state.expr)) {
+    msg.push(t("settings.sensitive-data.global-rules.error.invalid-condition"));
+  }
+  return msg;
+});
+
 const semanticTypeSettingValue = computed(() => {
   const semanticTypeSetting = settingStore.getSettingByName(
     Setting_SettingName.SEMANTIC_TYPES
   );
-  if (semanticTypeSetting?.value?.value?.case === "semanticTypeSettingValue") {
+  if (semanticTypeSetting?.value?.value?.case === "semanticType") {
     return semanticTypeSetting.value.value.value.types ?? [];
   }
   return [];
@@ -206,12 +230,6 @@ const onCancel = async () => {
   emit("cancel");
   nextTick(() => (state.dirty = false));
 };
-
-const isValid = computed(() => {
-  const { expr, semanticType } = state;
-  if (!expr || !semanticType) return false;
-  return validateSimpleExpr(expr);
-});
 
 const onConfirm = async () => {
   const celexpr = await buildCELExpr(state.expr);

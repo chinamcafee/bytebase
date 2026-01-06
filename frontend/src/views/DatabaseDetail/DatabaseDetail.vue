@@ -1,6 +1,6 @@
 <template>
   <div
-    class="flex-1 overflow-auto focus:outline-none space-y-4"
+    class="flex-1 overflow-auto focus:outline-hidden flex flex-col gap-y-4"
     tabindex="0"
     v-bind="$attrs"
   >
@@ -22,33 +22,33 @@
     <main class="flex-1 relative">
       <!-- Highlight Panel -->
       <div
-        class="gap-y-2 flex flex-col items-start xl:flex-row xl:items-center xl:justify-between"
+        class="gap-y-2 flex flex-col items-start xl:flex-row xl:items-center xl:justify-between xl:gap-x-2"
       >
-        <div class="flex-1 min-w-0 shrink-0">
+        <div class="flex-1 flex flex-col min-w-0 shrink-0 gap-y-2">
           <!-- Summary -->
-          <div class="w-full flex items-center">
-            <div class="w-full flex items-baseline gap-x-2">
-              <h1
-                class="text-xl font-bold text-main truncate flex items-center gap-x-2"
-              >
-                {{ database.databaseName }}
+          <div class="w-full flex flex-col">
+            <div
+              class="text-xl box-content font-bold text-main truncate flex items-center gap-x-2"
+            >
+              {{ database.databaseName }}
 
-                <ProductionEnvironmentV1Icon
-                  :environment="environment"
-                  :tooltip="true"
-                  class="w-5 h-5"
-                />
-              </h1>
-              <div class="flex items-center space-x-1">
-                <span class="textinfolabel">
-                  {{ database.name }}
-                </span>
-                <CopyButton :content="database.name" />
-              </div>
+              <ProductionEnvironmentV1Icon
+                :environment="environment"
+                :tooltip="true"
+                class="w-5 h-5"
+              />
+            </div>
+            <div
+              class="w-full flex flex-row items-center justify-start gap-x-1"
+            >
+              <EllipsisText class="textinfolabel">
+                {{ database.name }}
+              </EllipsisText>
+              <CopyButton :content="database.name" />
             </div>
           </div>
           <dl
-            class="flex flex-col space-y-1 md:flex-row md:flex-wrap"
+            class="flex flex-col gap-y-1 md:flex-row md:flex-wrap"
             data-label="bb-database-detail-info-block"
           >
             <dt class="sr-only">{{ $t("common.environment") }}</dt>
@@ -67,6 +67,18 @@
                 >{{ $t("common.instance") }}&nbsp;-&nbsp;</span
               >
               <InstanceV1Name :instance="database.instanceResource" />
+            </dd>
+            <dt v-if="database.schemaVersion" class="sr-only">
+              {{ $t("common.version") }}
+            </dt>
+            <dd
+              v-if="database.schemaVersion"
+              class="flex items-center text-sm md:mr-4"
+            >
+              <span class="ml-1 textlabel"
+                >{{ $t("common.version") }}&nbsp;-&nbsp;</span
+              >
+              <span>{{ database.schemaVersion }}</span>
             </dd>
             <SQLEditorButtonV1
               v-if="allowQuery"
@@ -104,16 +116,12 @@
             </template>
           </NButton>
           <NButton
-            v-if="allowChangeData"
-            @click="createMigration('bb.issue.database.data.update')"
+            v-if="allowChangeDatabase"
+            @click="() => {
+              preCreateIssue(database.project, [database.name])
+            }"
           >
-            <span>{{ $t("database.change-data") }}</span>
-          </NButton>
-          <NButton
-            v-if="allowAlterSchema"
-            @click="createMigration('bb.issue.database.schema.update')"
-          >
-            <span>{{ $t("database.edit-schema") }}</span>
+            <span>{{ $t("database.change-database") }}</span>
           </NButton>
         </div>
       </div>
@@ -181,62 +189,48 @@
       @dismiss="state.showTransferDatabaseModal = false"
     />
   </Drawer>
-
-  <SchemaEditorModal
-    v-if="state.showSchemaEditorModal"
-    :database-names="[database.name]"
-    alter-type="SINGLE_DB"
-    @close="state.showSchemaEditorModal = false"
-  />
 </template>
 
 <script lang="ts" setup>
 import { useTitle } from "@vueuse/core";
-import dayjs from "dayjs";
 import { ArrowRightLeftIcon } from "lucide-vue-next";
 import { NButton, NTabPane, NTabs } from "naive-ui";
 import { computed, reactive, watch, watchEffect } from "vue";
-import { useRouter, useRoute, type LocationQueryRaw } from "vue-router";
-import { BBModal } from "@/bbkit";
-import { BBAttention } from "@/bbkit";
-import SchemaEditorModal from "@/components/AlterSchemaPrepForm/SchemaEditorModal.vue";
+import { useRoute, useRouter } from "vue-router";
+import { BBAttention, BBModal } from "@/bbkit";
+import { useDatabaseDetailContext } from "@/components/Database/context";
 import DatabaseChangelogPanel from "@/components/Database/DatabaseChangelogPanel.vue";
 import DatabaseOverviewPanel from "@/components/Database/DatabaseOverviewPanel.vue";
 import DatabaseRevisionPanel from "@/components/Database/DatabaseRevisionPanel.vue";
 import DatabaseSensitiveDataPanel from "@/components/Database/DatabaseSensitiveDataPanel.vue";
-import { useDatabaseDetailContext } from "@/components/Database/context";
 import {
   DatabaseSettingsPanel,
-  SQLEditorButtonV1,
   SchemaDiagramButton,
+  SQLEditorButtonV1,
 } from "@/components/DatabaseDetail";
 import DriftedDatabaseAlert from "@/components/DatabaseDetail/DriftedDatabaseAlert.vue";
 import ExportSchemaButton from "@/components/DatabaseDetail/ExportSchemaButton.vue";
 import SyncDatabaseButton from "@/components/DatabaseDetail/SyncDatabaseButton.vue";
+import EllipsisText from "@/components/EllipsisText.vue";
+import { preCreateIssue } from "@/components/Plan/logic/issue";
 import TransferOutDatabaseForm from "@/components/TransferOutDatabaseForm";
-import { Drawer } from "@/components/v2";
 import {
+  CopyButton,
+  Drawer,
   EnvironmentV1Name,
   InstanceV1Name,
   ProductionEnvironmentV1Icon,
 } from "@/components/v2";
-import { CopyButton } from "@/components/v2";
-import {
-  PROJECT_V1_ROUTE_ISSUE_DETAIL,
-  PROJECT_V1_ROUTE_DATABASE_DETAIL,
-} from "@/router/dashboard/projectV1";
-import { useEnvironmentV1Store, useDatabaseV1ByName } from "@/store";
+import { PROJECT_V1_ROUTE_DATABASE_DETAIL } from "@/router/dashboard/projectV1";
+import { useDatabaseV1ByName, useEnvironmentV1Store } from "@/store";
 import {
   databaseNamePrefix,
   instanceNamePrefix,
 } from "@/store/modules/v1/common";
-import { UNKNOWN_PROJECT_NAME } from "@/types";
-import { State } from "@/types/proto-es/v1/common_pb";
 import {
+  extractProjectResourceName,
   instanceV1HasAlterSchema,
   isDatabaseV1Queryable,
-  engineSupportsSchemaEditor,
-  extractProjectResourceName,
 } from "@/utils";
 
 const databaseHashList = [
@@ -247,14 +241,12 @@ const databaseHashList = [
   "catalog",
 ] as const;
 export type DatabaseHash = (typeof databaseHashList)[number];
-const isDatabaseHash = (x: any): x is DatabaseHash =>
-  databaseHashList.includes(x);
+const isDatabaseHash = (x: unknown): x is DatabaseHash =>
+  databaseHashList.includes(x as DatabaseHash);
 
 interface LocalState {
   showTransferDatabaseModal: boolean;
   showIncorrectProjectModal: boolean;
-  showSchemaEditorModal: boolean;
-  currentProjectName: string;
   selectedIndex: number;
   selectedTab: DatabaseHash;
 }
@@ -270,8 +262,6 @@ const router = useRouter();
 const state = reactive<LocalState>({
   showTransferDatabaseModal: false,
   showIncorrectProjectModal: false,
-  showSchemaEditorModal: false,
-  currentProjectName: UNKNOWN_PROJECT_NAME,
   selectedIndex: 0,
   selectedTab: "overview",
 });
@@ -284,6 +274,10 @@ const {
   allowAlterSchema,
   allowListChangelogs,
 } = useDatabaseDetailContext();
+
+const allowChangeDatabase = computed(() => {
+  return allowChangeData.value || allowAlterSchema.value;
+});
 
 watch(
   () => route.hash,
@@ -344,51 +338,10 @@ const allowQuery = computed(() => {
 });
 
 const tryTransferProject = () => {
-  state.currentProjectName = project.value.name;
   state.showTransferDatabaseModal = true;
 };
 
-const createMigration = async (
-  type: "bb.issue.database.schema.update" | "bb.issue.database.data.update"
-) => {
-  if (type === "bb.issue.database.schema.update") {
-    if (
-      database.value.state === State.ACTIVE &&
-      engineSupportsSchemaEditor(database.value.instanceResource.engine)
-    ) {
-      state.showSchemaEditorModal = true;
-      return;
-    }
-  }
-
-  // Create a user friendly default issue name
-  const issueNameParts: string[] = [];
-  issueNameParts.push(`[${database.value.databaseName}]`);
-  issueNameParts.push(
-    type === "bb.issue.database.schema.update" ? `Edit schema` : `Change data`
-  );
-  const datetime = dayjs().format("@MM-DD HH:mm");
-  const tz = "UTC" + dayjs().format("ZZ");
-  issueNameParts.push(`${datetime} ${tz}`);
-
-  const query: LocationQueryRaw = {
-    template: type,
-    name: issueNameParts.join(" "),
-    databaseList: database.value.name,
-  };
-
-  router.push({
-    name: PROJECT_V1_ROUTE_ISSUE_DETAIL,
-    params: {
-      projectId: extractProjectResourceName(project.value.name),
-      issueSlug: "create",
-    },
-    query,
-  });
-};
-
 const handleGotoSQLEditorFailed = () => {
-  state.currentProjectName = database.value.project;
   state.showIncorrectProjectModal = true;
 };
 

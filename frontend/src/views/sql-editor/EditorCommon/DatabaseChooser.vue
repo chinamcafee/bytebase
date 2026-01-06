@@ -59,7 +59,7 @@ import { ChevronRightIcon, SquareStackIcon } from "lucide-vue-next";
 import { NButton, NPopover } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { DatabaseIcon } from "@/components/Icon";
-import { InstanceV1EngineIcon, EnvironmentV1Name } from "@/components/v2";
+import { EnvironmentV1Name, InstanceV1EngineIcon } from "@/components/v2";
 import {
   useConnectionOfCurrentSQLEditorTab,
   useSQLEditorStore,
@@ -85,6 +85,8 @@ defineProps<{
 
 <style lang="postcss" scoped>
 :deep(.n-button__content) {
-  @apply truncate;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

@@ -47,10 +47,11 @@ type FindInstanceMessage struct {
 	Limit       *int
 	Offset      *int
 	FilterQ     *qb.Query
+	OrderByKeys []*OrderByKey
 }
 
-// GetInstanceV2 gets an instance by the resource_id.
-func (s *Store) GetInstanceV2(ctx context.Context, find *FindInstanceMessage) (*InstanceMessage, error) {
+// GetInstance gets an instance by the resource_id.
+func (s *Store) GetInstance(ctx context.Context, find *FindInstanceMessage) (*InstanceMessage, error) {
 	if find.ResourceID != nil {
 		if v, ok := s.instanceCache.Get(getInstanceCacheKey(*find.ResourceID)); ok && s.enableCache {
 			return v, nil
@@ -60,7 +61,7 @@ func (s *Store) GetInstanceV2(ctx context.Context, find *FindInstanceMessage) (*
 	// We will always return the resource regardless of its deleted state.
 	find.ShowDeleted = true
 
-	instances, err := s.ListInstancesV2(ctx, find)
+	instances, err := s.ListInstances(ctx, find)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to list instances with find instance message %+v", find)
 	}
@@ -76,15 +77,15 @@ func (s *Store) GetInstanceV2(ctx context.Context, find *FindInstanceMessage) (*
 	return instance, nil
 }
 
-// ListInstancesV2 lists all instance.
-func (s *Store) ListInstancesV2(ctx context.Context, find *FindInstanceMessage) ([]*InstanceMessage, error) {
+// ListInstances lists all instance.
+func (s *Store) ListInstances(ctx context.Context, find *FindInstanceMessage) ([]*InstanceMessage, error) {
 	tx, err := s.GetDB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
-	instances, err := s.listInstanceImplV2(ctx, tx, find)
+	instances, err := s.listInstanceImpl(ctx, tx, find)
 	if err != nil {
 		return nil, err
 	}
@@ -99,8 +100,8 @@ func (s *Store) ListInstancesV2(ctx context.Context, find *FindInstanceMessage) 
 	return instances, nil
 }
 
-// CreateInstanceV2 creates an instance.
-func (s *Store) CreateInstanceV2(ctx context.Context, instanceCreate *InstanceMessage) (*InstanceMessage, error) {
+// CreateInstance creates an instance.
+func (s *Store) CreateInstance(ctx context.Context, instanceCreate *InstanceMessage) (*InstanceMessage, error) {
 	if err := validateDataSources(instanceCreate.Metadata); err != nil {
 		return nil, err
 	}
@@ -151,8 +152,8 @@ func (s *Store) CreateInstanceV2(ctx context.Context, instanceCreate *InstanceMe
 	return instance, nil
 }
 
-// UpdateInstanceV2 updates an instance.
-func (s *Store) UpdateInstanceV2(ctx context.Context, patch *UpdateInstanceMessage) (*InstanceMessage, error) {
+// UpdateInstance updates an instance.
+func (s *Store) UpdateInstance(ctx context.Context, patch *UpdateInstanceMessage) (*InstanceMessage, error) {
 	set := qb.Q()
 
 	if v := patch.EnvironmentID; v != nil {
@@ -218,24 +219,16 @@ func (s *Store) UpdateInstanceV2(ctx context.Context, patch *UpdateInstanceMessa
 
 	if v := patch.ResourceID; v != nil {
 		s.instanceCache.Remove(getInstanceCacheKey(*v))
-		return s.GetInstanceV2(ctx, &FindInstanceMessage{ResourceID: v})
+		return s.GetInstance(ctx, &FindInstanceMessage{ResourceID: v})
 	}
 
 	return nil, nil
 }
 
-func (s *Store) listInstanceImplV2(ctx context.Context, txn *sql.Tx, find *FindInstanceMessage) ([]*InstanceMessage, error) {
+func (s *Store) listInstanceImpl(ctx context.Context, txn *sql.Tx, find *FindInstanceMessage) ([]*InstanceMessage, error) {
 	where := qb.Q().Space("TRUE")
-	from := qb.Q().Space("instance")
 	if filterQ := find.FilterQ; filterQ != nil {
 		where.And("?", filterQ)
-		filterSQL, _, _ := filterQ.ToSQL()
-		if hasHostPortFilter(filterSQL) {
-			from.Space("CROSS JOIN jsonb_array_elements(instance.metadata -> 'dataSources') AS ds")
-		}
-		if strings.Contains(filterSQL, "db.project") {
-			from.Space("LEFT JOIN db ON db.instance = instance.resource_id")
-		}
 	}
 	if v := find.ResourceID; v != nil {
 		where.And("instance.resource_id = ?", *v)
@@ -248,15 +241,25 @@ func (s *Store) listInstanceImplV2(ctx context.Context, txn *sql.Tx, find *FindI
 	}
 
 	q := qb.Q().Space(`
-		SELECT DISTINCT ON (resource_id)
+		SELECT
 			instance.resource_id,
 			instance.environment,
 			instance.deleted,
 			instance.metadata
-		FROM ?
+		FROM instance
 		WHERE ?
-		ORDER BY resource_id
-	`, from, where)
+	`, where)
+
+	if len(find.OrderByKeys) > 0 {
+		orderBy := []string{}
+		for _, v := range find.OrderByKeys {
+			orderBy = append(orderBy, fmt.Sprintf("%s %s", v.Key, v.SortOrder.String()))
+		}
+		q.Space(fmt.Sprintf("ORDER BY %s", strings.Join(orderBy, ", ")))
+	} else {
+		q.Space("ORDER BY resource_id ASC")
+	}
+
 	if v := find.Limit; v != nil {
 		q.Space("LIMIT ?", *v)
 	}
@@ -306,10 +309,6 @@ func (s *Store) listInstanceImplV2(ctx context.Context, txn *sql.Tx, find *FindI
 	}
 
 	return instanceMessages, nil
-}
-
-func hasHostPortFilter(where string) bool {
-	return strings.Contains(where, "ds ->> 'host'") || strings.Contains(where, "ds ->> 'port'")
 }
 
 // GetActivatedInstanceCount gets the number of activated instances.
@@ -362,10 +361,11 @@ func IsObjectCaseSensitive(instance *InstanceMessage) bool {
 }
 
 func (s *Store) obfuscateInstance(ctx context.Context, instance *storepb.Instance) (*storepb.Instance, error) {
-	secret, err := s.GetSecret(ctx)
+	systemSetting, err := s.GetSystemSetting(ctx)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "failed to get system setting")
 	}
+	secret := systemSetting.AuthSecret
 
 	redacted := proto.CloneOf(instance)
 	for _, ds := range redacted.GetDataSources() {
@@ -383,6 +383,8 @@ func (s *Store) obfuscateInstance(ctx context.Context, instance *storepb.Instanc
 		ds.SshPrivateKey = ""
 		ds.ObfuscatedAuthenticationPrivateKey = common.Obfuscate(ds.GetAuthenticationPrivateKey(), secret)
 		ds.AuthenticationPrivateKey = ""
+		ds.ObfuscatedAuthenticationPrivateKeyPassphrase = common.Obfuscate(ds.GetAuthenticationPrivateKeyPassphrase(), secret)
+		ds.AuthenticationPrivateKeyPassphrase = ""
 		ds.ObfuscatedMasterPassword = common.Obfuscate(ds.GetMasterPassword(), secret)
 		ds.MasterPassword = ""
 
@@ -404,15 +406,24 @@ func (s *Store) obfuscateInstance(ctx context.Context, instance *storepb.Instanc
 			gcpCredential.ObfuscatedContent = common.Obfuscate(gcpCredential.Content, secret)
 			gcpCredential.Content = ""
 		}
+		if externalSecret := ds.GetExternalSecret(); externalSecret != nil {
+			externalSecret.ObfuscatedVaultSslCa = common.Obfuscate(externalSecret.GetVaultSslCa(), secret)
+			externalSecret.VaultSslCa = ""
+			externalSecret.ObfuscatedVaultSslCert = common.Obfuscate(externalSecret.GetVaultSslCert(), secret)
+			externalSecret.VaultSslCert = ""
+			externalSecret.ObfuscatedVaultSslKey = common.Obfuscate(externalSecret.GetVaultSslKey(), secret)
+			externalSecret.VaultSslKey = ""
+		}
 	}
 	return redacted, nil
 }
 
 func (s *Store) unObfuscateInstance(ctx context.Context, instance *storepb.Instance) error {
-	secret, err := s.GetSecret(ctx)
+	systemSetting, err := s.GetSystemSetting(ctx)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to get system setting")
 	}
+	secret := systemSetting.AuthSecret
 
 	for _, ds := range instance.GetDataSources() {
 		password, err := common.Unobfuscate(ds.GetObfuscatedPassword(), secret)
@@ -457,6 +468,12 @@ func (s *Store) unObfuscateInstance(ctx context.Context, instance *storepb.Insta
 		}
 		ds.AuthenticationPrivateKey = authenticationPrivateKey
 
+		authenticationPrivateKeyPassphrase, err := common.Unobfuscate(ds.GetObfuscatedAuthenticationPrivateKeyPassphrase(), secret)
+		if err != nil {
+			return err
+		}
+		ds.AuthenticationPrivateKeyPassphrase = authenticationPrivateKeyPassphrase
+
 		masterPassword, err := common.Unobfuscate(ds.GetObfuscatedMasterPassword(), secret)
 		if err != nil {
 			return err
@@ -498,13 +515,33 @@ func (s *Store) unObfuscateInstance(ctx context.Context, instance *storepb.Insta
 			}
 			gcpCredential.Content = content
 		}
+
+		if externalSecret := ds.GetExternalSecret(); externalSecret != nil {
+			sslCa, err := common.Unobfuscate(externalSecret.GetObfuscatedVaultSslCa(), secret)
+			if err != nil {
+				return err
+			}
+			externalSecret.VaultSslCa = sslCa
+
+			sslCert, err := common.Unobfuscate(externalSecret.GetObfuscatedVaultSslCert(), secret)
+			if err != nil {
+				return err
+			}
+			externalSecret.VaultSslCert = sslCert
+
+			sslKey, err := common.Unobfuscate(externalSecret.GetObfuscatedVaultSslKey(), secret)
+			if err != nil {
+				return err
+			}
+			externalSecret.VaultSslKey = sslKey
+		}
 	}
 	return nil
 }
 
 // HasSampleInstances checks if there are sample instances in the database.
 func (s *Store) HasSampleInstances(ctx context.Context) (bool, error) {
-	instances, err := s.ListInstancesV2(ctx, &FindInstanceMessage{
+	instances, err := s.ListInstances(ctx, &FindInstanceMessage{
 		ResourceIDs: &[]string{"test-sample-instance", "prod-sample-instance"},
 		ShowDeleted: false,
 	})
@@ -723,9 +760,7 @@ func GetListInstanceFilter(filter string) (*qb.Query, error) {
 				}
 				labelValueList[i] = str
 			}
-			placeholders := strings.Repeat("?,", len(labelValueList))
-			placeholders = placeholders[:len(placeholders)-1]
-			return qb.Q().Space(fmt.Sprintf("%s->'labels'->>'%s' IN (%s)", resource, key, placeholders), labelValueList...), nil
+			return qb.Q().Space(fmt.Sprintf("%s->'labels'->>'%s' = ANY(?)", resource, key), labelValueList), nil
 		default:
 			return nil, errors.Errorf("empty value %v for label filter", value)
 		}
@@ -771,38 +806,44 @@ func GetListInstanceFilter(filter string) (*qb.Query, error) {
 			engine := convertEngine(v1pb.Engine(v1Engine))
 			return qb.Q().Space("instance.metadata->>'engine' = ?", engine), nil
 		case "host":
-			return qb.Q().Space("ds ->> 'host' = ?", value.(string)), nil
+			return qb.Q().Space(
+				`instance.metadata -> 'dataSources' @> jsonb_build_array(jsonb_build_object('host', ?))`,
+				value.(string)), nil
 		case "port":
-			return qb.Q().Space("ds ->> 'port' = ?", value.(string)), nil
+			return qb.Q().Space(
+				`instance.metadata -> 'dataSources' @> jsonb_build_array(jsonb_build_object('port', ?))`,
+				value.(string)), nil
 		case "project":
 			projectID, err := common.GetProjectID(value.(string))
 			if err != nil {
 				return nil, errors.Errorf("invalid project filter %q", value)
 			}
-			return qb.Q().Space("db.project = ?", projectID), nil
+			return qb.Q().Space(
+				`EXISTS (SELECT 1 FROM db WHERE db.instance = instance.resource_id AND db.project = ?)`,
+				projectID), nil
 		default:
 			return nil, errors.Errorf("unsupport variable %q", variable)
 		}
 	}
 
-	parseToEngineSQL := func(expr celast.Expr, relation string) (*qb.Query, error) {
+	parseToEngineSQL := func(expr celast.Expr) (*qb.Query, error) {
 		variable, value := getVariableAndValueFromExpr(expr)
 		if variable != "engine" {
 			return nil, errors.Errorf(`only "engine" support "engine in [xx]"/"!(engine in [xx])" operator`)
 		}
 		if value == nil {
-			return nil, errors.Errorf(`empty value %v for "%s" operator`, value, relation)
+			return nil, errors.Errorf(`empty value %v for "engine" operator`, value)
 		}
 		list, ok := value.([]any)
 		if !ok {
 			return nil, errors.Errorf(`expect list, got %T, hint: filter engine in ["xx"]`, value)
 		}
 		if len(list) == 0 {
-			return nil, errors.Errorf(`empty value %v for "%s" operator`, value, relation)
+			return nil, errors.Errorf(`empty value %v for "engine" operator`, value)
 		}
 
-		var engineList []string
-		for _, raw := range list {
+		engineList := make([]any, len(list))
+		for i, raw := range list {
 			engine, ok := raw.(string)
 			if !ok {
 				return nil, errors.Errorf(`expect string, got %T for engine %v`, raw, raw)
@@ -812,9 +853,9 @@ func GetListInstanceFilter(filter string) (*qb.Query, error) {
 				return nil, errors.Errorf(`invalid engine filter %q`, engine)
 			}
 			storeEngine := convertEngine(v1pb.Engine(v1Engine))
-			engineList = append(engineList, fmt.Sprintf("'%s'", storeEngine))
+			engineList[i] = storeEngine
 		}
-		return qb.Q().Space(fmt.Sprintf("instance.metadata->>'engine' %s (%s)", relation, strings.Join(engineList, ","))), nil
+		return qb.Q().Space("instance.metadata->>'engine' = ANY(?)", engineList), nil
 	}
 
 	getFilter = func(expr celast.Expr) (*qb.Query, error) {
@@ -872,7 +913,7 @@ func GetListInstanceFilter(filter string) (*qb.Query, error) {
 			case celoperators.In:
 				variable, value := getVariableAndValueFromExpr(expr)
 				if variable == "engine" {
-					return parseToEngineSQL(expr, "IN")
+					return parseToEngineSQL(expr)
 				} else if labelKey, ok := strings.CutPrefix(variable, "labels."); ok {
 					return parseToLabelFilterSQL("instance.metadata", labelKey, value)
 				}
@@ -882,7 +923,11 @@ func GetListInstanceFilter(filter string) (*qb.Query, error) {
 				if len(args) != 1 {
 					return nil, errors.Errorf(`only support !(engine in ["{engine1}", "{engine2}"]) format`)
 				}
-				return parseToEngineSQL(args[0], "NOT IN")
+				qq, err := getFilter(args[0])
+				if err != nil {
+					return nil, err
+				}
+				return qb.Q().Space("(NOT (?))", qq), nil
 			default:
 				return nil, errors.Errorf("unexpected function %v", functionName)
 			}
@@ -900,4 +945,31 @@ func GetListInstanceFilter(filter string) (*qb.Query, error) {
 
 func convertEngine(engine v1pb.Engine) string {
 	return storepb.Engine_name[int32(engine)]
+}
+
+func GetInstanceOrders(orderBy string) ([]*OrderByKey, error) {
+	keys, err := parseOrderBy(orderBy)
+	if err != nil {
+		return nil, err
+	}
+
+	orderByKeys := []*OrderByKey{}
+	for _, orderByKey := range keys {
+		switch orderByKey.Key {
+		case "title":
+			orderByKeys = append(orderByKeys, &OrderByKey{
+				Key:       "instance.metadata->>'title'",
+				SortOrder: orderByKey.SortOrder,
+			})
+		case "environment":
+			orderByKeys = append(orderByKeys, &OrderByKey{
+				Key:       "instance.environment",
+				SortOrder: orderByKey.SortOrder,
+			})
+		default:
+			return nil, errors.Errorf(`invalid order key "%v"`, orderByKey.Key)
+		}
+	}
+
+	return orderByKeys, nil
 }

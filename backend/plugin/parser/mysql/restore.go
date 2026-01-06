@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/mysql-parser"
+	parser "github.com/bytebase/parser/mysql"
 	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
@@ -23,7 +23,7 @@ func init() {
 }
 
 func GenerateRestoreSQL(ctx context.Context, rCtx base.RestoreContext, statement string, backupItem *storepb.PriorBackupDetail_Item) (string, error) {
-	originalSQL, err := extractSingleSQL(statement, backupItem)
+	originalSQL, err := extractStatement(statement, backupItem)
 	if err != nil {
 		return "", errors.Errorf("failed to extract single SQL: %v", err)
 	}
@@ -49,7 +49,7 @@ func GenerateRestoreSQL(ctx context.Context, rCtx base.RestoreContext, statement
 	return doGenerate(ctx, rCtx, sqlForComment, parseResult[0], backupItem)
 }
 
-func doGenerate(ctx context.Context, rCtx base.RestoreContext, sqlForComment string, parseResult *ParseResult, backupItem *storepb.PriorBackupDetail_Item) (string, error) {
+func doGenerate(ctx context.Context, rCtx base.RestoreContext, sqlForComment string, ast *base.ANTLRAST, backupItem *storepb.PriorBackupDetail_Item) (string, error) {
 	_, sourceDatabase, err := common.GetInstanceDatabaseID(backupItem.SourceTable.Database)
 	if err != nil {
 		return "", errors.Wrapf(err, "failed to get source database ID for %s", backupItem.SourceTable.Database)
@@ -77,7 +77,7 @@ func doGenerate(ctx context.Context, rCtx base.RestoreContext, sqlForComment str
 		normalColumns:    normalColumns,
 	}
 	var buf strings.Builder
-	antlr.ParseTreeWalkerDefault.Walk(g, parseResult.Tree)
+	antlr.ParseTreeWalkerDefault.Walk(g, ast.Tree)
 	if g.err != nil {
 		return "", g.err
 	}
@@ -87,7 +87,7 @@ func doGenerate(ctx context.Context, rCtx base.RestoreContext, sqlForComment str
 	return buf.String(), nil
 }
 
-func extractSingleSQL(statement string, backupItem *storepb.PriorBackupDetail_Item) (string, error) {
+func extractStatement(statement string, backupItem *storepb.PriorBackupDetail_Item) (string, error) {
 	if backupItem == nil {
 		return "", errors.Errorf("backup item is nil")
 	}
@@ -218,7 +218,7 @@ func (g *generator) hasDisjointUniqueKey(updateColumns []string) (bool, error) {
 		return false, errors.Errorf("database metadata is nil for %s", g.originalDatabase)
 	}
 
-	schema := metadata.GetSchema("")
+	schema := metadata.GetSchemaMetadata("")
 	if schema == nil {
 		return false, errors.Errorf("schema is nil for %s", g.originalDatabase)
 	}

@@ -19,8 +19,8 @@
 
 <script setup lang="ts">
 import { NButton, NTooltip } from "naive-ui";
-import { computed, toRef } from "vue";
 import type { VNodeChild } from "vue";
+import { computed, toRef } from "vue";
 import { useConnectionOfCurrentSQLEditorTab } from "@/store";
 import type { EditorPanelView } from "@/types";
 import { useActions } from "../../AsidePanel/SchemaPane/actions";
@@ -48,7 +48,7 @@ const { props: buttonProps, style: buttonStyle } = useButton({
 const iconClass = computed(() => {
   const classes = ["w-4", "h-4"];
   if (active.value) {
-    classes.push("!text-current");
+    classes.push("text-current!");
   } else {
     classes.push("text-main");
   }

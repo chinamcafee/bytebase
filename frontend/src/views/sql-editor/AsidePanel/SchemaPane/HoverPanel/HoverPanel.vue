@@ -2,7 +2,7 @@
   <div
     ref="popoverRef"
     v-zindexable="{ enabled: true }"
-    class="fixed border border-gray-100 rounded bg-white p-2 shadow transition-[top] text-sm"
+    class="fixed border border-gray-100 rounded-sm bg-white p-2 shadow-sm transition-[top] text-sm"
     :class="[show ? 'visible' : ' invisible pointer-events-none']"
     :style="{
       left: `${displayPosition.x}px`,
@@ -54,10 +54,10 @@ import type { Position } from "@/types";
 import { minmax } from "@/utils";
 import ColumnInfo from "./ColumnInfo.vue";
 import ExternalTableInfo from "./ExternalTableInfo.vue";
+import { useHoverStateContext } from "./hover-state";
 import TableInfo from "./TableInfo.vue";
 import TablePartitionInfo from "./TablePartitionInfo.vue";
 import ViewInfo from "./ViewInfo.vue";
-import { useHoverStateContext } from "./hover-state";
 
 const props = defineProps<{
   offsetX: number;

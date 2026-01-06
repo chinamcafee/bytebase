@@ -9,7 +9,7 @@ import (
 	"github.com/antlr4-go/antlr/v4"
 	"github.com/pkg/errors"
 
-	parser "github.com/bytebase/tsql-parser"
+	parser "github.com/bytebase/parser/tsql"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/tsql"
@@ -22,13 +22,22 @@ func init() {
 
 // GetDatabaseMetadata parses the SQL schema text and returns the database metadata.
 func GetDatabaseMetadata(schemaText string) (*storepb.DatabaseSchemaMetadata, error) {
-	parseResult, err := tsql.ParseTSQL(schemaText)
+	parseResults, err := tsql.ParseTSQL(schemaText)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to parse SQL schema")
 	}
 
-	if parseResult.Tree == nil {
-		return nil, errors.Errorf("empty parse tree")
+	// Handle empty schema (no statements) by returning empty metadata with default dbo schema
+	if len(parseResults) == 0 {
+		return &storepb.DatabaseSchemaMetadata{
+			Name: "",
+			Schemas: []*storepb.SchemaMetadata{
+				{
+					Name:   "dbo",
+					Tables: []*storepb.TableMetadata{},
+				},
+			},
+		}, nil
 	}
 
 	extractor := &metadataExtractor{
@@ -38,7 +47,11 @@ func GetDatabaseMetadata(schemaText string) (*storepb.DatabaseSchemaMetadata, er
 		tables:          make(map[tableKey]*storepb.TableMetadata),
 	}
 
-	antlr.ParseTreeWalkerDefault.Walk(extractor, parseResult.Tree)
+	for _, parseResult := range parseResults {
+		if parseResult.Tree != nil {
+			antlr.ParseTreeWalkerDefault.Walk(extractor, parseResult.Tree)
+		}
+	}
 
 	if extractor.err != nil {
 		return nil, extractor.err
@@ -659,6 +672,9 @@ func (e *metadataExtractor) extractColumn(ctx parser.IColumn_definitionContext, 
 		column.Name, _ = tsql.NormalizeTSQLIdentifier(ctx.Id_())
 	}
 
+	// Set position based on current column count (1-based)
+	column.Position = int32(len(table.Columns) + 1)
+
 	// Data type and IDENTITY handling
 	if dataTypeCtx := ctx.Data_type(); dataTypeCtx != nil {
 		column.Type = extractDataType(dataTypeCtx)
@@ -699,11 +715,7 @@ func (e *metadataExtractor) extractColumn(ctx parser.IColumn_definitionContext, 
 
 				// Handle nullability
 				if nullNotNull := constraint.Null_notnull(); nullNotNull != nil {
-					if nullNotNull.NOT() != nil {
-						column.Nullable = false
-					} else {
-						column.Nullable = true
-					}
+					column.Nullable = nullNotNull.NOT() == nil
 				}
 
 				// Handle PRIMARY KEY

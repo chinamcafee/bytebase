@@ -3,8 +3,6 @@ package advisor
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,15 +10,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
 
 	"github.com/bytebase/bytebase/backend/component/sheet"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
 	database "github.com/bytebase/bytebase/backend/plugin/db"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -150,21 +148,16 @@ var (
 
 // TestCase is the data struct for test.
 type TestCase struct {
-	Statement  string                                        `yaml:"statement"`
-	ChangeType storepb.PlanCheckRunConfig_ChangeDatabaseType `yaml:"changeType"`
-	Want       []*storepb.Advice                             `yaml:"want,omitempty"`
-}
-
-type testCatalog struct {
-	finder *catalog.Finder
-}
-
-func (c *testCatalog) GetFinder() *catalog.Finder {
-	return c.finder
+	Statement string            `yaml:"statement"`
+	Want      []*storepb.Advice `yaml:"want,omitempty"`
 }
 
 // RunSQLReviewRuleTest helps to test the SQL review rule.
-func RunSQLReviewRuleTest(t *testing.T, rule SQLReviewRuleType, dbType storepb.Engine, needMetaData bool, record bool) {
+// The rule parameter should be a complete rule with Type, Level, and Payload already set.
+func RunSQLReviewRuleTest(t *testing.T, rule *storepb.SQLReviewRule, dbType storepb.Engine, record bool) {
+	require.NotNil(t, rule, "rule must not be nil")
+	require.NotEqual(t, storepb.SQLReviewRule_TYPE_UNSPECIFIED, rule.Type, "rule type must be specified")
+
 	var tests []TestCase
 
 	fileName := strings.Map(func(r rune) rune {
@@ -174,7 +167,7 @@ func RunSQLReviewRuleTest(t *testing.T, rule SQLReviewRuleType, dbType storepb.E
 		default:
 			return r
 		}
-	}, string(rule))
+	}, strings.ToLower(rule.Type.String()))
 	filepath := filepath.Join("test", fileName+".yaml")
 	yamlFile, err := os.Open(filepath)
 	require.NoError(t, err)
@@ -183,56 +176,54 @@ func RunSQLReviewRuleTest(t *testing.T, rule SQLReviewRuleType, dbType storepb.E
 	byteValue, err := io.ReadAll(yamlFile)
 	require.NoError(t, err)
 	err = yaml.Unmarshal(byteValue, &tests)
-	require.NoError(t, err, rule)
+	require.NoError(t, err, rule.Type)
 
-	sm := sheet.NewManager(nil)
+	sm := sheet.NewManager()
 	for i, tc := range tests {
-		// Add engine types here for mocked database metadata.
+		// Set metadata and database-specific settings based on engine type
 		var schemaMetadata *storepb.DatabaseSchemaMetadata
 		curDB := "TEST_DB"
-		if needMetaData {
-			switch dbType {
-			case storepb.Engine_POSTGRES:
-				schemaMetadata = MockPostgreSQLDatabase
-			case storepb.Engine_MSSQL:
-				curDB = "master"
-				schemaMetadata = MockMSSQLDatabase
-			case storepb.Engine_MYSQL:
-				schemaMetadata = MockMySQLDatabase
-			default:
-				panic(fmt.Sprintf("%s doesn't have mocked metadata support", storepb.Engine_name[int32(dbType)]))
-			}
+		isCaseSensitive := false
+
+		switch dbType {
+		case storepb.Engine_POSTGRES:
+			schemaMetadata = MockPostgreSQLDatabase
+			isCaseSensitive = true
+		case storepb.Engine_MSSQL:
+			schemaMetadata = MockMSSQLDatabase
+			curDB = "master"
+		case storepb.Engine_MYSQL:
+			schemaMetadata = MockMySQLDatabase
+		default:
+			// Fallback to MySQL for engines without specific mock
+			schemaMetadata = MockMySQLDatabase
 		}
 
-		database := MockMySQLDatabase
-		if dbType == storepb.Engine_POSTGRES {
-			database = MockPostgreSQLDatabase
-		}
-		finder := catalog.NewFinder(database, &catalog.FinderContext{CheckIntegrity: true, EngineType: dbType})
+		// Create OriginalMetadata as DatabaseMetadata (read-only)
+		// Clone to avoid mutations affecting future test cases
+		metadata, ok := proto.Clone(schemaMetadata).(*storepb.DatabaseSchemaMetadata)
+		require.True(t, ok, "failed to clone metadata")
+		originalMetadata := model.NewDatabaseMetadata(metadata, nil, nil, dbType, isCaseSensitive)
 
-		payload, err := SetDefaultSQLReviewRulePayload(rule, dbType)
-		require.NoError(t, err)
+		// Create FinalMetadata as DatabaseMetadata (mutable for walk-through)
+		// Clone to avoid mutations affecting future test cases
+		metadata, ok = proto.Clone(schemaMetadata).(*storepb.DatabaseSchemaMetadata)
+		require.True(t, ok, "failed to clone metadata")
+		finalMetadata := model.NewDatabaseMetadata(metadata, nil, nil, dbType, isCaseSensitive)
 
-		ruleList := []*storepb.SQLReviewRule{
-			{
-				Type:    string(rule),
-				Level:   storepb.SQLReviewRuleLevel_WARNING,
-				Payload: string(payload),
-			},
-		}
+		// Use the rule provided by the caller (already has Type, Level, and Payload set)
+		ruleList := []*storepb.SQLReviewRule{rule}
 
-		checkCtx := SQLReviewCheckContext{
-			Charset:                  "",
-			Collation:                "",
-			DBType:                   dbType,
-			Catalog:                  &testCatalog{finder: finder},
-			Driver:                   nil,
-			CurrentDatabase:          curDB,
-			DBSchema:                 schemaMetadata,
-			ChangeType:               tc.ChangeType,
-			EnablePriorBackup:        true, // Enable backup for testing
-			NoAppendBuiltin:          true,
-			UsePostgresDatabaseOwner: true,
+		checkCtx := Context{
+			DBType:            dbType,
+			OriginalMetadata:  originalMetadata,
+			FinalMetadata:     finalMetadata,
+			Driver:            nil,
+			CurrentDatabase:   curDB,
+			DBSchema:          schemaMetadata,
+			EnablePriorBackup: true, // Enable backup for testing
+			NoAppendBuiltin:   true,
+			TenantMode:        true,
 		}
 
 		adviceList, err := SQLReviewCheck(t.Context(), sm, tc.Statement, ruleList, checkCtx)
@@ -264,7 +255,7 @@ func RunSQLReviewRuleTest(t *testing.T, rule SQLReviewRuleType, dbType storepb.E
 		if record {
 			tests[i].Want = adviceList
 		} else {
-			require.Equalf(t, tc.Want, adviceList, "rule: %s, statements: %s", rule, tc.Statement)
+			require.Equalf(t, tc.Want, adviceList, "rule: %s, statements: %s", rule.Type, tc.Statement)
 		}
 	}
 
@@ -325,229 +316,4 @@ func (*MockDriver) SyncDBSchema(_ context.Context) (*storepb.DatabaseSchemaMetad
 // Dump implements the Driver interface.
 func (*MockDriver) Dump(_ context.Context, _ io.Writer, _ *storepb.DatabaseSchemaMetadata) error {
 	return nil
-}
-
-// SetDefaultSQLReviewRulePayload sets the default payload for this rule.
-func SetDefaultSQLReviewRulePayload(ruleTp SQLReviewRuleType, dbType storepb.Engine) (string, error) {
-	var payload []byte
-	var err error
-	switch ruleTp {
-	case SchemaRuleMySQLEngine,
-		BuiltinRulePriorBackupCheck,
-		SchemaRuleFullyQualifiedObjectName,
-		SchemaRuleStatementNoSelectAll,
-		SchemaRuleStatementRequireWhereForSelect,
-		SchemaRuleStatementRequireWhereForUpdateDelete,
-		SchemaRuleStatementNoLeadingWildcardLike,
-		SchemaRuleStatementDisallowOnDelCascade,
-		SchemaRuleStatementDisallowRemoveTblCascade,
-		SchemaRuleStatementDisallowCommit,
-		SchemaRuleStatementDisallowLimit,
-		SchemaRuleStatementDisallowOrderBy,
-		SchemaRuleStatementMergeAlterTable,
-		SchemaRuleStatementInsertMustSpecifyColumn,
-		SchemaRuleStatementInsertDisallowOrderByRand,
-		SchemaRuleStatementDMLDryRun,
-		SchemaRuleStatementDisallowUsingFilesort,
-		SchemaRuleStatementDisallowUsingTemporary,
-		SchemaRuleTableRequirePK,
-		SchemaRuleTableNoFK,
-		SchemaRuleTableDisallowPartition,
-		SchemaRuleTableDisallowTrigger,
-		SchemaRuleTableNoDuplicateIndex,
-		SchemaRuleColumnNotNull,
-		SchemaRuleColumnDisallowChangeType,
-		SchemaRuleColumnSetDefaultForNotNull,
-		SchemaRuleColumnDisallowChange,
-		SchemaRuleColumnDisallowChangingOrder,
-		SchemaRuleColumnDisallowDropInIndex,
-		SchemaRuleColumnAutoIncrementMustInteger,
-		SchemaRuleColumnDisallowSetCharset,
-		SchemaRuleColumnAutoIncrementMustUnsigned,
-		SchemaRuleAddNotNullColumnRequireDefault,
-		SchemaRuleCurrentTimeColumnCountLimit,
-		SchemaRuleColumnRequireDefault,
-		SchemaRuleColumnDefaultDisallowVolatile,
-		SchemaRuleSchemaBackwardCompatibility,
-		SchemaRuleDropEmptyDatabase,
-		SchemaRuleIndexNoDuplicateColumn,
-		SchemaRuleIndexPKTypeLimit,
-		SchemaRuleStatementDisallowAddColumnWithDefault,
-		SchemaRuleStatementNonTransactional,
-		SchemaRuleCreateIndexConcurrently,
-		SchemaRuleStatementAddCheckNotValid,
-		SchemaRuleStatementAddFKNotValid,
-		SchemaRuleStatementDisallowAddNotNull,
-		SchemaRuleStatementWhereNoEqualNull,
-		SchemaRuleIndexTypeNoBlob,
-		SchemaRuleIdentifierNoKeyword,
-		SchemaRuleTableNameNoKeyword,
-		SchemaRuleProcedureDisallowCreate,
-		SchemaRuleEventDisallowCreate,
-		SchemaRuleViewDisallowCreate,
-		SchemaRuleFunctionDisallowCreate,
-		SchemaRuleStatementCreateSpecifySchema,
-		SchemaRuleStatementCheckSetRoleVariable,
-		SchemaRuleStatementWhereDisallowFunctionsAndCalculations,
-		SchemaRuleStatementDisallowMixInDDL,
-		SchemaRuleStatementDisallowMixInDML,
-		SchemaRuleStatementPriorBackupCheck,
-		SchemaRuleStatementJoinStrictColumnAttrs,
-		SchemaRuleStatementMaxExecutionTime,
-		SchemaRuleStatementRequireAlgorithmOption,
-		SchemaRuleStatementRequireLockOption,
-		SchemaRuleTableDisallowSetCharset,
-		SchemaRuleStatementDisallowCrossDBQueries,
-		SchemaRuleIndexNotRedundant:
-	case SchemaRuleTableDropNamingConvention:
-		payload, err = json.Marshal(NamingRulePayload{
-			Format: "_delete$",
-		})
-	case SchemaRuleTableNaming, SchemaRuleColumnNaming:
-		format := "^[a-z]+(_[a-z]+)*$"
-		maxLength := 64
-		switch dbType {
-		case storepb.Engine_SNOWFLAKE:
-			format = "^[A-Z]+(_[A-Z]+)*$"
-		case storepb.Engine_MSSQL:
-			format = "^[A-Z]([_A-Za-z])*$"
-		default:
-			// Use default format for other databases
-		}
-		payload, err = json.Marshal(NamingRulePayload{
-			Format:    format,
-			MaxLength: maxLength,
-		})
-	case SchemaRuleIDXNaming:
-		payload, err = json.Marshal(NamingRulePayload{
-			Format:    "^$|^idx_{{table}}_{{column_list}}$",
-			MaxLength: 64,
-		})
-	case SchemaRulePKNaming:
-		payload, err = json.Marshal(NamingRulePayload{
-			Format:    "^$|^pk_{{table}}_{{column_list}}$",
-			MaxLength: 64,
-		})
-	case SchemaRuleUKNaming:
-		payload, err = json.Marshal(NamingRulePayload{
-			Format:    "^$|^uk_{{table}}_{{column_list}}$",
-			MaxLength: 64,
-		})
-	case SchemaRuleFKNaming:
-		payload, err = json.Marshal(NamingRulePayload{
-			Format:    "^$|^fk_{{referencing_table}}_{{referencing_column}}_{{referenced_table}}_{{referenced_column}}$",
-			MaxLength: 64,
-		})
-	case SchemaRuleAutoIncrementColumnNaming:
-		payload, err = json.Marshal(NamingRulePayload{
-			Format:    "^id$",
-			MaxLength: 64,
-		})
-	case SchemaRuleStatementInsertRowLimit, SchemaRuleStatementAffectedRowLimit:
-		payload, err = json.Marshal(NumberTypeRulePayload{
-			Number: 5,
-		})
-	case SchemaRuleStatementMaximumJoinTableCount:
-		payload, err = json.Marshal(NumberTypeRulePayload{
-			Number: 2,
-		})
-	case SchemaRuleStatementWhereMaximumLogicalOperatorCount:
-		payload, err = json.Marshal(NumberTypeRulePayload{
-			Number: 2,
-		})
-	case SchemaRuleStatementMaximumLimitValue:
-		payload, err = json.Marshal(NumberTypeRulePayload{
-			Number: 1000,
-		})
-	case SchemaRuleTableCommentConvention, SchemaRuleColumnCommentConvention:
-		payload, err = json.Marshal(CommentConventionRulePayload{
-			Required:  true,
-			MaxLength: 10,
-		})
-	case SchemaRuleRequiredColumn:
-		payload, err = json.Marshal(StringArrayTypeRulePayload{
-			List: []string{
-				"id",
-				"created_ts",
-				"updated_ts",
-				"creator_id",
-				"updater_id",
-			},
-		})
-	case SchemaRuleColumnTypeDisallowList:
-		payload, err = json.Marshal(StringArrayTypeRulePayload{
-			List: []string{"JSON", "BINARY_FLOAT"},
-		})
-	case SchemaRuleColumnMaximumCharacterLength:
-		payload, err = json.Marshal(NumberTypeRulePayload{
-			Number: 20,
-		})
-	case SchemaRuleColumnMaximumVarcharLength:
-		payload, err = json.Marshal(NumberTypeRulePayload{
-			Number: 2560,
-		})
-	case SchemaRuleColumnAutoIncrementInitialValue:
-		payload, err = json.Marshal(NumberTypeRulePayload{
-			Number: 20,
-		})
-	case SchemaRuleTableDisallowDDL:
-		if dbType == storepb.Engine_MSSQL {
-			payload, err = json.Marshal(StringArrayTypeRulePayload{
-				List: []string{"MySchema.Identifier"},
-			})
-		} else {
-			payload, err = json.Marshal(StringArrayTypeRulePayload{
-				List: []string{"identifier"},
-			})
-		}
-	case SchemaRuleTableDisallowDML:
-		if dbType == storepb.Engine_MSSQL {
-			payload, err = json.Marshal(StringArrayTypeRulePayload{
-				List: []string{"MySchema.Identifier"},
-			})
-		} else {
-			payload, err = json.Marshal(StringArrayTypeRulePayload{
-				List: []string{"identifier"},
-			})
-		}
-	case SchemaRuleIndexKeyNumberLimit, SchemaRuleIndexTotalNumberLimit:
-		payload, err = json.Marshal(NumberTypeRulePayload{
-			Number: 5,
-		})
-	case SchemaRuleCharsetAllowlist:
-		payload, err = json.Marshal(StringArrayTypeRulePayload{
-			List: []string{"utf8mb4", "UTF8"},
-		})
-	case SchemaRuleCollationAllowlist:
-		payload, err = json.Marshal(StringArrayTypeRulePayload{
-			List: []string{"utf8mb4_0900_ai_ci"},
-		})
-	case SchemaRuleCommentLength:
-		payload, err = json.Marshal(NumberTypeRulePayload{
-			Number: 20,
-		})
-	case SchemaRuleIndexPrimaryKeyTypeAllowlist:
-		payload, err = json.Marshal(StringArrayTypeRulePayload{
-			List: []string{"serial", "bigserial", "int", "bigint"},
-		})
-	case SchemaRuleIndexTypeAllowList:
-		payload, err = json.Marshal(StringArrayTypeRulePayload{
-			List: []string{"BTREE", "HASH"},
-		})
-	case SchemaRuleIdentifierCase:
-		payload, err = json.Marshal(NamingCaseRulePayload{
-			Upper: true,
-		})
-	case SchemaRuleFunctionDisallowList:
-		payload, err = json.Marshal(StringArrayTypeRulePayload{
-			List: []string{"rand", "uuid", "sleep"},
-		})
-	default:
-		return "", errors.Errorf("unknown SQL review type for default payload: %s", ruleTp)
-	}
-
-	if err != nil {
-		return "", err
-	}
-	return string(payload), nil
 }

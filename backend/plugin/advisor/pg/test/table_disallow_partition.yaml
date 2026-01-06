@@ -5,8 +5,8 @@
   want:
     - status: 2
       code: 608
-      title: table.disallow-partition
-      content: Table partition is forbidden, but "CREATE TABLE t(a int) PARTITION BY RANGE (a);" creates
+      title: TABLE_DISALLOW_PARTITION
+      content: Table partition is forbidden, but "CREATE TABLE t(a int) PARTITION BY RANGE (a)" creates
       startposition:
         line: 1
         column: 0
@@ -16,8 +16,8 @@
   want:
     - status: 2
       code: 608
-      title: table.disallow-partition
-      content: Table partition is forbidden, but "ALTER TABLE tech_book ATTACH PARTITION p1 DEFAULT;" creates
+      title: TABLE_DISALLOW_PARTITION
+      content: Table partition is forbidden, but "ALTER TABLE tech_book ATTACH PARTITION p1 DEFAULT" creates
       startposition:
         line: 1
         column: 0

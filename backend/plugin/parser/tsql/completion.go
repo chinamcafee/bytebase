@@ -9,7 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/antlr4-go/antlr/v4"
-	tsqlparser "github.com/bytebase/tsql-parser"
+	tsqlparser "github.com/bytebase/parser/tsql"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
@@ -262,7 +262,7 @@ func (m CompletionMap) insertMetadataTables(c *Completer, linkedServer string, d
 		}
 	}
 
-	schemaMetadata := databaseMetadata.GetSchema(schemaName)
+	schemaMetadata := databaseMetadata.GetSchemaMetadata(schemaName)
 	if schemaMetadata == nil {
 		return
 	}
@@ -282,7 +282,7 @@ func (m CompletionMap) insertAllColumns(c *Completer) {
 		return
 	}
 	for _, schema := range databaseMeta.ListSchemaNames() {
-		schemaMeta := databaseMeta.GetSchema(schema)
+		schemaMeta := databaseMeta.GetSchemaMetadata(schema)
 		if schemaMeta == nil {
 			continue
 		}
@@ -291,19 +291,18 @@ func (m CompletionMap) insertAllColumns(c *Completer) {
 			if tableMeta == nil {
 				continue
 			}
-			for _, column := range tableMeta.GetColumns() {
+			for _, column := range tableMeta.GetProto().GetColumns() {
 				columnID := getColumnID(c.defaultDatabase, schema, table, column.Name)
 				if _, ok := m[columnID]; !ok {
 					definition := fmt.Sprintf("%s.%s.%s | %s", c.defaultDatabase, schema, table, column.Type)
 					if !column.Nullable {
 						definition += ", NOT NULL"
 					}
-					comment := column.UserComment
 					m[columnID] = base.Candidate{
 						Type:       base.CandidateTypeColumn,
 						Text:       c.quotedIdentifierIfNeeded(column.Name),
 						Definition: definition,
-						Comment:    comment,
+						Comment:    column.Comment,
 						Priority:   c.getPriority(c.defaultDatabase, schema, table),
 					}
 				}
@@ -369,7 +368,7 @@ func (m CompletionMap) insertMetadataColumns(c *Completer, linkedServer string, 
 			break
 		}
 	}
-	schemaMetadata := databaseMetadata.GetSchema(schemaName)
+	schemaMetadata := databaseMetadata.GetSchemaMetadata(schemaName)
 	if schemaMetadata == nil {
 		return
 	}
@@ -384,19 +383,18 @@ func (m CompletionMap) insertMetadataColumns(c *Completer, linkedServer string, 
 	}
 	for _, table := range tableNames {
 		tableMetadata := schemaMetadata.GetTable(table)
-		for _, column := range tableMetadata.GetColumns() {
+		for _, column := range tableMetadata.GetProto().GetColumns() {
 			columnID := getColumnID(databaseName, schemaName, table, column.Name)
 			if _, ok := m[columnID]; !ok {
 				definition := fmt.Sprintf("%s.%s.%s | %s", databaseName, schemaName, table, column.Type)
 				if !column.Nullable {
 					definition += ", NOT NULL"
 				}
-				comment := column.UserComment
 				m[columnID] = base.Candidate{
 					Type:       base.CandidateTypeColumn,
 					Text:       c.quotedIdentifierIfNeeded(column.Name),
 					Definition: definition,
-					Comment:    comment,
+					Comment:    column.Comment,
 					Priority:   c.getPriority(c.defaultDatabase, schema, table),
 				}
 			}
@@ -449,7 +447,7 @@ func (m CompletionMap) insertMetadataViews(c *Completer, linkedServer string, da
 		}
 	}
 
-	schemaMetadata := databaseMetadata.GetSchema(schemaName)
+	schemaMetadata := databaseMetadata.GetSchemaMetadata(schemaName)
 	if schemaMetadata == nil {
 		return
 	}
@@ -474,6 +472,50 @@ func (m CompletionMap) insertMetadataViews(c *Completer, linkedServer string, da
 			m[foreignTable] = base.Candidate{
 				Type: base.CandidateTypeView,
 				Text: c.quotedIdentifierIfNeeded(foreignTable),
+			}
+		}
+	}
+}
+
+func (m CompletionMap) insertMetadataSequences(c *Completer, linkedServer string, database string, schema string) {
+	if linkedServer != "" {
+		return
+	}
+
+	databaseName, schemaName := c.defaultDatabase, c.defaultSchema
+	if database != "" {
+		databaseName = database
+	}
+	if schema != "" {
+		schemaName = schema
+	}
+	if databaseName == "" || schemaName == "" {
+		return
+	}
+
+	_, databaseMetadata, err := c.metadataGetter(c.ctx, c.instanceID, databaseName)
+	if err != nil {
+		return
+	}
+	if databaseMetadata == nil {
+		return
+	}
+	for _, schema := range databaseMetadata.ListSchemaNames() {
+		if strings.EqualFold(schema, schemaName) {
+			schemaName = schema
+			break
+		}
+	}
+
+	schemaMetadata := databaseMetadata.GetSchemaMetadata(schemaName)
+	if schemaMetadata == nil {
+		return
+	}
+	for _, seq := range schemaMetadata.ListSequenceNames() {
+		if _, ok := m[seq]; !ok {
+			m[seq] = base.Candidate{
+				Type: base.CandidateTypeSequence,
+				Text: c.quotedIdentifierIfNeeded(seq),
 			}
 		}
 	}
@@ -697,6 +739,7 @@ func (c *Completer) convertCandidates(candidates *base.CandidatesCollection) ([]
 	tableEntries := make(CompletionMap)
 	columnEntries := make(CompletionMap)
 	viewEntries := make(CompletionMap)
+	sequenceEntries := make(CompletionMap)
 
 	for tokenCandidate, continuous := range candidates.Tokens {
 		if tokenCandidate < 0 || tokenCandidate >= len(c.parser.SymbolicNames) {
@@ -740,6 +783,7 @@ func (c *Completer) convertCandidates(candidates *base.CandidatesCollection) ([]
 				if context.flags&objectFlagShowObject != 0 {
 					tableEntries.insertMetadataTables(c, context.linkedServer, context.database, context.schema)
 					viewEntries.insertMetadataViews(c, context.linkedServer, context.database, context.schema)
+					sequenceEntries.insertMetadataSequences(c, context.linkedServer, context.database, context.schema)
 				}
 				if context.linkedServer == "" && context.database == "" && context.schema == "" && context.flags&objectFlagShowObject != 0 {
 					// User do not specify the server, database and schema, and want us complete the objects, we should also insert the ctes.
@@ -758,6 +802,7 @@ func (c *Completer) convertCandidates(candidates *base.CandidatesCollection) ([]
 				if context.flags&objectFlagShowObject != 0 {
 					tableEntries.insertMetadataTables(c, context.linkedServer, context.database, context.schema)
 					viewEntries.insertMetadataViews(c, context.linkedServer, context.database, context.schema)
+					sequenceEntries.insertMetadataSequences(c, context.linkedServer, context.database, context.schema)
 				}
 				if context.linkedServer == "" && context.database == "" && context.schema == "" && context.flags&objectFlagShowObject != 0 {
 					// User do not specify the server, database and schema, and want us complete the objects, we should also insert the ctes.
@@ -776,6 +821,7 @@ func (c *Completer) convertCandidates(candidates *base.CandidatesCollection) ([]
 				if context.flags&objectFlagShowObject != 0 {
 					tableEntries.insertMetadataTables(c, context.linkedServer, context.database, context.schema)
 					viewEntries.insertMetadataViews(c, context.linkedServer, context.database, context.schema)
+					sequenceEntries.insertMetadataSequences(c, context.linkedServer, context.database, context.schema)
 					for _, reference := range c.references {
 						switch reference := reference.(type) {
 						case *base.PhysicalTableReference:
@@ -896,6 +942,7 @@ func (c *Completer) convertCandidates(candidates *base.CandidatesCollection) ([]
 	result = append(result, tableEntries.toSlice()...)
 	result = append(result, columnEntries.toSlice()...)
 	result = append(result, viewEntries.toSlice()...)
+	result = append(result, sequenceEntries.toSlice()...)
 	return result, nil
 }
 
@@ -1258,7 +1305,8 @@ func skipHeadingSQLs(statement string, caretLine int, caretOffset int) (string, 
 
 	start := 0
 	for i, sql := range list {
-		sqlEndLine := int(sql.End.GetLine())
+		// End.Line is 1-based per proto spec, convert to 0-based for comparison with caretLine
+		sqlEndLine := int(sql.End.GetLine()) - 1
 		sqlEndColumn := int(sql.End.GetColumn())
 		if sqlEndLine > caretLine || (sqlEndLine == caretLine && sqlEndColumn >= caretOffset) {
 			start = i
@@ -1266,13 +1314,15 @@ func skipHeadingSQLs(statement string, caretLine int, caretOffset int) (string, 
 				// The caret is in the first SQL statement, so we don't need to skip any SQL statements.
 				break
 			}
-			previousSQLEndLine := int(list[i-1].End.GetLine())
+			// End.Line is 1-based per proto spec, convert to 0-based
+			previousSQLEndLine := int(list[i-1].End.GetLine()) - 1
 			previousSQLEndColumn := int(list[i-1].End.GetColumn())
 			newCaretLine = caretLine - previousSQLEndLine + 1 // Convert to 1-based.
 			if caretLine == previousSQLEndLine {
 				// The caret is in the same line as the last line of the previous SQL statement.
-				// We need to adjust the caret offset.
-				newCaretOffset = caretOffset - previousSQLEndColumn - 1 // Convert to 0-based.
+				// End.Column is 1-based exclusive, so (End.Column - 1) gives 0-based start of next statement.
+				// newCaretOffset = caretOffset - (previousSQLEndColumn - 1)
+				newCaretOffset = caretOffset - previousSQLEndColumn + 1
 			}
 			break
 		}
@@ -1288,7 +1338,7 @@ func skipHeadingSQLs(statement string, caretLine int, caretOffset int) (string, 
 	return buf.String(), newCaretLine, newCaretOffset
 }
 
-func notEmptySQLCount(list []base.SingleSQL) int {
+func notEmptySQLCount(list []base.Statement) int {
 	count := 0
 	for _, sql := range list {
 		if !sql.Empty {

@@ -15,7 +15,7 @@
       <template
         v-if="shouldShowInstanceRoleSelect && shouldShowTransactionModeToggle"
       >
-        <NDivider class="!my-2" />
+        <NDivider class="my-2!" />
       </template>
       <template v-if="shouldShowTransactionModeToggle">
         <TransactionModeToggle />
@@ -26,7 +26,7 @@
 
 <script setup lang="tsx">
 import { EllipsisVerticalIcon } from "lucide-vue-next";
-import { NPopover, NButton, NDivider } from "naive-ui";
+import { NButton, NDivider, NPopover } from "naive-ui";
 import { computed } from "vue";
 import { useIssueContext } from "@/components/IssueV1/logic";
 import { useCurrentProjectV1 } from "@/store";

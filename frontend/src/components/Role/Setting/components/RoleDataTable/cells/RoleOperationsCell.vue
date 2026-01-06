@@ -1,17 +1,15 @@
 <template>
   <div v-if="isCustomRole(role.name)" class="w-full flex justify-end gap-x-2">
-    <NButton size="tiny" :disabled="!allowUpdate" @click="$emit('edit', role)">
-      {{ $t("common.edit") }}
-    </NButton>
-
-    <NButton
+    <MiniActionButton
       v-if="allowDelete"
-      size="tiny"
       type="error"
       @click="handleDeleteRole"
     >
-      {{ $t("common.delete") }}
-    </NButton>
+      <Trash2Icon />
+    </MiniActionButton>
+    <MiniActionButton :disabled="!allowUpdate" @click="$emit('edit', role)">
+      <PencilIcon />
+    </MiniActionButton>
   </div>
   <ResourceOccupiedModal
     ref="resourceOccupiedModalRef"
@@ -25,14 +23,15 @@
 
 <script lang="tsx" setup>
 import { Code } from "@connectrpc/connect";
-import { NButton } from "naive-ui";
+import { PencilIcon, Trash2Icon } from "lucide-vue-next";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { MiniActionButton } from "@/components/v2";
 import ResourceOccupiedModal from "@/components/v2/ResourceOccupiedModal/ResourceOccupiedModal.vue";
-import { useRoleStore, useWorkspaceV1Store, pushNotification } from "@/store";
+import { pushNotification, useRoleStore, useWorkspaceV1Store } from "@/store";
 import type { Role } from "@/types/proto-es/v1/role_service_pb";
 import { hasWorkspacePermissionV2, isCustomRole } from "@/utils";
-import { getErrorCode, extractGrpcErrorMessage } from "@/utils/grpcweb";
+import { extractGrpcErrorMessage, getErrorCode } from "@/utils/connect";
 import { useCustomRoleSettingContext } from "../../../context";
 
 const props = defineProps<{

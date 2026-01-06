@@ -7,7 +7,7 @@
     <DrawerContent
       :title="panelTitle"
       :closable="true"
-      class="w-[64rem] max-w-[100vw] relative"
+      class="w-5xl max-w-[100vw] relative"
     >
       <div class="w-full flex flex-col justify-start items-start gap-y-4 pb-12">
         <div class="w-full">
@@ -34,7 +34,8 @@
               <RequiredStar />
             </div>
             <QuerierDatabaseResourceForm
-              v-model:database-resources="state.databaseResources"
+              ref="databaseResourceFormRef"
+              :database-resources="databaseResources"
               :project-name="project.name"
               :include-cloumn="false"
               :required-feature="PlanFeature.FEATURE_IAM"
@@ -101,7 +102,7 @@
 <script lang="ts" setup>
 import { cloneDeep, isEqual } from "lodash-es";
 import { NButton, NInput } from "naive-ui";
-import { computed, reactive, onMounted, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { BBButtonConfirm } from "@/bbkit";
 import ExpirationSelector from "@/components/ExpirationSelector.vue";
@@ -110,17 +111,17 @@ import MembersBindingSelect from "@/components/Member/MembersBindingSelect.vue";
 import RequiredStar from "@/components/RequiredStar.vue";
 import { Drawer, DrawerContent } from "@/components/v2";
 import {
+  pushNotification,
   useProjectIamPolicy,
   useProjectIamPolicyStore,
-  pushNotification,
 } from "@/store";
-import { PresetRoleType, type DatabaseResource } from "@/types";
+import { PresetRoleType } from "@/types";
 import { State } from "@/types/proto-es/v1/common_pb";
 import type { Binding } from "@/types/proto-es/v1/iam_policy_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
-import { displayRoleTitle, checkRoleContainsAnyPermission } from "@/utils";
-import { convertFromExpr, buildConditionExpr } from "@/utils/issue/cel";
+import { checkRoleContainsAnyPermission, displayRoleTitle } from "@/utils";
+import { buildConditionExpr, convertFromExpr } from "@/utils/issue/cel";
 import { getBindingIdentifier } from "../utils";
 
 const props = defineProps<{
@@ -136,8 +137,6 @@ interface LocalState {
   title: string;
   description: string;
   expirationTimestamp?: number;
-  // Querier and exporter options.
-  databaseResources?: DatabaseResource[];
   isLoading: boolean;
 }
 
@@ -149,6 +148,8 @@ const state = reactive<LocalState>({
   isLoading: true,
 });
 const expirationSelectorRef = ref<InstanceType<typeof ExpirationSelector>>();
+const databaseResourceFormRef =
+  ref<InstanceType<typeof QuerierDatabaseResourceForm>>();
 
 const projectResourceName = computed(() => props.project.name);
 const { policy: iamPolicy } = useProjectIamPolicy(projectResourceName);
@@ -171,23 +172,21 @@ const allowRemoveRole = () => {
   return true;
 };
 
-const bindingCondition = computed(() =>
-  buildConditionExpr({
-    title: state.title,
-    role: props.binding.role,
-    description: state.description,
-    expirationTimestampInMS: state.expirationTimestamp,
-    databaseResources: state.databaseResources,
-  })
-);
-
 const allowConfirm = computed(() => {
   // only allow update current single user.
   return (
     props.binding.members.length === 1 &&
     expirationSelectorRef.value?.isValid &&
-    !isEqual(bindingCondition.value, props.binding.condition)
+    databaseResourceFormRef.value?.isValid
   );
+});
+
+const databaseResources = computed(() => {
+  if (props.binding.parsedExpr) {
+    const conditionExpr = convertFromExpr(props.binding.parsedExpr);
+    return conditionExpr.databaseResources;
+  }
+  return undefined;
 });
 
 onMounted(() => {
@@ -200,9 +199,6 @@ onMounted(() => {
     const conditionExpr = convertFromExpr(binding.parsedExpr);
     if (conditionExpr.expiredTime) {
       state.expirationTimestamp = new Date(conditionExpr.expiredTime).getTime();
-    }
-    if (conditionExpr.databaseResources) {
-      state.databaseResources = conditionExpr.databaseResources;
     }
   }
 
@@ -226,7 +222,16 @@ const handleUpdateRole = async () => {
 
   const newBinding = cloneDeep(props.binding);
   newBinding.members = [member];
-  newBinding.condition = bindingCondition.value;
+
+  const databaseResources =
+    await databaseResourceFormRef.value?.getDatabaseResources();
+  newBinding.condition = buildConditionExpr({
+    title: state.title,
+    role: props.binding.role,
+    description: state.description,
+    expirationTimestampInMS: state.expirationTimestamp,
+    databaseResources,
+  });
 
   const policy = cloneDeep(iamPolicy.value);
   const oldBindingIndex = policy.bindings.findIndex(

@@ -13,9 +13,7 @@ import {
 import { computed, h } from "vue";
 import { useRoute } from "vue-router";
 import type { SidebarItem } from "@/components/v2/Sidebar/type";
-import { getFlattenRoutes } from "@/components/v2/Sidebar/utils.ts";
 import { t } from "@/plugins/i18n";
-import workspaceRoutes from "@/router/dashboard/workspace";
 import {
   DATABASE_ROUTE_DASHBOARD,
   ENVIRONMENT_V1_ROUTE_DASHBOARD,
@@ -25,15 +23,15 @@ import {
   WORKSPACE_ROUTE_CUSTOM_APPROVAL,
   WORKSPACE_ROUTE_DATA_CLASSIFICATION,
   WORKSPACE_ROUTE_GLOBAL_MASKING,
+  WORKSPACE_ROUTE_IDENTITY_PROVIDERS,
   WORKSPACE_ROUTE_IM,
   WORKSPACE_ROUTE_LANDING,
+  WORKSPACE_ROUTE_MCP,
   WORKSPACE_ROUTE_MEMBERS,
-  WORKSPACE_ROUTE_RISKS,
+  WORKSPACE_ROUTE_RISK_CENTER,
   WORKSPACE_ROUTE_ROLES,
-  WORKSPACE_ROUTE_SCHEMA_TEMPLATE,
   WORKSPACE_ROUTE_SEMANTIC_TYPES,
   WORKSPACE_ROUTE_SQL_REVIEW,
-  WORKSPACE_ROUTE_IDENTITY_PROVIDERS,
   WORKSPACE_ROUTE_USER_PROFILE,
   WORKSPACE_ROUTE_USERS,
 } from "@/router/dashboard/workspaceRoutes";
@@ -42,8 +40,6 @@ import {
   SETTING_ROUTE_WORKSPACE_GENERAL,
   SETTING_ROUTE_WORKSPACE_SUBSCRIPTION,
 } from "@/router/dashboard/workspaceSetting";
-import { usePermissionStore } from "@/store";
-import { hasWorkspacePermissionV2 } from "@/utils";
 
 export interface DashboardSidebarItem extends SidebarItem {
   navigationId?: string;
@@ -54,7 +50,6 @@ export interface DashboardSidebarItem extends SidebarItem {
 
 export const useDashboardSidebar = () => {
   const route = useRoute();
-  const permissionStore = usePermissionStore();
 
   const getItemClass = (item: SidebarItem): string[] => {
     const { name: current } = route;
@@ -75,36 +70,6 @@ export const useDashboardSidebar = () => {
     }
     return classes;
   };
-
-  const filterSidebarByPermissions = (
-    sidebarList: DashboardSidebarItem[]
-  ): DashboardSidebarItem[] => {
-    return sidebarList
-      .filter((item) => {
-        const routeConfig = flattenRoutes.value.find(
-          (workspaceRoute) => workspaceRoute.name === item.name
-        );
-        return (routeConfig?.permissions ?? []).every((permission) =>
-          hasWorkspacePermissionV2(permission)
-        );
-      })
-      .map((item) => ({
-        ...item,
-        expand:
-          item.expand ||
-          (item.children ?? [])
-            .reduce((classList, child) => {
-              classList.push(...getItemClass(child));
-              return classList;
-            }, [] as string[])
-            .includes("router-link-active"),
-        children: filterSidebarByPermissions(item.children ?? []),
-      }));
-  };
-
-  const flattenRoutes = computed(() => {
-    return getFlattenRoutes(workspaceRoutes);
-  });
 
   const dashboardSidebarItemList = computed((): DashboardSidebarItem[] => {
     const sidebarList: DashboardSidebarItem[] = [
@@ -166,7 +131,6 @@ export const useDashboardSidebar = () => {
             title: t("settings.sidebar.members"),
             name: WORKSPACE_ROUTE_MEMBERS,
             type: "route",
-            hide: permissionStore.onlyWorkspaceMember,
           },
           {
             title: t("settings.sidebar.custom-roles"),
@@ -196,18 +160,13 @@ export const useDashboardSidebar = () => {
             type: "route",
           },
           {
-            title: t("custom-approval.risk.risks"),
-            name: WORKSPACE_ROUTE_RISKS,
+            title: t("custom-approval.risk.self"),
+            name: WORKSPACE_ROUTE_RISK_CENTER,
             type: "route",
           },
           {
             title: t("custom-approval.self"),
             name: WORKSPACE_ROUTE_CUSTOM_APPROVAL,
-            type: "route",
-          },
-          {
-            title: t("schema-template.self"),
-            name: WORKSPACE_ROUTE_SCHEMA_TEMPLATE,
             type: "route",
           },
         ],
@@ -244,13 +203,17 @@ export const useDashboardSidebar = () => {
             name: WORKSPACE_ROUTE_IM,
             type: "route",
           },
+          {
+            title: t("settings.sidebar.mcp"),
+            name: WORKSPACE_ROUTE_MCP,
+            type: "route",
+          },
         ],
       },
       {
         title: t("common.settings"),
         icon: () => h(SettingsIcon),
         type: "div",
-        hide: !hasWorkspacePermissionV2("bb.settings.get"),
         children: [
           {
             title: t("settings.sidebar.general"),
@@ -271,7 +234,7 @@ export const useDashboardSidebar = () => {
       },
     ];
 
-    return filterSidebarByPermissions(sidebarList);
+    return sidebarList;
   });
 
   return {

@@ -1,6 +1,6 @@
 <template>
   <div
-    class="w-full mx-auto flex flex-col justify-start items-start space-y-3 mb-6"
+    class="w-full mx-auto flex flex-col justify-start items-start gap-y-3 mb-6"
   >
     <div
       class="w-full flex flex-col gap-y-2 lg:flex-row justify-start items-start lg:items-center"
@@ -9,43 +9,33 @@
         {{ $t("common.database") }}
       </span>
       <EnvironmentSelect
-        class="!w-60 mr-3 shrink-0"
+        class="mr-3"
         name="environment"
-        :environment-name="state.environmentName"
-        @update:environment-name="handleEnvironmentSelect"
+        :value="state.environmentName"
+        @update:value="handleEnvironmentSelect($event as (string | undefined))"
       />
       <DatabaseSelect
-        class="!w-128 max-w-full"
+        :placeholder="$t('database.select')"
         :project-name="project.name"
-        :database-name="state.databaseName"
+        :value="state.databaseName"
         :environment-name="state.environmentName"
         :allowed-engine-type-list="ALLOWED_ENGINES"
-        :fallback-option="false"
-        @update:database-name="handleDatabaseSelect"
+        @update:value="(val) => handleDatabaseSelect(val as (string | undefined))"
       />
     </div>
     <div
-      class="w-full flex flex-col gap-y-2 lg:flex-row justify-start items-start lg:items-center"
+      class="w-full flex flex-col gap-y-2"
     >
-      <span class="flex w-40 items-center shrink-0 text-sm">
+      <div class="text-sm">
         {{ $t("database.sync-schema.schema-version.self") }}
-      </span>
-      <div
-        class="w-192 max-w-full flex flex-row justify-start items-center relative"
-      >
-        <NSelect
-          :loading="isPreparingSchemaVersionOptions"
-          :value="state.changelogName"
-          :options="schemaVersionOptions"
-          :placeholder="$t('changelog.select')"
-          :disabled="schemaVersionOptions.length === 0"
-          :render-label="renderSchemaVersionLabel"
-          :fallback-option="
-            isMockLatestSchemaChangelogSelected
-              ? fallbackSchemaVersionOption
-              : false
-          "
-          @update:value="handleSchemaVersionSelect"
+        <div class="textinfolabel">
+        {{ t("changelog.select") }}
+      </div>
+      </div>
+      <div class="w-full flex flex-row justify-start items-center relative">
+        <ChangelogSelector
+          v-model:value="state.changelogName"
+          :database="state.databaseName"
         />
       </div>
     </div>
@@ -53,40 +43,14 @@
 </template>
 
 <script lang="tsx" setup>
-import { head } from "lodash-es";
-import type { SelectOption } from "naive-ui";
-import { NSelect, NTag } from "naive-ui";
-import { computed, reactive, ref, watch } from "vue";
+import { reactive, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { DatabaseSelect, EnvironmentSelect } from "@/components/v2";
-import {
-  useChangelogStore,
-  useDBSchemaV1Store,
-  useDatabaseV1Store,
-} from "@/store";
-import {
-  UNKNOWN_ID,
-  getDateForPbTimestampProtoEs,
-  isValidDatabaseName,
-} from "@/types";
-import type { Changelog } from "@/types/proto-es/v1/database_service_pb";
-import {
-  Changelog_Status,
-  Changelog_Type,
-} from "@/types/proto-es/v1/database_service_pb";
+import { useDatabaseV1Store } from "@/store";
+import { isValidDatabaseName } from "@/types";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
-import {
-  extractChangelogUID,
-  isValidChangelogName,
-  mockLatestChangelog,
-} from "@/utils/v1/changelog";
-import HumanizeDate from "../misc/HumanizeDate.vue";
+import ChangelogSelector from "./ChangelogSelector.vue";
 import { ALLOWED_ENGINES, type ChangelogSourceSchema } from "./types";
-
-const ALLOWED_CHANGELOG_TYPES: Changelog_Type[] = [
-  Changelog_Type.BASELINE,
-  Changelog_Type.MIGRATE,
-];
 
 const props = defineProps<{
   project: Project;
@@ -112,14 +76,10 @@ const state = reactive<LocalState>({
   changelogName: props.sourceSchema?.changelogName,
 });
 const databaseStore = useDatabaseV1Store();
-const dbSchemaStore = useDBSchemaV1Store();
-const changelogStore = useChangelogStore();
-
-const isPreparingSchemaVersionOptions = ref(false);
 
 const handleEnvironmentSelect = async (name: string | undefined) => {
   if (name !== state.environmentName) {
-    state.databaseName = undefined;
+    state.databaseName = "";
   }
   state.environmentName = name;
 };
@@ -132,150 +92,11 @@ const handleDatabaseSelect = async (name: string | undefined) => {
     }
     state.environmentName = database.effectiveEnvironment;
     state.databaseName = name;
-    dbSchemaStore.getOrFetchDatabaseMetadata({
-      database: database.name,
-    });
+    state.changelogName = "";
   } else {
-    state.databaseName = undefined;
+    state.databaseName = "";
   }
 };
-
-const databaseChangelogList = (databaseName: string) => {
-  return changelogStore
-    .changelogListByDatabase(databaseName)
-    .filter(
-      (changelog) =>
-        ALLOWED_CHANGELOG_TYPES.includes(changelog.type) &&
-        changelog.status === Changelog_Status.DONE
-    );
-};
-
-const schemaVersionOptions = computed(() => {
-  const { databaseName } = state;
-  if (!isValidDatabaseName(databaseName)) {
-    return [];
-  }
-  const changelogs = databaseChangelogList(databaseName);
-  if (changelogs.length === 0) return [];
-  const options: SelectOption[] = [
-    {
-      value: "PLACEHOLDER",
-      label: t("changelog.select"),
-      disabled: true,
-      style: "cursor: default",
-    },
-  ];
-  options.push(
-    ...changelogs.map<SelectOption>((changelog, index) => {
-      return {
-        changelog,
-        index,
-        value: changelog.name,
-        label: changelog.name,
-      };
-    })
-  );
-  return options;
-});
-
-const renderSchemaVersionLabel = (option: SelectOption) => {
-  if (option.disabled || !option.changelog) {
-    return option.label as string;
-  }
-  const changelog = option.changelog as Changelog;
-  if (!isValidChangelogName(changelog.name)) {
-    return "Latest version";
-  }
-
-  return (
-    <div class="flex flex-row justify-start items-center truncate gap-1">
-      <HumanizeDate
-        class="text-control-light"
-        date={getDateForPbTimestampProtoEs(changelog.createTime)}
-      />
-      <NTag round size="small">
-        {Changelog_Type[changelog.type]}
-      </NTag>
-      {changelog.version && (
-        <NTag round size="small">
-          {changelog.version}
-        </NTag>
-      )}
-      {changelog.statement ? (
-        <span class="truncate">{changelog.statement}</span>
-      ) : (
-        <span class="text-gray-400">{t("common.empty")}</span>
-      )}
-    </div>
-  );
-};
-
-const isMockLatestSchemaChangelogSelected = computed(() => {
-  if (!state.changelogName) return false;
-  return extractChangelogUID(state.changelogName) === String(UNKNOWN_ID);
-});
-
-const fallbackSchemaVersionOption = (value: string): SelectOption => {
-  if (extractChangelogUID(value) === String(UNKNOWN_ID)) {
-    const { databaseName } = state;
-    if (isValidDatabaseName(databaseName)) {
-      const db = databaseStore.getDatabaseByName(databaseName);
-      const changelog = mockLatestChangelog(db);
-      return {
-        changelog,
-        index: 0,
-        value: changelog.name,
-        label: changelog.name,
-      };
-    }
-  }
-  return {
-    value: "PLACEHOLDER",
-    disabled: true,
-    label: t("changelog.select"),
-    style: "cursor: default",
-  };
-};
-
-const handleSchemaVersionSelect = async (_: string, option: SelectOption) => {
-  const changelog = option.changelog as Changelog;
-  state.changelogName = changelog.name;
-};
-
-watch(
-  () => state.databaseName,
-  async (databaseName) => {
-    if (!isValidDatabaseName(databaseName)) {
-      state.changelogName = undefined;
-      return;
-    }
-
-    const database = databaseStore.getDatabaseByName(databaseName);
-    if (database) {
-      try {
-        isPreparingSchemaVersionOptions.value = true;
-        const changelogList =
-          await changelogStore.getOrFetchChangelogListOfDatabase(database.name);
-        const filteredChangelogList = changelogList.filter((changelog) =>
-          ALLOWED_CHANGELOG_TYPES.includes(changelog.type)
-        );
-
-        if (filteredChangelogList.length > 0) {
-          // Default select the first changelog.
-          state.changelogName = head(filteredChangelogList)?.name;
-        } else {
-          // If database has no changelog, we will use its latest schema.
-          state.changelogName = mockLatestChangelog(database).name;
-        }
-      } finally {
-        isPreparingSchemaVersionOptions.value = false;
-      }
-    } else {
-      state.changelogName = undefined;
-    }
-  },
-  { immediate: true }
-);
 
 watch(
   [

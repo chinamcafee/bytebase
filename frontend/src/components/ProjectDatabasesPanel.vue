@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-2">
+  <div class="flex flex-col gap-y-2">
     <div
       class="w-full flex flex-col sm:flex-row items-start sm:items-end justify-between gap-2"
     >
@@ -10,16 +10,22 @@
         :placeholder="$t('database.filter-database')"
         :scope-options="scopeOptions"
       />
-      <NButton
-        v-if="allowToCreateDB"
-        type="primary"
-        @click="state.showCreateDrawer = true"
+      <PermissionGuardWrapper
+        v-slot="slotProps"
+        :project="project"
+        :permissions="['bb.instances.list', 'bb.issues.create', 'bb.plans.create']"
       >
-        <template #icon>
-          <PlusIcon class="h-4 w-4" />
-        </template>
-        {{ $t("quick-action.new-db") }}
-      </NButton>
+        <NButton
+          type="primary"
+          :disabled="slotProps.disabled"
+          @click="state.showCreateDrawer = true"
+        >
+          <template #icon>
+            <PlusIcon class="h-4 w-4" />
+          </template>
+          {{ $t("quick-action.new-db") }}
+        </NButton>
+      </PermissionGuardWrapper>
     </div>
     <DatabaseOperations
       :project-name="project.name"
@@ -49,24 +55,25 @@
 <script lang="ts" setup>
 import { PlusIcon } from "lucide-vue-next";
 import { NButton } from "naive-ui";
-import { reactive, computed, ref, watch } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { CreateDatabasePrepPanel } from "@/components/CreateDatabasePrepForm";
+import PermissionGuardWrapper from "@/components/Permission/PermissionGuardWrapper.vue";
 import { Drawer } from "@/components/v2";
 import { PagedDatabaseTable } from "@/components/v2/Model/DatabaseV1Table";
 import { useDatabaseV1Store } from "@/store";
 import {
-  instanceNamePrefix,
   environmentNamePrefix,
+  instanceNamePrefix,
 } from "@/store/modules/v1/common";
-import { isValidDatabaseName, type ComposedDatabase } from "@/types";
+import { type ComposedDatabase, isValidDatabaseName } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import type { SearchParams, SearchScope } from "@/utils";
 import {
   CommonFilterScopeIdList,
   extractProjectResourceName,
-  hasProjectPermissionV2,
-  hasWorkspacePermissionV2,
+  getValueFromSearchParams,
+  getValuesFromSearchParams,
 } from "@/utils";
 import AdvancedSearch from "./AdvancedSearch";
 import { useCommonSearchScopeOptions } from "./AdvancedSearch/useCommonSearchScopeOptions";
@@ -114,13 +121,6 @@ watch(
 
 const pagedDatabaseTableRef = ref<InstanceType<typeof PagedDatabaseTable>>();
 
-const allowToCreateDB = computed(() => {
-  return (
-    hasWorkspacePermissionV2("bb.instances.list") &&
-    hasProjectPermissionV2(props.project, "bb.issues.create")
-  );
-});
-
 const scopeOptions = useCommonSearchScopeOptions([
   ...CommonFilterScopeIdList,
   "label",
@@ -129,51 +129,32 @@ const scopeOptions = useCommonSearchScopeOptions([
 ]);
 
 const selectedInstance = computed(() => {
-  const instanceId = state.params.scopes.find(
-    (scope) => scope.id === "instance"
-  )?.value;
-  if (!instanceId) {
-    return;
-  }
-  return `${instanceNamePrefix}${instanceId}`;
+  return getValueFromSearchParams(state.params, "instance", instanceNamePrefix);
 });
 
 const selectedEnvironment = computed(() => {
-  const environmentId = state.params.scopes.find(
-    (scope) => scope.id === "environment"
-  )?.value;
-  if (!environmentId) {
-    return;
-  }
-  return `${environmentNamePrefix}${environmentId}`;
+  return getValueFromSearchParams(
+    state.params,
+    "environment",
+    environmentNamePrefix
+  );
 });
 
 const selectedLabels = computed(() => {
-  return state.params.scopes
-    .filter((scope) => scope.id === "label")
-    .map((scope) => scope.value);
+  return getValuesFromSearchParams(state.params, "label");
 });
 
 const selectedEngines = computed(() => {
-  return state.params.scopes
-    .filter((scope) => scope.id === "engine")
-    .map((scope) => {
-      // Convert string engine name to Engine enum
-      const engineKey = scope.value.toUpperCase();
-      return (
-        Engine[engineKey as keyof typeof Engine] ?? Engine.ENGINE_UNSPECIFIED
-      );
-    });
+  return getValuesFromSearchParams(state.params, "engine").map(
+    (engine) => Engine[engine as keyof typeof Engine]
+  );
 });
 
 const selectedDriftedValue = computed(() => {
-  const driftedValue = state.params.scopes.find(
-    (scope) => scope.id === "drifted"
-  )?.value;
-  if (driftedValue === undefined) {
-    return undefined;
-  }
-  return driftedValue === "true" ? true : false;
+  const driftedValue = getValueFromSearchParams(state.params, "drifted");
+  if (driftedValue === "true") return true;
+  if (driftedValue === "false") return false;
+  return undefined;
 });
 
 const filter = computed(() => ({

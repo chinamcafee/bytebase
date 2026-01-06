@@ -19,13 +19,10 @@ import (
 
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
-	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/component/dbfactory"
-	"github.com/bytebase/bytebase/backend/component/state"
-	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
-	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
 	"github.com/bytebase/bytebase/backend/plugin/db"
+	"github.com/bytebase/bytebase/backend/plugin/schema"
 	"github.com/bytebase/bytebase/backend/store"
 	"github.com/bytebase/bytebase/backend/store/model"
 )
@@ -40,13 +37,10 @@ const (
 )
 
 // NewSyncer creates a schema syncer.
-func NewSyncer(stores *store.Store, dbFactory *dbfactory.DBFactory, profile *config.Profile, stateCfg *state.State, licenseService *enterprise.LicenseService) *Syncer {
+func NewSyncer(stores *store.Store, dbFactory *dbfactory.DBFactory) *Syncer {
 	return &Syncer{
-		store:          stores,
-		dbFactory:      dbFactory,
-		profile:        profile,
-		stateCfg:       stateCfg,
-		licenseService: licenseService,
+		store:     stores,
+		dbFactory: dbFactory,
 	}
 }
 
@@ -56,9 +50,6 @@ type Syncer struct {
 
 	store           *store.Store
 	dbFactory       *dbfactory.DBFactory
-	profile         *config.Profile
-	stateCfg        *state.State
-	licenseService  *enterprise.LicenseService
 	databaseSyncMap sync.Map // map[string]*store.DatabaseMessage
 }
 
@@ -88,12 +79,10 @@ func (s *Syncer) Run(ctx context.Context, wg *sync.WaitGroup) {
 		for {
 			select {
 			case <-ticker.C:
-				instances, err := s.store.ListInstancesV2(ctx, &store.FindInstanceMessage{})
+				instances, err := s.store.ListInstances(ctx, &store.FindInstanceMessage{})
 				if err != nil {
-					if err != nil {
-						slog.Error("Failed to list instance", log.BBError(err))
-						return
-					}
+					slog.Error("Failed to list instance", log.BBError(err))
+					return
 				}
 				instanceMap := make(map[string]*store.InstanceMessage)
 				for _, instance := range instances {
@@ -106,26 +95,8 @@ func (s *Syncer) Run(ctx context.Context, wg *sync.WaitGroup) {
 						return true
 					}
 
-					instance, ok := instanceMap[database.InstanceID]
-					if !ok {
-						slog.Debug("Instance not found",
-							slog.String("instance", database.InstanceID),
-							log.BBError(err))
-						return true
-					}
-					maximumConnections := int(instance.Metadata.GetMaximumConnections())
-					if maximumConnections <= 0 {
-						maximumConnections = common.DefaultInstanceMaximumConnections
-					}
-					if s.stateCfg.InstanceOutstandingConnections.Increment(instance.ResourceID, maximumConnections) {
-						return true
-					}
-
 					s.databaseSyncMap.Delete(key)
 					dbwp.Go(func() {
-						defer func() {
-							s.stateCfg.InstanceOutstandingConnections.Decrement(instance.ResourceID)
-						}()
 						slog.Debug("Sync database schema", slog.String("instance", database.InstanceID), slog.String("database", database.DatabaseName))
 						if err := s.SyncDatabaseSchema(ctx, database); err != nil {
 							slog.Debug("Failed to sync database schema",
@@ -157,7 +128,7 @@ func (s *Syncer) trySyncAll(ctx context.Context) {
 	}()
 
 	wp := pool.New().WithMaxGoroutines(MaximumOutstanding)
-	instances, err := s.store.ListInstancesV2(ctx, &store.FindInstanceMessage{})
+	instances, err := s.store.ListInstances(ctx, &store.FindInstanceMessage{})
 	if err != nil {
 		slog.Error("Failed to retrieve instances", log.BBError(err))
 		return
@@ -300,7 +271,7 @@ func (s *Syncer) SyncInstance(ctx context.Context, instance *store.InstanceMessa
 	if instanceMeta.Version != instance.Metadata.GetVersion() {
 		metadata.Version = instanceMeta.Version
 	}
-	updatedInstance, err := s.store.UpdateInstanceV2(ctx, updateInstance)
+	updatedInstance, err := s.store.UpdateInstance(ctx, updateInstance)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -354,7 +325,7 @@ func (s *Syncer) SyncInstance(ctx context.Context, instance *store.InstanceMessa
 
 // doSyncDatabaseSchema is the core implementation that syncs the schema for a database and optionally creates a sync history record.
 func (s *Syncer) doSyncDatabaseSchema(ctx context.Context, database *store.DatabaseMessage, createSyncHistory bool) (syncHistoryID int64, retErr error) {
-	instance, err := s.store.GetInstanceV2(ctx, &store.FindInstanceMessage{ResourceID: &database.InstanceID})
+	instance, err := s.store.GetInstance(ctx, &store.FindInstanceMessage{ResourceID: &database.InstanceID})
 	if err != nil {
 		return 0, errors.Wrapf(err, "failed to get instance %q", database.InstanceID)
 	}
@@ -369,62 +340,35 @@ func (s *Syncer) doSyncDatabaseSchema(ctx context.Context, database *store.Datab
 	// Sync database schema
 	deadlineCtx, cancelFunc := context.WithDeadline(ctx, time.Now().Add(syncTimeout))
 	defer cancelFunc()
-	databaseMetadata, err := driver.SyncDBSchema(deadlineCtx)
+	syncedDatabaseMetadata, err := driver.SyncDBSchema(deadlineCtx)
 	if err != nil {
 		return 0, errors.Wrapf(err, "failed to sync database schema for database %q", database.DatabaseName)
 	}
 	var schemaBuf bytes.Buffer
-	if err := driver.Dump(deadlineCtx, &schemaBuf, databaseMetadata); err != nil {
+	if err := driver.Dump(deadlineCtx, &schemaBuf, syncedDatabaseMetadata); err != nil {
 		return 0, errors.Wrapf(err, "failed to dump database schema for database %q", database.DatabaseName)
 	}
 	rawDump := schemaBuf.Bytes()
 
-	dbSchema, err := s.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
+	dbMetadata, err := s.store.GetDBSchema(ctx, &store.FindDBSchemaMessage{
 		InstanceID:   database.InstanceID,
 		DatabaseName: database.DatabaseName,
 	})
 	if err != nil {
 		return 0, errors.Wrapf(err, "failed to get database schema for database %q", database.DatabaseName)
 	}
-
-	dbModelConfig := model.NewDatabaseConfig(nil)
-	if dbSchema != nil {
-		dbModelConfig = dbSchema.GetInternalConfig()
+	// If the schema does not exist, then we create a new one.
+	// This happens when creating a new database in the test.
+	if dbMetadata == nil {
+		dbMetadata = model.NewDatabaseMetadata(&storepb.DatabaseSchemaMetadata{}, nil, &storepb.DatabaseConfig{}, instance.Metadata.GetEngine(), store.IsObjectCaseSensitive(instance))
 	}
 
-	project, err := s.store.GetProjectV2(ctx, &store.FindProjectMessage{
-		ResourceID: &database.ProjectID,
-	})
-	if err != nil {
-		return 0, errors.Wrapf(err, `failed to get project by id "%s"`, database.ProjectID)
-	}
-	classificationConfig, err := s.store.GetDataClassificationConfigByID(ctx, project.DataClassificationConfigID)
-	if err != nil {
-		return 0, errors.Wrapf(err, `failed to get classification config by id "%s"`, project.DataClassificationConfigID)
-	}
-
-	if instance.Metadata.GetEngine() != storepb.Engine_MYSQL && instance.Metadata.GetEngine() != storepb.Engine_POSTGRES {
-		// Force to disable classification from comment if the engine is not MYSQL or PG.
-		classificationConfig.ClassificationFromConfig = true
-	}
-	var dbConfig *storepb.DatabaseConfig
-	if classificationConfig.ClassificationFromConfig {
-		// Only set the user comment.
-		setUserCommentFromComment(databaseMetadata)
-		dbConfig = dbModelConfig.BuildDatabaseConfig()
-	} else {
-		// Get classification from the comment.
-		if err := s.licenseService.IsFeatureEnabledForInstance(v1pb.PlanFeature_FEATURE_DATA_CLASSIFICATION, instance); err == nil {
-			dbConfig = buildDatabaseConfigWithClassificationFromComment(databaseMetadata, dbModelConfig, classificationConfig)
-		} else {
-			dbConfig = dbModelConfig.BuildDatabaseConfig()
-		}
-	}
+	dbConfig := dbMetadata.GetConfig()
 
 	// Check for schema drift only when not creating sync history
-	var drifted, skipped bool
+	var drifted bool
 	if !createSyncHistory {
-		drifted, skipped, err = s.getSchemaDrifted(ctx, instance, database, string(rawDump))
+		drifted, err = s.getSchemaDrifted(ctx, instance, database, string(rawDump))
 		if err != nil {
 			return 0, errors.Wrapf(err, "failed to get schema drifted for database %q", database.DatabaseName)
 		}
@@ -434,10 +378,10 @@ func (s *Syncer) doSyncDatabaseSchema(ctx context.Context, database *store.Datab
 	metadataUpdates := []func(*storepb.DatabaseMetadata){
 		func(md *storepb.DatabaseMetadata) {
 			md.LastSyncTime = timestamppb.Now()
-			md.BackupAvailable = s.databaseBackupAvailable(ctx, instance, databaseMetadata)
-			md.Datashare = databaseMetadata.Datashare
+			md.BackupAvailable = s.databaseBackupAvailable(ctx, instance, syncedDatabaseMetadata)
+			md.Datashare = syncedDatabaseMetadata.Datashare
 			if !createSyncHistory {
-				md.Drifted = !skipped && drifted
+				md.Drifted = drifted
 			}
 		},
 	}
@@ -453,10 +397,10 @@ func (s *Syncer) doSyncDatabaseSchema(ctx context.Context, database *store.Datab
 
 	if err := s.store.UpsertDBSchema(ctx,
 		database.InstanceID, database.DatabaseName,
-		databaseMetadata, dbConfig, rawDump,
+		syncedDatabaseMetadata, dbConfig, rawDump,
 	); err != nil {
 		if strings.Contains(err.Error(), "escape sequence") {
-			if metadataBytes, err := protojson.Marshal(databaseMetadata); err == nil {
+			if metadataBytes, err := protojson.Marshal(syncedDatabaseMetadata); err == nil {
 				slog.Error("unsupported Unicode escape sequence", slog.String("metadata", string(metadataBytes)), slog.String("raw_dump", string(rawDump)))
 			}
 		}
@@ -465,10 +409,10 @@ func (s *Syncer) doSyncDatabaseSchema(ctx context.Context, database *store.Datab
 
 	// Create sync history if requested
 	if createSyncHistory {
-		id, err := s.store.CreateSyncHistory(ctx, database.InstanceID, database.DatabaseName, databaseMetadata, string(rawDump))
+		id, err := s.store.CreateSyncHistory(ctx, database.InstanceID, database.DatabaseName, syncedDatabaseMetadata, string(rawDump))
 		if err != nil {
 			if strings.Contains(err.Error(), "escape sequence") {
-				if metadataBytes, err := protojson.Marshal(databaseMetadata); err == nil {
+				if metadataBytes, err := protojson.Marshal(syncedDatabaseMetadata); err == nil {
 					slog.Error("unsupported Unicode escape sequence", slog.String("metadata", string(metadataBytes)), slog.String("raw_dump", string(rawDump)))
 				}
 			}
@@ -491,10 +435,10 @@ func (s *Syncer) SyncDatabaseSchema(ctx context.Context, database *store.Databas
 	return err
 }
 
-func (s *Syncer) getSchemaDrifted(ctx context.Context, instance *store.InstanceMessage, database *store.DatabaseMessage, rawDump string) (drifted bool, skipped bool, err error) {
+func (s *Syncer) getSchemaDrifted(ctx context.Context, instance *store.InstanceMessage, database *store.DatabaseMessage, rawDump string) (drifted bool, err error) {
 	// Redis and MongoDB are schemaless.
 	if disableSchemaDriftCheck(instance.Metadata.GetEngine()) {
-		return false, false, nil
+		return false, nil
 	}
 	limit := 1
 	list, err := s.store.ListChangelogs(ctx, &store.FindChangelogMessage{
@@ -506,40 +450,44 @@ func (s *Syncer) getSchemaDrifted(ctx context.Context, instance *store.InstanceM
 		ShowFull:       true,
 	})
 	if err != nil {
-		return false, false, errors.Wrapf(err, "failed to list changelogs")
+		return false, errors.Wrapf(err, "failed to list changelogs")
 	}
 	if len(list) == 0 {
-		return false, false, nil
+		return false, nil
 	}
 
 	changelog := list[0]
-	if changelog.Payload.GetGitCommit() != s.profile.GitCommit {
-		return false, true, nil
-	}
 	if changelog.SyncHistoryUID == nil {
-		return false, false, errors.Errorf("expect sync history but get nil")
+		return false, errors.Errorf("expect sync history but get nil")
 	}
-	latestSchema := string(rawDump)
-	return changelog.Schema != latestSchema, false, nil
+
+	// Skip drift detection if dump format version changed to avoid false positives after Bytebase upgrade.
+	currentVersion := schema.GetDumpFormatVersion(instance.Metadata.GetEngine())
+	baselineVersion := changelog.Payload.GetDumpVersion()
+	if baselineVersion != currentVersion {
+		return false, nil
+	}
+
+	return changelog.Schema != rawDump, nil
 }
 
-func (s *Syncer) databaseBackupAvailable(ctx context.Context, instance *store.InstanceMessage, dbSchema *storepb.DatabaseSchemaMetadata) bool {
+func (s *Syncer) databaseBackupAvailable(ctx context.Context, instance *store.InstanceMessage, dbMetadata *storepb.DatabaseSchemaMetadata) bool {
 	if !common.EngineSupportPriorBackup(instance.Metadata.GetEngine()) {
 		return false
 	}
 	switch instance.Metadata.GetEngine() {
 	case storepb.Engine_POSTGRES:
-		if dbSchema == nil {
+		if dbMetadata == nil {
 			return false
 		}
-		for _, schema := range dbSchema.Schemas {
+		for _, schema := range dbMetadata.Schemas {
 			if schema.GetName() == common.BackupDatabaseNameOfEngine(storepb.Engine_POSTGRES) {
 				return true
 			}
 		}
 	case storepb.Engine_MYSQL, storepb.Engine_MSSQL, storepb.Engine_TIDB:
 		dbName := common.BackupDatabaseNameOfEngine(instance.Metadata.GetEngine())
-		backupDB, err := s.store.GetDatabaseV2(ctx, &store.FindDatabaseMessage{
+		backupDB, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
 			InstanceID:   &instance.ResourceID,
 			DatabaseName: &dbName,
 		})
@@ -550,7 +498,7 @@ func (s *Syncer) databaseBackupAvailable(ctx context.Context, instance *store.In
 		return backupDB != nil
 	case storepb.Engine_ORACLE:
 		dbName := common.BackupDatabaseNameOfEngine(storepb.Engine_ORACLE)
-		backupDB, err := s.store.GetDatabaseV2(ctx, &store.FindDatabaseMessage{
+		backupDB, err := s.store.GetDatabase(ctx, &store.FindDatabaseMessage{
 			InstanceID:   &instance.ResourceID,
 			DatabaseName: &dbName,
 		})
@@ -565,91 +513,6 @@ func (s *Syncer) databaseBackupAvailable(ctx context.Context, instance *store.In
 		return false
 	}
 	return false
-}
-
-func buildDatabaseConfigWithClassificationFromComment(dbSchema *storepb.DatabaseSchemaMetadata, databaseConfig *model.DatabaseConfig, classificationConfig *storepb.DataClassificationSetting_DataClassificationConfig) *storepb.DatabaseConfig {
-	// Create a new DatabaseConfig to build from scratch
-	newConfig := &storepb.DatabaseConfig{
-		Name: dbSchema.Name,
-	}
-
-	for _, schema := range dbSchema.Schemas {
-		var tables []*storepb.TableCatalog
-		hasSchemaContent := false
-
-		// Get existing schema config to preserve SemanticType and Labels
-		schemaConfig := databaseConfig.GetSchemaConfig(schema.Name)
-
-		for _, table := range schema.Tables {
-			classification, userComment := common.GetClassificationAndUserComment(table.Comment, classificationConfig)
-
-			table.UserComment = userComment
-
-			// Get existing table config
-			tableConfig := schemaConfig.GetTableConfig(table.Name)
-
-			var columns []*storepb.ColumnCatalog
-			hasTableContent := false
-
-			// Check if table has classification
-			if classification != "" {
-				hasTableContent = true
-			}
-
-			for _, col := range table.Columns {
-				colClassification, colUserComment := common.GetClassificationAndUserComment(col.Comment, classificationConfig)
-
-				col.UserComment = colUserComment
-
-				// Get existing column config to preserve SemanticType and Labels
-				existingColumnConfig := tableConfig.GetColumnConfig(col.Name)
-
-				// Add column config if it has any meaningful data
-				if colClassification != "" || existingColumnConfig.SemanticType != "" || len(existingColumnConfig.Labels) > 0 {
-					columns = append(columns, &storepb.ColumnCatalog{
-						Name:           col.Name,
-						Classification: colClassification,
-						SemanticType:   existingColumnConfig.SemanticType,
-						Labels:         existingColumnConfig.Labels,
-					})
-					hasTableContent = true
-				}
-			}
-
-			// Only add table catalog if it has content (either table classification or column configurations)
-			if hasTableContent {
-				tableCatalog := &storepb.TableCatalog{
-					Name:           table.Name,
-					Classification: classification,
-					Columns:        columns,
-				}
-				tables = append(tables, tableCatalog)
-				hasSchemaContent = true
-			}
-		}
-
-		// Only add schema catalog if it has content
-		if hasSchemaContent {
-			schemaCatalog := &storepb.SchemaCatalog{
-				Name:   schema.Name,
-				Tables: tables,
-			}
-			newConfig.Schemas = append(newConfig.Schemas, schemaCatalog)
-		}
-	}
-
-	return newConfig
-}
-
-func setUserCommentFromComment(dbSchema *storepb.DatabaseSchemaMetadata) {
-	for _, schema := range dbSchema.Schemas {
-		for _, table := range schema.Tables {
-			table.UserComment = table.Comment
-			for _, col := range table.Columns {
-				col.UserComment = col.Comment
-			}
-		}
-	}
 }
 
 func getOrDefaultSyncInterval(instance *store.InstanceMessage) time.Duration {

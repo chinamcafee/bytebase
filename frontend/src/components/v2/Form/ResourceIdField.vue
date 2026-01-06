@@ -46,12 +46,12 @@
     </div>
     <ul
       v-if="state.validatedMessages.length > 0"
-      class="w-full my-2 space-y-2 list-disc list-outside pl-4"
+      class="w-full my-2 flex flex-col gap-y-2 list-disc list-outside pl-4"
     >
       <li
         v-for="validateMessage in state.validatedMessages"
         :key="validateMessage.message"
-        class="break-words w-full text-xs"
+        class="wrap-break-word w-full text-xs"
         :class="[
           validateMessage.type === 'warning' && 'text-yellow-600',
           validateMessage.type === 'error' && 'text-red-600',
@@ -65,13 +65,13 @@
 
 <script lang="ts" setup>
 import { Code } from "@connectrpc/connect";
-import { NInput, type InputProps } from "naive-ui";
+import { type InputProps, NInput } from "naive-ui";
 import { computed, reactive, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { CopyButton } from "@/components/v2";
 import type { ResourceId, ValidatedMessage } from "@/types";
 import { randomString } from "@/utils";
-import { getErrorCode } from "@/utils/grpcweb";
+import { getErrorCode } from "@/utils/connect";
 
 // characters is the validated characters for resource id.
 const characters = "abcdefghijklmnopqrstuvwxyz1234567890-";
@@ -100,7 +100,6 @@ type ResourceType =
   | "idp"
   | "role"
   | "database-group"
-  | "changelist"
   | "review-config";
 
 const props = withDefaults(
@@ -114,7 +113,7 @@ const props = withDefaults(
     editingClass?: string;
     validate?: (resourceId: ResourceId) => Promise<ValidatedMessage[]>;
     // fetchResource will be used to check if the resource id is duplicate.
-    fetchResource?: (resourceId: ResourceId) => Promise<any>;
+    fetchResource?: (resourceId: ResourceId) => Promise<unknown>;
   }>(),
   {
     value: "",
@@ -213,7 +212,7 @@ const handleResourceIdChange = async (newValue: string) => {
     }
   }
 
-  if (props.fetchResource && state.resourceId) {
+  if (props.fetchResource && state.resourceId && !props.readonly) {
     try {
       const resource = await props.fetchResource(state.resourceId);
       if (resource) {

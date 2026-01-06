@@ -6,12 +6,12 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -20,7 +20,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleColumnNotNull, &ColumnNoNullAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_COLUMN_NO_NULL, &ColumnNoNullAdvisor{})
 }
 
 // ColumnNoNullAdvisor is the advisor checking for column no NULL value.
@@ -29,9 +29,10 @@ type ColumnNoNullAdvisor struct {
 
 // Check checks for column no NULL value.
 func (*ColumnNoNullAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	root, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -39,10 +40,10 @@ func (*ColumnNoNullAdvisor) Check(_ context.Context, checkCtx advisor.Context) (
 		return nil, err
 	}
 	checker := &columnNoNullChecker{
-		level:     level,
-		title:     string(checkCtx.Rule.Type),
-		columnSet: make(map[string]columnName),
-		catalog:   checkCtx.Catalog,
+		level:         level,
+		title:         checkCtx.Rule.Type.String(),
+		columnSet:     make(map[string]columnName),
+		finalMetadata: checkCtx.FinalMetadata,
 	}
 
 	for _, stmtNode := range root {
@@ -53,11 +54,11 @@ func (*ColumnNoNullAdvisor) Check(_ context.Context, checkCtx advisor.Context) (
 }
 
 type columnNoNullChecker struct {
-	adviceList []*storepb.Advice
-	level      storepb.Advice_Status
-	title      string
-	columnSet  map[string]columnName
-	catalog    *catalog.Finder
+	adviceList    []*storepb.Advice
+	level         storepb.Advice_Status
+	title         string
+	columnSet     map[string]columnName
+	finalMetadata *model.DatabaseMetadata
 }
 
 func (checker *columnNoNullChecker) generateAdvice() []*storepb.Advice {
@@ -82,14 +83,19 @@ func (checker *columnNoNullChecker) generateAdvice() []*storepb.Advice {
 	})
 
 	for _, column := range columnList {
-		col := checker.catalog.Final.FindColumn(&catalog.ColumnFind{
-			TableName:  column.tableName,
-			ColumnName: column.columnName,
-		})
-		if col != nil && col.Nullable() {
+		schema := checker.finalMetadata.GetSchemaMetadata("")
+		if schema == nil {
+			continue
+		}
+		table := schema.GetTable(column.tableName)
+		if table == nil {
+			continue
+		}
+		col := table.GetColumn(column.columnName)
+		if col != nil && col.GetProto().Nullable {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.ColumnCannotNull.Int32(),
+				Code:          code.ColumnCannotNull.Int32(),
 				Title:         checker.title,
 				Content:       fmt.Sprintf("`%s`.`%s` cannot have NULL value", column.tableName, column.columnName),
 				StartPosition: common.ConvertANTLRLineToPosition(column.line),

@@ -7,11 +7,11 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	advisorcode "github.com/bytebase/bytebase/backend/plugin/advisor/code"
 )
 
 var (
@@ -20,7 +20,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleStatementDisallowOrderBy, &DisallowOrderByAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_STATEMENT_DISALLOW_ORDER_BY, &DisallowOrderByAdvisor{})
 }
 
 // DisallowOrderByAdvisor is the advisor checking for no ORDER BY clause in DELETE/UPDATE statements.
@@ -29,9 +29,10 @@ type DisallowOrderByAdvisor struct {
 
 // Check checks for no ORDER BY clause in DELETE/UPDATE statements.
 func (*DisallowOrderByAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -40,7 +41,7 @@ func (*DisallowOrderByAdvisor) Check(_ context.Context, checkCtx advisor.Context
 	}
 	checker := &disallowOrderByChecker{
 		level: level,
-		title: string(checkCtx.Rule.Type),
+		title: checkCtx.Rule.Type.String(),
 	}
 
 	for _, stmt := range stmtList {
@@ -62,19 +63,19 @@ type disallowOrderByChecker struct {
 
 // Enter implements the ast.Visitor interface.
 func (checker *disallowOrderByChecker) Enter(in ast.Node) (ast.Node, bool) {
-	code := advisor.Ok
+	code := advisorcode.Ok
 	switch node := in.(type) {
 	case *ast.UpdateStmt:
 		if node.Order != nil {
-			code = advisor.UpdateUseOrderBy
+			code = advisorcode.UpdateUseOrderBy
 		}
 	case *ast.DeleteStmt:
 		if node.Order != nil {
-			code = advisor.DeleteUseOrderBy
+			code = advisorcode.DeleteUseOrderBy
 		}
 	}
 
-	if code != advisor.Ok {
+	if code != advisorcode.Ok {
 		checker.adviceList = append(checker.adviceList, &storepb.Advice{
 			Status:        checker.level,
 			Code:          code.Int32(),

@@ -8,9 +8,7 @@ import (
 	"github.com/antlr4-go/antlr/v4"
 	"github.com/pkg/errors"
 
-	parser "github.com/bytebase/plsql-parser"
-
-	parsererror "github.com/bytebase/bytebase/backend/plugin/parser/errors"
+	parser "github.com/bytebase/parser/plsql"
 
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	"github.com/bytebase/bytebase/backend/store/model"
@@ -57,10 +55,17 @@ func (q *querySpanExtractor) getDatabaseMetadata(schema string) (*model.Database
 func (q *querySpanExtractor) getQuerySpan(ctx context.Context, statement string) (*base.QuerySpan, error) {
 	q.ctx = ctx
 
-	tree, _, err := ParsePLSQL(statement)
+	parseResults, err := ParsePLSQL(statement)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to parse statement: %s", statement)
 	}
+	if len(parseResults) == 0 {
+		return nil, nil
+	}
+	if len(parseResults) > 1 {
+		return nil, errors.Errorf("query span extraction only supports single statement, got %d statements", len(parseResults))
+	}
+	tree := parseResults[0].Tree
 	if tree == nil {
 		return nil, nil
 	}
@@ -104,7 +109,7 @@ func (q *querySpanExtractor) getQuerySpan(ctx context.Context, statement string)
 	antlr.ParseTreeWalkerDefault.Walk(listener, tree)
 	err = listener.err
 	if err != nil {
-		var resourceNotFound *parsererror.ResourceNotFoundError
+		var resourceNotFound *base.ResourceNotFoundError
 		if errors.As(err, &resourceNotFound) {
 			if len(columnSet) == 0 {
 				columnSet[base.ColumnResource{
@@ -148,7 +153,7 @@ func (q *querySpanExtractor) existsTableMetadata(resource base.SchemaResource) b
 	if meta == nil {
 		return false
 	}
-	schema := meta.GetSchema("")
+	schema := meta.GetSchemaMetadata("")
 	if schema == nil {
 		return false
 	}
@@ -366,7 +371,7 @@ func (q *querySpanExtractor) plsqlExtractQueryBlock(ctx parser.IQuery_blockConte
 					}
 				}
 				if !find {
-					return nil, &parsererror.ResourceNotFoundError{
+					return nil, &base.ResourceNotFoundError{
 						Err:      errors.Errorf("failed to find table to calculate asterisk"),
 						Database: &q.defaultDatabase,
 						Table:    &tableName,
@@ -1269,7 +1274,7 @@ func (q *querySpanExtractor) plsqlFindTableSchema(dbLink []string, schemaName, t
 			return nil, errors.Wrapf(err, "failed to get linked database metadata for: %s", dbLink)
 		}
 		if linkedMeta == nil {
-			return nil, &parsererror.ResourceNotFoundError{
+			return nil, &base.ResourceNotFoundError{
 				DatabaseLink: &linkName,
 			}
 		}
@@ -1294,23 +1299,23 @@ func (q *querySpanExtractor) plsqlFindTableSchema(dbLink []string, schemaName, t
 		}
 	}
 
-	dbSchema, err := q.getDatabaseMetadata(schemaName)
+	dbMetadata, err := q.getDatabaseMetadata(schemaName)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to get database metadata for: %s", schemaName)
 	}
-	if dbSchema == nil {
-		return nil, &parsererror.ResourceNotFoundError{
+	if dbMetadata == nil {
+		return nil, &base.ResourceNotFoundError{
 			Database: &schemaName,
 		}
 	}
 
-	return q.findTableSchemaInMetadata(q.gCtx.InstanceID, dbSchema, schemaName, tableName)
+	return q.findTableSchemaInMetadata(q.gCtx.InstanceID, dbMetadata, schemaName, tableName)
 }
 
-func (q *querySpanExtractor) findTableSchemaInMetadata(instanceID string, dbSchema *model.DatabaseMetadata, databaseName, tableName string) (base.TableSource, error) {
-	schema := dbSchema.GetSchema("")
+func (q *querySpanExtractor) findTableSchemaInMetadata(instanceID string, dbMetadata *model.DatabaseMetadata, databaseName, tableName string) (base.TableSource, error) {
+	schema := dbMetadata.GetSchemaMetadata("")
 	if schema == nil {
-		return nil, &parsererror.ResourceNotFoundError{
+		return nil, &base.ResourceNotFoundError{
 			Database: &databaseName,
 		}
 	}
@@ -1319,7 +1324,7 @@ func (q *querySpanExtractor) findTableSchemaInMetadata(instanceID string, dbSche
 	materializedView := schema.GetMaterializedView(tableName)
 	foreignTable := schema.GetExternalTable(tableName)
 	if table == nil && view == nil && materializedView == nil && foreignTable == nil {
-		return nil, &parsererror.ResourceNotFoundError{
+		return nil, &base.ResourceNotFoundError{
 			Database: &databaseName,
 			Table:    &tableName,
 		}
@@ -1327,7 +1332,7 @@ func (q *querySpanExtractor) findTableSchemaInMetadata(instanceID string, dbSche
 
 	if table != nil {
 		var columns []string
-		for _, column := range table.GetColumns() {
+		for _, column := range table.GetProto().GetColumns() {
 			columns = append(columns, column.Name)
 		}
 		return &base.PhysicalTable{
@@ -1340,7 +1345,7 @@ func (q *querySpanExtractor) findTableSchemaInMetadata(instanceID string, dbSche
 
 	if foreignTable != nil {
 		var columns []string
-		for _, column := range foreignTable.GetColumns() {
+		for _, column := range foreignTable.GetProto().GetColumns() {
 			columns = append(columns, column.Name)
 		}
 		return &base.PhysicalTable{
@@ -1358,7 +1363,7 @@ func (q *querySpanExtractor) findTableSchemaInMetadata(instanceID string, dbSche
 			return nil, err
 		}
 		return &base.PseudoTable{
-			Name:    view.GetProto().Name,
+			Name:    view.Name,
 			Columns: columns,
 		}, nil
 	}
@@ -1370,7 +1375,7 @@ func (q *querySpanExtractor) findTableSchemaInMetadata(instanceID string, dbSche
 			return nil, err
 		}
 		return &base.PseudoTable{
-			Name:    materializedView.GetProto().Name,
+			Name:    materializedView.Name,
 			Columns: columns,
 		}, nil
 	}

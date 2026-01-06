@@ -46,23 +46,19 @@
 
 <script setup lang="ts">
 import { create } from "@bufbuild/protobuf";
-import { NTooltip, NButton } from "naive-ui";
+import { NButton, NTooltip } from "naive-ui";
 import { zindexable as vZindexable } from "vdirs";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { getValidIssueLabels } from "@/components/IssueV1/components/IssueLabelSelector.vue";
 import { ErrorList } from "@/components/IssueV1/components/common";
+import { getValidIssueLabels } from "@/components/IssueV1/components/IssueLabelSelector.vue";
 import {
   isValidStage,
   specForTask,
   useIssueContext,
 } from "@/components/IssueV1/logic";
-import {
-  databaseEngineForSpec,
-  getLocalSheetByName,
-  isValidSpec,
-} from "@/components/Plan";
+import { getLocalSheetByName, isValidSpec } from "@/components/Plan";
 import { getSpecChangeType } from "@/components/Plan/components/SQLCheckSection/common";
 import { usePlanSQLCheckContext } from "@/components/Plan/components/SQLCheckSection/context";
 import { SQLCheckPanel } from "@/components/SQLCheck";
@@ -72,23 +68,33 @@ import {
   planServiceClientConnect,
   releaseServiceClientConnect,
   rolloutServiceClientConnect,
-} from "@/grpcweb";
+} from "@/connect";
 import { PROJECT_V1_ROUTE_ISSUE_DETAIL } from "@/router/dashboard/projectV1";
-import { useSheetV1Store, useCurrentProjectV1 } from "@/store";
-import { CreateIssueRequestSchema } from "@/types/proto-es/v1/issue_service_pb";
-import { IssueSchema, Issue_Type } from "@/types/proto-es/v1/issue_service_pb";
-import { CreatePlanRequestSchema } from "@/types/proto-es/v1/plan_service_pb";
+import {
+  pushNotification,
+  useCurrentProjectV1,
+  useSheetV1Store,
+} from "@/store";
+import {
+  CreateIssueRequestSchema,
+  Issue_Type,
+  IssueSchema,
+} from "@/types/proto-es/v1/issue_service_pb";
 import type { Plan_ExportDataConfig } from "@/types/proto-es/v1/plan_service_pb";
-import { type Plan_ChangeDatabaseConfig } from "@/types/proto-es/v1/plan_service_pb";
+import {
+  CreatePlanRequestSchema,
+  type Plan_ChangeDatabaseConfig,
+} from "@/types/proto-es/v1/plan_service_pb";
 import {
   CheckReleaseRequestSchema,
-  Release_File_Type,
+  Release_Type,
 } from "@/types/proto-es/v1/release_service_pb";
 import { CreateRolloutRequestSchema } from "@/types/proto-es/v1/rollout_service_pb";
 import type { Sheet } from "@/types/proto-es/v1/sheet_service_pb";
 import { Advice_Level } from "@/types/proto-es/v1/sql_service_pb";
-import { databaseForTask } from "@/utils";
 import {
+  type Defer,
+  databaseForTask,
   defer,
   extractProjectResourceName,
   extractSheetUID,
@@ -97,7 +103,6 @@ import {
   hasPermissionToCreateChangeDatabaseIssueInProject,
   issueV1Slug,
   sheetNameOfTaskV1,
-  type Defer,
 } from "@/utils";
 
 const { t } = useI18n();
@@ -119,9 +124,9 @@ const issueCreateErrorList = computed(() => {
   if (!issue.value.title.trim()) {
     errorList.push("Missing issue title");
   }
-  if (issue.value.rollout) {
+  if (issue.value.rolloutEntity) {
     if (
-      !issue.value.rolloutEntity?.stages.every((stage) => isValidStage(stage))
+      !issue.value.rolloutEntity.stages.every((stage) => isValidStage(stage))
     ) {
       errorList.push("Missing SQL statement in some stages");
     }
@@ -145,6 +150,10 @@ const issueCreateErrorList = computed(() => {
 });
 
 const doCreateIssue = async () => {
+  // Prevent race condition: check if already creating
+  if (loading.value) {
+    return;
+  }
   loading.value = true;
 
   // Run SQL check for database change issues.
@@ -162,14 +171,16 @@ const doCreateIssue = async () => {
       issue.value.title,
       issue.value.description
     );
-    if (!createdPlan) return;
+    if (!createdPlan) {
+      loading.value = false;
+      return;
+    }
 
     issue.value.plan = createdPlan.name;
     issue.value.planEntity = createdPlan;
 
     const issueCreate = create(IssueSchema, {
       ...issue.value,
-      rollout: "",
     });
     const request = create(CreateIssueRequestSchema, {
       parent: issue.value.project,
@@ -178,10 +189,7 @@ const doCreateIssue = async () => {
     const createdIssue = await issueServiceClientConnect.createIssue(request);
 
     const rolloutRequest = create(CreateRolloutRequestSchema, {
-      parent: issue.value.project,
-      rollout: {
-        plan: createdPlan.name,
-      },
+      parent: createdPlan.name,
     });
     await rolloutServiceClientConnect.createRollout(rolloutRequest);
 
@@ -192,7 +200,14 @@ const doCreateIssue = async () => {
         issueSlug: issueV1Slug(createdIssue.name, createdIssue.title),
       },
     });
-  } catch {
+  } catch (error) {
+    console.error("Failed to create issue:", error);
+    pushNotification({
+      module: "bytebase",
+      style: "CRITICAL",
+      title: t("common.error"),
+      description: String(error),
+    });
     loading.value = false;
   }
 };
@@ -220,8 +235,6 @@ const createSheets = async () => {
     if (uid.startsWith("-")) {
       // The sheet is pending create
       const sheet = getLocalSheetByName(config.sheet);
-      const engine = await databaseEngineForSpec(spec);
-      sheet.engine = engine;
       pendingCreateSheetMap.set(sheet.name, sheet);
     }
   }
@@ -229,7 +242,6 @@ const createSheets = async () => {
   const sheetNameMap = new Map<string, string>();
   for (let i = 0; i < pendingCreateSheetList.length; i++) {
     const sheet = pendingCreateSheetList[i];
-    sheet.title = issue.value.title;
     const createdSheet = await sheetStore.createSheet(
       issue.value.project,
       sheet
@@ -299,13 +311,13 @@ const runSQLCheckForIssue = async () => {
     const request = create(CheckReleaseRequestSchema, {
       parent: issue.value.project,
       release: {
+        type: Release_Type.VERSIONED,
         files: [
           {
             // Use "0" for dummy version.
             version: "0",
-            type: Release_File_Type.VERSIONED,
             statement: new TextEncoder().encode(statement),
-            migrationType: getSpecChangeType(
+            enableGhost: getSpecChangeType(
               specForTask(issue.value.planEntity, selectedTask.value)
             ),
           },

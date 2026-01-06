@@ -1,11 +1,14 @@
 <template>
   <NSelect
     v-model:value="selectedIsolation"
-    class="!w-60"
-    consistent-menu-width
+    class="w-36!"
     size="small"
     :options="options"
     :placeholder="$t('plan.select-isolation-level')"
+    :filterable="true"
+    :virtual-scroll="true"
+    :fallback-option="false"
+    :consistent-menu-width="false"
     :clearable="true"
     :disabled="!allowChange"
   />
@@ -15,15 +18,15 @@
 import { NSelect, type SelectOption } from "naive-ui";
 import { computed, nextTick, ref, watch } from "vue";
 import {
-  usePlanContext,
   updateSpecSheetWithStatement,
+  usePlanContext,
 } from "@/components/Plan/logic";
 import { setSheetStatement } from "@/utils";
 import { useSelectedSpec } from "../../SpecDetailView/context";
 import {
+  type IsolationLevel,
   parseStatement,
   updateIsolationLevel,
-  type IsolationLevel,
 } from "../../StatementSection/directiveUtils";
 import { useSpecSheet } from "../../StatementSection/useSpecSheet";
 import { useIsolationLevelSettingContext } from "./context";
@@ -34,7 +37,7 @@ const {
   events,
 } = useIsolationLevelSettingContext();
 
-const selectedSpec = useSelectedSpec();
+const { selectedSpec } = useSelectedSpec();
 const { sheetStatement, sheet, sheetReady } = useSpecSheet(selectedSpec);
 const { plan, isCreating } = usePlanContext();
 

@@ -8,9 +8,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/cenkalti/backoff/v5"
+	"github.com/nyaruka/phonenumbers"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
@@ -18,7 +20,21 @@ import (
 	"github.com/bytebase/bytebase/backend/common/log"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/webhook"
+	"github.com/bytebase/bytebase/backend/store"
 )
+
+// getDingTalkConfig extracts the DingTalk configuration from the AppIMSetting.
+func getDingTalkConfig(setting *storepb.AppIMSetting) *storepb.AppIMSetting_DingTalk {
+	if setting == nil {
+		return nil
+	}
+	for _, s := range setting.Settings {
+		if s.Type == storepb.WebhookType_DINGTALK {
+			return s.GetDingtalk()
+		}
+	}
+	return nil
+}
 
 // Response is the API message for DingTalk webhook response.
 type Response struct {
@@ -46,7 +62,7 @@ type Message struct {
 }
 
 func init() {
-	webhook.Register(storepb.ProjectWebhook_DINGTALK, &Receiver{})
+	webhook.Register(storepb.WebhookType_DINGTALK, &Receiver{})
 }
 
 // Receiver is the receiver for DingTalk.
@@ -64,7 +80,7 @@ func (*Receiver) Post(context webhook.Context) error {
 
 // returns true if the message is sent successfully.
 func sendDirectMessage(webhookCtx webhook.Context) bool {
-	dingtalk := webhookCtx.IMSetting.GetDingtalk()
+	dingtalk := getDingTalkConfig(webhookCtx.IMSetting)
 	if dingtalk == nil {
 		return false
 	}
@@ -119,12 +135,41 @@ func sendDirectMessage(webhookCtx webhook.Context) bool {
 	return true
 }
 
+func maybeGetPhoneFromUser(user *store.UserMessage) (string, error) {
+	if user == nil {
+		return "", nil
+	}
+	if user.Phone == "" {
+		return "", nil
+	}
+	phoneNumber, err := phonenumbers.Parse(user.Phone, "")
+	if err != nil {
+		return "", errors.Wrapf(err, "failed to parse phone number %q", user.Phone)
+	}
+	if phoneNumber == nil {
+		return "", nil
+	}
+	if phoneNumber.NationalNumber == nil {
+		return "", nil
+	}
+	return strconv.FormatInt(int64(*phoneNumber.NationalNumber), 10), nil
+}
+
 func sendMessage(context webhook.Context) error {
 	text := getMarkdownText(context)
-	if len(context.MentionUsersByPhone) > 0 {
+	mentionUsersByPhone := []string{}
+
+	if len(context.MentionEndUsers) > 0 {
 		var ats []string
-		for _, phone := range context.MentionUsersByPhone {
-			ats = append(ats, fmt.Sprintf("@%s", phone))
+		for _, user := range context.MentionEndUsers {
+			phone, err := maybeGetPhoneFromUser(user)
+			if err != nil {
+				slog.Warn("failed to parse user phone", log.BBError(err), slog.String("user", user.Name))
+				continue
+			}
+			if phone != "" {
+				ats = append(ats, fmt.Sprintf("@%s", phone))
+			}
 		}
 		text += "\n" + strings.Join(ats, " ")
 	}
@@ -136,8 +181,8 @@ func sendMessage(context webhook.Context) error {
 			Text:  text,
 		},
 	}
-	if len(context.MentionUsersByPhone) > 0 {
-		post.Mention.Mobiles = append(post.Mention.Mobiles, context.MentionUsersByPhone...)
+	if len(mentionUsersByPhone) > 0 {
+		post.Mention.Mobiles = append(post.Mention.Mobiles, mentionUsersByPhone...)
 	}
 
 	body, err := json.Marshal(post)
@@ -186,7 +231,9 @@ func getMarkdownText(context webhook.Context) string {
 	for _, meta := range context.GetMetaListZh() {
 		metaStrList = append(metaStrList, fmt.Sprintf("##### **%s:** %s", meta.Name, meta.Value))
 	}
-	metaStrList = append(metaStrList, fmt.Sprintf("##### **由:** %s (%s)", context.ActorName, context.ActorEmail))
+	if context.ActorName != "" {
+		metaStrList = append(metaStrList, fmt.Sprintf("##### **由:** %s (%s)", context.ActorName, context.ActorEmail))
+	}
 
 	text := fmt.Sprintf("# %s\n%s\n##### [在 Bytebase 中显示](%s)", context.TitleZh, strings.Join(metaStrList, "\n"), context.Link)
 	if context.Description != "" {

@@ -7,7 +7,7 @@
   want:
     - status: 2
       code: 1032
-      title: table.comment
+      title: TABLE_COMMENT
       content: Comment is required for table `t`
       startposition:
         line: 1
@@ -21,10 +21,10 @@
   want:
     - status: 2
       code: 1032
-      title: table.comment
+      title: TABLE_COMMENT
       content: Comment is required for table `d`
       startposition:
-        line: 2
+        line: 3
         column: 0
       endposition: null
 - statement: |-
@@ -35,10 +35,10 @@
   want:
     - status: 2
       code: 1032
-      title: table.comment
+      title: TABLE_COMMENT
       content: Comment is required for table `t`
       startposition:
-        line: 1
+        line: 2
         column: 0
       endposition: null
 - statement: |-
@@ -49,10 +49,10 @@
   want:
     - status: 2
       code: 1032
-      title: table.comment
+      title: TABLE_COMMENT
       content: Comment is required for table `t`
       startposition:
-        line: 1
+        line: 2
         column: 0
       endposition: null
 - statement: |-
@@ -62,7 +62,7 @@
   want:
     - status: 2
       code: 1301
-      title: table.comment
+      title: TABLE_COMMENT
       content: Table `t` comment is too long. The length of comment should be within 10 characters
       startposition:
         line: 2

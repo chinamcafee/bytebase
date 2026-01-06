@@ -3,115 +3,105 @@ package pg
 import (
 	"context"
 
-	"github.com/pkg/errors"
+	"github.com/antlr4-go/antlr/v4"
+
+	parser "github.com/bytebase/parser/postgresql"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/parser/pg/legacy/ast"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
 	_ advisor.Advisor = (*StatementCreateSpecifySchema)(nil)
-	_ ast.Visitor     = (*statementCreateSpecifySchemaChecker)(nil)
 )
 
 func init() {
-	advisor.Register(storepb.Engine_POSTGRES, advisor.SchemaRuleStatementCreateSpecifySchema, &StatementCreateSpecifySchema{})
+	advisor.Register(storepb.Engine_POSTGRES, storepb.SQLReviewRule_STATEMENT_CREATE_SPECIFY_SCHEMA, &StatementCreateSpecifySchema{})
 }
 
 type StatementCreateSpecifySchema struct {
 }
 
 func (*StatementCreateSpecifySchema) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmts, ok := checkCtx.AST.([]ast.Node)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Node")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	checker := &statementCreateSpecifySchemaChecker{
-		level: level,
-		title: string(checkCtx.Rule.Type),
+
+	rule := &statementCreateSpecifySchemaRule{
+		BaseRule: BaseRule{
+			level: level,
+			title: checkCtx.Rule.Type.String(),
+		},
 	}
 
-	for _, stmt := range stmts {
-		ast.Walk(checker, stmt)
+	checker := NewGenericChecker([]Rule{rule})
+
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
-	return checker.adviceList, nil
+	return checker.GetAdviceList(), nil
 }
 
-type statementCreateSpecifySchemaChecker struct {
-	adviceList []*storepb.Advice
-	level      storepb.Advice_Status
-	title      string
+type statementCreateSpecifySchemaRule struct {
+	BaseRule
 }
 
-func (c *statementCreateSpecifySchemaChecker) Visit(node ast.Node) ast.Visitor {
-	switch n := node.(type) {
-	case *ast.CreateTableStmt:
-		if n.Name.Schema == "" {
-			c.adviceList = append(c.adviceList, &storepb.Advice{
-				Status:        c.level,
-				Code:          advisor.StatementCreateWithoutSchemaName.Int32(),
-				Title:         c.title,
-				Content:       "Table schema should be specified.",
-				StartPosition: newPositionAtLineStart(node.LastLine()),
-			})
-		}
-	case *ast.CreateExtensionStmt:
-		if n.Schema == "" {
-			c.adviceList = append(c.adviceList, &storepb.Advice{
-				Status:        c.level,
-				Code:          advisor.StatementCreateWithoutSchemaName.Int32(),
-				Title:         c.title,
-				Content:       "Extension schema should be specified.",
-				StartPosition: newPositionAtLineStart(node.LastLine()),
-			})
-		}
-	case *ast.CreateFunctionStmt:
-		if n.Function.Schema == "" {
-			c.adviceList = append(c.adviceList, &storepb.Advice{
-				Status:        c.level,
-				Code:          advisor.StatementCreateWithoutSchemaName.Int32(),
-				Title:         c.title,
-				Content:       "Function schema should be specified.",
-				StartPosition: newPositionAtLineStart(node.LastLine()),
-			})
-		}
-	case *ast.CreateIndexStmt:
-		if n.Index.Table.Schema == "" {
-			c.adviceList = append(c.adviceList, &storepb.Advice{
-				Status:        c.level,
-				Code:          advisor.StatementCreateWithoutSchemaName.Int32(),
-				Title:         c.title,
-				Content:       "Table schema for index should be specified.",
-				StartPosition: newPositionAtLineStart(node.LastLine()),
-			})
-		}
-	case *ast.CreateSequenceStmt:
-		if n.SequenceDef.SequenceName.Schema == "" {
-			c.adviceList = append(c.adviceList, &storepb.Advice{
-				Status:        c.level,
-				Code:          advisor.StatementCreateWithoutSchemaName.Int32(),
-				Title:         c.title,
-				Content:       "Sequence schema should be specified.",
-				StartPosition: newPositionAtLineStart(node.LastLine()),
-			})
-		}
-	case *ast.CreateTriggerStmt:
-		if n.Trigger.Table.Schema == "" {
-			c.adviceList = append(c.adviceList, &storepb.Advice{
-				Status:        c.level,
-				Code:          advisor.StatementCreateWithoutSchemaName.Int32(),
-				Title:         c.title,
-				Content:       "Table schema for trigger should be specified.",
-				StartPosition: newPositionAtLineStart(node.LastLine()),
+func (*statementCreateSpecifySchemaRule) Name() string {
+	return "statement_create_specify_schema"
+}
+
+func (r *statementCreateSpecifySchemaRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
+	switch nodeType {
+	case "Createstmt":
+		r.handleCreatestmt(ctx)
+	default:
+		// Do nothing for other node types
+	}
+	return nil
+}
+
+func (*statementCreateSpecifySchemaRule) OnExit(_ antlr.ParserRuleContext, _ string) error {
+	return nil
+}
+
+// handleCreatestmt handles CREATE TABLE
+func (r *statementCreateSpecifySchemaRule) handleCreatestmt(ctx antlr.ParserRuleContext) {
+	createstmtCtx, ok := ctx.(*parser.CreatestmtContext)
+	if !ok {
+		return
+	}
+
+	if !isTopLevel(createstmtCtx.GetParent()) {
+		return
+	}
+
+	allQualifiedNames := createstmtCtx.AllQualified_name()
+	if len(allQualifiedNames) > 0 {
+		schemaName := extractSchemaName(allQualifiedNames[0])
+		if schemaName == "" {
+			r.AddAdvice(&storepb.Advice{
+				Status:  r.level,
+				Code:    code.StatementCreateWithoutSchemaName.Int32(),
+				Title:   r.title,
+				Content: "Table schema should be specified.",
+				StartPosition: &storepb.Position{
+					Line:   int32(createstmtCtx.GetStart().GetLine()),
+					Column: 0,
+				},
 			})
 		}
 	}
-	return c
 }

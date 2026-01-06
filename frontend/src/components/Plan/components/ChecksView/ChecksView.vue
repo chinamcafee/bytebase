@@ -48,57 +48,60 @@
       </div>
       <!-- Empty state -->
       <div
-        v-else-if="filteredCheckRuns.length === 0"
+        v-else-if="filteredResultGroups.length === 0"
         class="flex flex-col items-center justify-center py-12"
       >
         <CheckCircleIcon class="w-12 h-12 text-control-light opacity-50 mb-4" />
         <div class="text-lg text-control-light">
           {{
-            hasFilters ? "No results match your filters" : "No check results"
+            hasFilters
+              ? $t("plan.checks.no-results-match-filters")
+              : $t("plan.checks.no-check-results")
           }}
         </div>
       </div>
-      <div v-else class="divide-y">
-        <!-- Group by check run -->
-        <div
-          v-for="checkRun in filteredCheckRuns"
-          :key="checkRun.name"
-          class="px-2 py-4"
-        >
+      <div v-else>
+        <div class="divide-y">
+          <!-- Group by result type/target -->
+          <div
+            v-for="group in displayedResultGroups"
+            :key="group.key"
+            class="px-2 py-4"
+          >
           <!-- Check Run Header -->
-          <div class="flex items-start justify-between mb-2">
-            <div class="flex items-center gap-3">
+          <div class="flex flex-wrap items-start justify-between gap-2 mb-2">
+            <div class="flex items-center gap-3 shrink-0">
               <component
-                :is="getCheckTypeIcon(checkRun.type)"
+                :is="getCheckTypeIcon(group.type)"
                 class="w-5 h-5 text-control-light"
               />
               <div class="flex flex-row items-center gap-2">
                 <span class="text-sm font-medium">
-                  {{ getCheckTypeLabel(checkRun.type) }}
+                  {{ getCheckTypeLabel(group.type) }}
                 </span>
-                <NTooltip v-if="getCheckTypeDescription(checkRun.type)">
+                <NTooltip v-if="getCheckTypeDescription(group.type)">
                   <template #trigger>
                     <CircleQuestionMarkIcon
                       class="w-4 h-4 text-control-light"
                     />
                   </template>
-                  {{ getCheckTypeDescription(checkRun.type) }}
+                  {{ getCheckTypeDescription(group.type) }}
                 </NTooltip>
-                <span class="text-sm text-control-light">
-                  {{ formatTime(checkRun.createTime) }}
+                <span v-if="group.createTime" class="text-sm text-control-light">
+                  {{ formatTime(group.createTime) }}
                 </span>
               </div>
             </div>
 
-            <div class="flex items-center gap-2">
-              <DatabaseDisplay :database="checkRun.target" />
+            <div class="flex items-center gap-2 min-w-0 max-w-[50%]">
+              <DatabaseDisplay :database="group.target" />
             </div>
           </div>
 
-          <!-- Results for this check run -->
-          <div class="space-y-2 pl-8">
+          <!-- Results for this group -->
+          <div class="flex flex-col gap-y-2 pl-8">
             <CheckResultItem
-              v-for="(result, idx) in getFilteredResults(checkRun)"
+              v-for="(result, idx) in group.results"
               :key="idx"
               :status="getCheckResultStatus(result.status)"
               :title="result.title"
@@ -119,6 +122,16 @@
             />
           </div>
         </div>
+        </div>
+        <!-- Load more button -->
+        <div v-if="hasMore" class="flex justify-center py-4">
+          <button
+            class="text-sm text-accent hover:underline"
+            @click="loadMore"
+          >
+            {{ $t("common.load-more") }} ({{ remainingCount }})
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -128,29 +141,37 @@
 import { create } from "@bufbuild/protobuf";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import {
-  CheckCircleIcon,
-  FileCodeIcon,
-  DatabaseIcon,
-  ShieldIcon,
-  SearchCodeIcon,
-  CircleQuestionMarkIcon,
-  XCircleIcon,
   AlertCircleIcon,
+  CheckCircleIcon,
+  CircleQuestionMarkIcon,
+  FileCodeIcon,
+  SearchCodeIcon,
+  ShieldIcon,
+  XCircleIcon,
 } from "lucide-vue-next";
 import { NTooltip } from "naive-ui";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { BBSpin } from "@/bbkit";
 import {
-  PlanCheckRun_Status,
-  PlanCheckRun_Type,
   type PlanCheckRun,
+  type PlanCheckRun_Result,
+  PlanCheckRun_Result_Type,
   PlanCheckRun_ResultSchema,
+  PlanCheckRun_Status,
 } from "@/types/proto-es/v1/plan_service_pb";
 import { Advice_Level } from "@/types/proto-es/v1/sql_service_pb";
 import { humanizeTs } from "@/utils";
 import CheckResultItem from "../common/CheckResultItem.vue";
 import DatabaseDisplay from "../common/DatabaseDisplay.vue";
+
+interface ResultGroup {
+  key: string;
+  type: PlanCheckRun_Result_Type;
+  target: string;
+  createTime?: Timestamp;
+  results: PlanCheckRun_Result[];
+}
 
 const props = defineProps<{
   defaultStatus?: Advice_Level;
@@ -161,6 +182,14 @@ const props = defineProps<{
 const { t } = useI18n();
 
 const selectedStatus = ref<Advice_Level | undefined>(props.defaultStatus);
+
+// Pagination - load more
+const PAGE_SIZE = 10;
+const displayCount = ref(PAGE_SIZE);
+
+const loadMore = () => {
+  displayCount.value += PAGE_SIZE;
+};
 
 const hasFilters = computed(() => {
   return selectedStatus.value !== undefined;
@@ -204,104 +233,122 @@ const toggleSelectedStatus = (status: Advice_Level) => {
   } else {
     selectedStatus.value = status; // Select the new status
   }
+  // Reset pagination when filter changes
+  displayCount.value = PAGE_SIZE;
 };
 
 const getItemClass = (status: Advice_Level) => {
-  const classes: string[] = [];
-
-  if (selectedStatus.value === status) {
-    classes.push("bg-gray-100 rounded-lg px-2 py-1");
-  } else {
-    // Add some padding to align with selected items
-    classes.push("px-2 py-1");
-  }
-
-  return classes;
+  return selectedStatus.value === status
+    ? "bg-gray-100 rounded-lg px-2 py-1"
+    : "px-2 py-1";
 };
 
-const filteredCheckRuns = computed(() => {
-  return props.planCheckRuns.filter((checkRun) => {
-    // Filter by status - check if any result matches the selected status
-    if (selectedStatus.value !== undefined) {
-      // If filtering for errors, include failed check runs
-      if (
-        selectedStatus.value === Advice_Level.ERROR &&
-        checkRun.status === PlanCheckRun_Status.FAILED
-      ) {
-        return true;
-      }
+// Group results by type and target
+const filteredResultGroups = computed(() => {
+  const groups: ResultGroup[] = [];
+  const groupMap = new Map<string, ResultGroup>();
 
-      const hasMatchingResult = checkRun.results.some(
-        (result) => result.status === selectedStatus.value
-      );
-      if (!hasMatchingResult) {
-        return false;
+  for (const checkRun of props.planCheckRuns) {
+    // Handle failed check runs
+    if (checkRun.status === PlanCheckRun_Status.FAILED) {
+      if (
+        selectedStatus.value === undefined ||
+        selectedStatus.value === Advice_Level.ERROR
+      ) {
+        // Create a synthetic error result for the failed run
+        const syntheticResult = create(PlanCheckRun_ResultSchema, {
+          status: Advice_Level.ERROR,
+          title: "Check Failed",
+          content: checkRun.error || "Plan check run failed",
+          code: 0,
+        });
+        const key = `failed-${checkRun.name}`;
+        groups.push({
+          key,
+          type: PlanCheckRun_Result_Type.TYPE_UNSPECIFIED,
+          target: "",
+          createTime: checkRun.createTime,
+          results: [syntheticResult],
+        });
       }
     }
-    return true;
-  });
+
+    // Process results
+    for (const result of checkRun.results) {
+      // Filter by status
+      if (
+        selectedStatus.value !== undefined &&
+        result.status !== selectedStatus.value
+      ) {
+        continue;
+      }
+
+      const key = `${result.type}-${result.target}`;
+      let group = groupMap.get(key);
+      if (!group) {
+        group = {
+          key,
+          type: result.type,
+          target: result.target,
+          createTime: checkRun.createTime,
+          results: [],
+        };
+        groupMap.set(key, group);
+        groups.push(group);
+      }
+      group.results.push(result);
+    }
+  }
+
+  return groups;
 });
 
-const getFilteredResults = (checkRun: PlanCheckRun) => {
-  let results = checkRun.results.filter((result) => {
-    return (
-      selectedStatus.value === undefined ||
-      result.status === selectedStatus.value
-    );
-  });
+// Paginated groups
+const displayedResultGroups = computed(() => {
+  return filteredResultGroups.value.slice(0, displayCount.value);
+});
 
-  // For failed check runs, add a synthetic error result if filtering for errors or no filter
-  if (
-    checkRun.status === PlanCheckRun_Status.FAILED &&
-    (selectedStatus.value === undefined ||
-      selectedStatus.value === Advice_Level.ERROR)
-  ) {
-    // Create a synthetic error result for the failed check run
-    const syntheticResult = create(PlanCheckRun_ResultSchema, {
-      status: Advice_Level.ERROR,
-      title: "Check Failed",
-      content: checkRun.error || "Plan check run failed",
-      code: 0,
-    });
-    results = [syntheticResult, ...results];
-  }
+const hasMore = computed(() => {
+  return filteredResultGroups.value.length > displayCount.value;
+});
 
-  return results;
+const remainingCount = computed(() => {
+  return filteredResultGroups.value.length - displayCount.value;
+});
+
+// Check type configuration lookup
+const checkTypeConfig: Partial<
+  Record<
+    PlanCheckRun_Result_Type,
+    { icon: typeof FileCodeIcon; labelKey: string }
+  >
+> = {
+  [PlanCheckRun_Result_Type.STATEMENT_ADVISE]: {
+    icon: SearchCodeIcon,
+    labelKey: "task.check-type.sql-review.self",
+  },
+  [PlanCheckRun_Result_Type.STATEMENT_SUMMARY_REPORT]: {
+    icon: FileCodeIcon,
+    labelKey: "task.check-type.summary-report",
+  },
+  [PlanCheckRun_Result_Type.GHOST_SYNC]: {
+    icon: ShieldIcon,
+    labelKey: "task.check-type.ghost-sync",
+  },
 };
 
-const getCheckTypeIcon = (type: PlanCheckRun_Type) => {
-  switch (type) {
-    case PlanCheckRun_Type.DATABASE_STATEMENT_ADVISE:
-      return SearchCodeIcon;
-    case PlanCheckRun_Type.DATABASE_STATEMENT_SUMMARY_REPORT:
-      return FileCodeIcon;
-    case PlanCheckRun_Type.DATABASE_CONNECT:
-      return DatabaseIcon;
-    case PlanCheckRun_Type.DATABASE_GHOST_SYNC:
-      return ShieldIcon;
-    default:
-      return FileCodeIcon;
-  }
+const getCheckTypeIcon = (type: PlanCheckRun_Result_Type) => {
+  return checkTypeConfig[type]?.icon ?? FileCodeIcon;
 };
 
-const getCheckTypeLabel = (type: PlanCheckRun_Type) => {
-  switch (type) {
-    case PlanCheckRun_Type.DATABASE_STATEMENT_ADVISE:
-      return t("task.check-type.sql-review.self");
-    case PlanCheckRun_Type.DATABASE_STATEMENT_SUMMARY_REPORT:
-      return t("task.check-type.summary-report");
-    case PlanCheckRun_Type.DATABASE_CONNECT:
-      return t("task.check-type.connection");
-    case PlanCheckRun_Type.DATABASE_GHOST_SYNC:
-      return t("task.check-type.ghost-sync");
-    default:
-      return type.toString();
-  }
+const getCheckTypeLabel = (type: PlanCheckRun_Result_Type) => {
+  const key = checkTypeConfig[type]?.labelKey;
+  return key ? t(key) : type.toString();
 };
 
-const getCheckTypeDescription = (type: PlanCheckRun_Type) => {
+const getCheckTypeDescription = (type: PlanCheckRun_Result_Type) => {
   switch (type) {
-    case PlanCheckRun_Type.DATABASE_STATEMENT_ADVISE:
+    case PlanCheckRun_Result_Type.STATEMENT_ADVISE:
       return t("task.check-type.sql-review.description");
     default:
       return undefined;
@@ -315,18 +362,17 @@ const formatTime = (timestamp: Timestamp | undefined): string => {
   );
 };
 
+const adviceLevelToStatus: Partial<
+  Record<Advice_Level, "SUCCESS" | "WARNING" | "ERROR">
+> = {
+  [Advice_Level.ERROR]: "ERROR",
+  [Advice_Level.WARNING]: "WARNING",
+  [Advice_Level.SUCCESS]: "SUCCESS",
+};
+
 const getCheckResultStatus = (
   status: Advice_Level
 ): "SUCCESS" | "WARNING" | "ERROR" => {
-  switch (status) {
-    case Advice_Level.ERROR:
-      return "ERROR";
-    case Advice_Level.WARNING:
-      return "WARNING";
-    case Advice_Level.SUCCESS:
-      return "SUCCESS";
-    default:
-      return "SUCCESS";
-  }
+  return adviceLevelToStatus[status] ?? "SUCCESS";
 };
 </script>

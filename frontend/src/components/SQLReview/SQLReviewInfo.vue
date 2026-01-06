@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-6">
+  <div class="flex flex-col gap-y-6">
     <div v-if="attachedResources.length > 0">
       <label class="textlabel">
         {{ $t("sql-review.attach-resource.self") }}
@@ -11,7 +11,7 @@
       <NRadioGroup
         v-model:value="resourceType"
         :disabled="!allowChangeAttachedResource"
-        class="space-x-2 mt-2"
+        class="flex gap-x-2 mt-2"
       >
         <NRadio value="environment">{{ $t("common.environment") }}</NRadio>
         <NRadio value="project">{{ $t("common.project") }}</NRadio>
@@ -24,18 +24,19 @@
         class="mt-2"
         required
         name="environment"
-        :environment-name="attachedResources[0]"
+        :value="attachedResources[0]"
         :disabled="!allowChangeAttachedResource"
         :filter="
-          (env: Environment, _: number) =>
+          (env: Environment) =>
             filterResource(formatEnvironmentName(env.id))
         "
-        @update:environment-name="
-          (val: string | undefined) => {
-            if (!val) {
+        @update:value="
+          (val) => {
+            const name = val as string
+            if (!name) {
               $emit('attached-resources-change', []);
             } else {
-              $emit('attached-resources-change', [val]);
+              $emit('attached-resources-change', [name]);
             }
           }
         "
@@ -45,15 +46,16 @@
         class="mt-2"
         style="width: 100%"
         required
-        :project-name="attachedResources[0]"
+        :value="attachedResources[0]"
         :disabled="!allowChangeAttachedResource"
         :filter="(proj) => filterResource(proj.name)"
-        @update:project-name="
-          (val: string | undefined) => {
+        @update:value="
+          (val) => {
+            const name = val as string
             if (!val) {
               $emit('attached-resources-change', []);
             } else {
-              $emit('attached-resources-change', [val]);
+              $emit('attached-resources-change', [name]);
             }
           }
         "
@@ -63,10 +65,17 @@
         class="mt-2"
         style="width: 100%"
         required
-        :database-name="attachedResources[0]"
+        :value="attachedResources[0]"
         :disabled="!allowChangeAttachedResource"
-        :filter="(db: Database, _: number) => filterResource(db.name)"
-        @update:database-names="$emit('attached-resources-change', $event)"
+        :filter="(db: Database) => filterResource(db.name)"
+        @update:value="(val) => {
+          const name = val as string
+          if (!name) {
+            $emit('attached-resources-change', []);
+          } else {
+            $emit('attached-resources-change', [name]);
+          }
+        }"
       />
     </div>
     <div>
@@ -86,7 +95,6 @@
         @update:value="emit('name-change', $event)"
       />
       <ResourceIdField
-        ref="resourceIdField"
         class="mt-1"
         editing-class="mt-6"
         resource-type="review-config"
@@ -116,7 +124,7 @@
 
 <script lang="ts" setup>
 import { NRadio, NRadioGroup } from "naive-ui";
-import { ref, watch, computed } from "vue";
+import { computed, watch } from "vue";
 import { BBAttention, BBTextField } from "@/bbkit";
 import ResourceIdField from "@/components/v2/Form/ResourceIdField.vue";
 import { useResourceByName } from "@/components/v2/ResourceOccupiedModal/useResourceByName";
@@ -125,8 +133,8 @@ import { reviewConfigNamePrefix } from "@/store/modules/v1/common";
 import type { SQLReviewPolicyTemplateV2 } from "@/types";
 import type { Database } from "@/types/proto-es/v1/database_service_pb";
 import {
-  formatEnvironmentName,
   type Environment,
+  formatEnvironmentName,
 } from "@/types/v1/environment";
 import { DatabaseSelect, EnvironmentSelect, ProjectSelect } from "../v2";
 import { SQLReviewTemplateSelector } from "./components";
@@ -169,6 +177,4 @@ const filterResource = (name: string): boolean => {
   }
   return !sqlReviewStore.getReviewPolicyByResouce(name);
 };
-
-const resourceIdField = ref<InstanceType<typeof ResourceIdField>>();
 </script>

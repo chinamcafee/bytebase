@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	partiqlparser "github.com/bytebase/partiql-parser"
+	partiqlparser "github.com/bytebase/parser/partiql"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/parser/base"
@@ -118,7 +118,7 @@ func (m CompletionMap) insertMetadataColumns(c *Completer) {
 			if databaseMetadata == nil {
 				return
 			}
-			schema := databaseMetadata.GetSchema("")
+			schema := databaseMetadata.GetSchemaMetadata("")
 			if schema == nil {
 				return
 			}
@@ -136,7 +136,7 @@ func (m CompletionMap) insertMetadataColumns(c *Completer) {
 			if table == nil {
 				return
 			}
-			for _, column := range table.GetColumns() {
+			for _, column := range table.GetProto().GetColumns() {
 				if _, ok := m[column.Name]; !ok {
 					m.Insert(base.Candidate{
 						Type: base.CandidateTypeColumn,
@@ -159,7 +159,7 @@ func (m CompletionMap) insertMetadataTables(c *Completer) {
 	if databaseMetadata == nil {
 		return
 	}
-	schema := databaseMetadata.GetSchema("")
+	schema := databaseMetadata.GetSchemaMetadata("")
 	if schema == nil {
 		return
 	}
@@ -569,8 +569,9 @@ func skipHeadingSQLs(statement string, caretLine int, caretOffset int) (string, 
 			newCaretLine = caretLine - previousSQLEndLine + 1 // Convert to 1-based.
 			if caretLine == previousSQLEndLine {
 				// The caret is in the same line as the last line of the previous SQL statement.
-				// We need to adjust the caret offset.
-				newCaretOffset = caretOffset - previousSQLEndColumn - 1 // Convert to 0-based.
+				// End.Column is 1-based exclusive, so (End.Column - 1) gives 0-based start of next statement.
+				// newCaretOffset = caretOffset - (previousSQLEndColumn - 1)
+				newCaretOffset = caretOffset - previousSQLEndColumn + 1
 			}
 			break
 		}
@@ -586,7 +587,7 @@ func skipHeadingSQLs(statement string, caretLine int, caretOffset int) (string, 
 	return buf.String(), newCaretLine, newCaretOffset
 }
 
-func notEmptySQLCount(list []base.SingleSQL) int {
+func notEmptySQLCount(list []base.Statement) int {
 	count := 0
 	for _, sql := range list {
 		if !sql.Empty {

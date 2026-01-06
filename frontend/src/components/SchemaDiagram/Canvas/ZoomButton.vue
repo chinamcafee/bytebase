@@ -1,5 +1,5 @@
 <template>
-  <NButtonGroup size="tiny" class="bg-white rounded">
+  <NButtonGroup size="tiny" class="bg-white rounded-sm">
     <NButton :disabled="zoom <= min" @click="$emit('zoom-out')">
       <template #icon>
         <heroicons-outline:minus />
@@ -17,7 +17,7 @@
 </template>
 
 <script lang="ts" setup>
-import { NButtonGroup, NButton } from "naive-ui";
+import { NButton, NButtonGroup } from "naive-ui";
 import { computed } from "vue";
 import { useSchemaDiagramContext } from "../common";
 

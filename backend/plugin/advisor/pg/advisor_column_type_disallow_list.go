@@ -5,15 +5,24 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pkg/errors"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
+	"github.com/antlr4-go/antlr/v4"
+
+	parser "github.com/bytebase/parser/postgresql"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/parser/pg/legacy/ast"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
+	"github.com/bytebase/bytebase/backend/plugin/parser/pg"
+)
+
+var (
+	_ advisor.Advisor = (*ColumnTypeDisallowListAdvisor)(nil)
 )
 
 func init() {
-	advisor.Register(storepb.Engine_POSTGRES, advisor.SchemaRuleColumnTypeDisallowList, &ColumnTypeDisallowListAdvisor{})
+	advisor.Register(storepb.Engine_POSTGRES, storepb.SQLReviewRule_COLUMN_TYPE_DISALLOW_LIST, &ColumnTypeDisallowListAdvisor{})
 }
 
 // ColumnTypeDisallowListAdvisor is the advisor checking for column type restriction.
@@ -22,127 +31,171 @@ type ColumnTypeDisallowListAdvisor struct {
 
 // Check checks for column type restriction.
 func (*ColumnTypeDisallowListAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.Node)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Node")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
-	payload, err := advisor.UnmarshalStringArrayTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
-	checker := &columnTypeDisallowListChecker{
-		level:           level,
-		title:           string(checkCtx.Rule.Type),
-		typeRestriction: make(map[string]bool),
-	}
-	for _, tp := range payload.List {
-		checker.typeRestriction[strings.ToLower(tp)] = true
+	stringArrayPayload := checkCtx.Rule.GetStringArrayPayload()
+
+	// Convert disallowed types to lowercase for case-insensitive comparison
+	typeRestriction := make(map[string]bool)
+	for _, tp := range stringArrayPayload.List {
+		typeRestriction[strings.ToLower(tp)] = true
 	}
 
-	for _, stmt := range stmtList {
-		checker.text = stmt.Text()
-		checker.line = stmt.LastLine()
-		ast.Walk(checker, stmt)
+	rule := &columnTypeDisallowListRule{
+		BaseRule: BaseRule{
+			level: level,
+			title: checkCtx.Rule.Type.String(),
+		},
+		typeRestriction: typeRestriction,
 	}
 
-	return checker.adviceList, nil
+	checker := NewGenericChecker([]Rule{rule})
+
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
+
+	return checker.GetAdviceList(), nil
 }
 
-type columnTypeDisallowListChecker struct {
-	adviceList      []*storepb.Advice
-	level           storepb.Advice_Status
-	title           string
-	text            string
-	line            int
+type columnTypeDisallowListRule struct {
+	BaseRule
+
 	typeRestriction map[string]bool
 }
 
-type columnTypeData struct {
-	table  string
-	column string
-	tp     string
-	line   int
+func (*columnTypeDisallowListRule) Name() string {
+	return "column_type_disallow_list"
 }
 
-func (checker *columnTypeDisallowListChecker) Visit(in ast.Node) ast.Visitor {
-	var columnList []columnTypeData
-	switch node := in.(type) {
-	case *ast.CreateTableStmt:
-		for _, column := range node.ColumnList {
-			exist := false
-			typeDisallow := ""
-			for tp := range checker.typeRestriction {
-				if exist = column.Type.EquivalentType(tp); exist {
-					typeDisallow = tp
-					break
+func (r *columnTypeDisallowListRule) OnEnter(ctx antlr.ParserRuleContext, nodeType string) error {
+	switch nodeType {
+	case "Createstmt":
+		if c, ok := ctx.(*parser.CreatestmtContext); ok {
+			r.handleCreatestmt(c)
+		}
+	case "Altertablestmt":
+		if c, ok := ctx.(*parser.AltertablestmtContext); ok {
+			r.handleAltertablestmt(c)
+		}
+	default:
+		// Do nothing for other node types
+	}
+	return nil
+}
+
+func (*columnTypeDisallowListRule) OnExit(_ antlr.ParserRuleContext, _ string) error {
+	return nil
+}
+
+func (r *columnTypeDisallowListRule) handleCreatestmt(ctx *parser.CreatestmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	qualifiedNames := ctx.AllQualified_name()
+	if len(qualifiedNames) == 0 {
+		return
+	}
+
+	tableName := extractTableName(qualifiedNames[0])
+	if tableName == "" {
+		return
+	}
+
+	// Check all columns for disallowed types
+	if ctx.Opttableelementlist() != nil && ctx.Opttableelementlist().Tableelementlist() != nil {
+		allElements := ctx.Opttableelementlist().Tableelementlist().AllTableelement()
+		for _, elem := range allElements {
+			if elem.ColumnDef() != nil {
+				colDef := elem.ColumnDef()
+				if colDef.Colid() != nil && colDef.Typename() != nil {
+					columnName := pg.NormalizePostgreSQLColid(colDef.Colid())
+					r.checkType(tableName, columnName, colDef.Typename(), colDef.GetStart().GetLine())
 				}
-			}
-			if exist {
-				columnList = append(columnList, columnTypeData{
-					table:  node.Name.Name,
-					column: column.ColumnName,
-					tp:     strings.ToUpper(typeDisallow),
-					line:   column.LastLine(),
-				})
 			}
 		}
-	case *ast.AlterTableStmt:
-		for _, item := range node.AlterItemList {
-			switch cmd := item.(type) {
-			case *ast.AddColumnListStmt:
-				for _, column := range cmd.ColumnList {
-					exist := false
-					typeDisallow := ""
-					for tp := range checker.typeRestriction {
-						if exist = column.Type.EquivalentType(tp); exist {
-							typeDisallow = tp
-							break
-						}
-					}
-					if exist {
-						columnList = append(columnList, columnTypeData{
-							table:  node.Table.Name,
-							column: column.ColumnName,
-							tp:     strings.ToUpper(typeDisallow),
-							line:   checker.line,
-						})
-					}
-				}
-			case *ast.ChangeColumnStmt:
-				exist := false
-				typeDisallow := ""
-				for tp := range checker.typeRestriction {
-					if exist = cmd.Column.Type.EquivalentType(tp); exist {
-						typeDisallow = tp
-						break
-					}
-				}
-				if exist {
-					columnList = append(columnList, columnTypeData{
-						table:  node.Table.Name,
-						column: cmd.Column.ColumnName,
-						tp:     strings.ToUpper(typeDisallow),
-						line:   checker.line,
-					})
+	}
+}
+
+func (r *columnTypeDisallowListRule) handleAltertablestmt(ctx *parser.AltertablestmtContext) {
+	if !isTopLevel(ctx.GetParent()) {
+		return
+	}
+
+	if ctx.Relation_expr() == nil || ctx.Relation_expr().Qualified_name() == nil {
+		return
+	}
+
+	tableName := extractTableName(ctx.Relation_expr().Qualified_name())
+	if tableName == "" {
+		return
+	}
+
+	// Check ALTER TABLE ADD COLUMN
+	if ctx.Alter_table_cmds() != nil {
+		allCmds := ctx.Alter_table_cmds().AllAlter_table_cmd()
+		for _, cmd := range allCmds {
+			// ADD COLUMN
+			if cmd.ADD_P() != nil && cmd.ColumnDef() != nil {
+				colDef := cmd.ColumnDef()
+				if colDef.Colid() != nil && colDef.Typename() != nil {
+					columnName := pg.NormalizePostgreSQLColid(colDef.Colid())
+					r.checkType(tableName, columnName, colDef.Typename(), colDef.GetStart().GetLine())
 				}
 			}
+
+			// ALTER COLUMN TYPE
+			if cmd.ALTER() != nil && cmd.TYPE_P() != nil && cmd.Typename() != nil {
+				allColids := cmd.AllColid()
+				if len(allColids) > 0 {
+					columnName := pg.NormalizePostgreSQLColid(allColids[0])
+					r.checkType(tableName, columnName, cmd.Typename(), cmd.GetStart().GetLine())
+				}
+			}
+		}
+	}
+}
+
+func (r *columnTypeDisallowListRule) checkType(tableName, columnName string, typename parser.ITypenameContext, line int) {
+	if typename == nil {
+		return
+	}
+
+	// Get the type text
+	typeText := typename.GetText()
+
+	// Check if this type is equivalent to any type in the disallow list
+	var matchedDisallowedType string
+	for disallowedType := range r.typeRestriction {
+		if areTypesEquivalent(typeText, disallowedType) {
+			matchedDisallowedType = disallowedType
+			break
 		}
 	}
 
-	for _, column := range columnList {
-		checker.adviceList = append(checker.adviceList, &storepb.Advice{
-			Status:        checker.level,
-			Code:          advisor.DisabledColumnType.Int32(),
-			Title:         checker.title,
-			Content:       fmt.Sprintf("Disallow column type %s but column \"%s\".\"%s\" is", column.tp, column.table, column.column),
-			StartPosition: newPositionAtLineStart(column.line),
+	if matchedDisallowedType != "" {
+		r.AddAdvice(&storepb.Advice{
+			Status:  r.level,
+			Code:    code.DisabledColumnType.Int32(),
+			Title:   r.title,
+			Content: fmt.Sprintf("Disallow column type %s but column %q.%q is", strings.ToUpper(matchedDisallowedType), tableName, columnName),
+			StartPosition: &storepb.Position{
+				Line:   int32(line),
+				Column: 0,
+			},
 		})
 	}
-	return checker
 }

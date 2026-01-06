@@ -6,15 +6,16 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	"github.com/pkg/errors"
 
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 const (
@@ -26,9 +27,9 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleTableRequirePK, &TableRequirePKAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleTableRequirePK, &TableRequirePKAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleTableRequirePK, &TableRequirePKAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_TABLE_REQUIRE_PK, &TableRequirePKAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_TABLE_REQUIRE_PK, &TableRequirePKAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_TABLE_REQUIRE_PK, &TableRequirePKAdvisor{})
 }
 
 // TableRequirePKAdvisor is the advisor checking table requires PK.
@@ -37,26 +38,28 @@ type TableRequirePKAdvisor struct {
 
 // Check checks table requires PK.
 func (*TableRequirePKAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewTableRequirePKRule(level, string(checkCtx.Rule.Type), checkCtx.Catalog)
+	rule := NewTableRequirePKRule(level, checkCtx.Rule.Type.String(), checkCtx.OriginalMetadata)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmtNode := range root {
-		rule.SetBaseLine(stmtNode.BaseLine)
-		checker.SetBaseLine(stmtNode.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmtNode.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	// Generate advice after walking
@@ -68,21 +71,21 @@ func (*TableRequirePKAdvisor) Check(_ context.Context, checkCtx advisor.Context)
 // TableRequirePKRule checks table requires PK.
 type TableRequirePKRule struct {
 	BaseRule
-	tables  map[string]columnSet
-	line    map[string]int
-	catalog *catalog.Finder
+	tables           map[string]columnSet
+	line             map[string]int
+	originalMetadata *model.DatabaseMetadata
 }
 
 // NewTableRequirePKRule creates a new TableRequirePKRule.
-func NewTableRequirePKRule(level storepb.Advice_Status, title string, catalog *catalog.Finder) *TableRequirePKRule {
+func NewTableRequirePKRule(level storepb.Advice_Status, title string, originalMetadata *model.DatabaseMetadata) *TableRequirePKRule {
 	return &TableRequirePKRule{
 		BaseRule: BaseRule{
 			level: level,
 			title: title,
 		},
-		tables:  make(map[string]columnSet),
-		line:    make(map[string]int),
-		catalog: catalog,
+		tables:           make(map[string]columnSet),
+		line:             make(map[string]int),
+		originalMetadata: originalMetadata,
 	}
 }
 
@@ -230,7 +233,7 @@ func (r *TableRequirePKRule) generateAdviceList() {
 		if len(r.tables[tableName]) == 0 {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.TableNoPK.Int32(),
+				Code:          code.TableNoPK.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("Table `%s` requires PRIMARY KEY", tableName),
 				StartPosition: common.ConvertANTLRLineToPosition(r.line[tableName]),
@@ -250,14 +253,11 @@ func (r *TableRequirePKRule) changeColumn(tableName string, oldColumn string, ne
 
 func (r *TableRequirePKRule) dropColumn(tableName string, columnName string) bool {
 	if _, ok := r.tables[tableName]; !ok {
-		_, pk := r.catalog.Origin.FindIndex(&catalog.IndexFind{
-			TableName: tableName,
-			IndexName: primaryKeyName,
-		})
+		pk := r.originalMetadata.GetSchemaMetadata("").GetTable(tableName).GetIndex(primaryKeyName)
 		if pk == nil {
 			return false
 		}
-		r.tables[tableName] = newColumnSet(pk.ExpressionList())
+		r.tables[tableName] = newColumnSet(pk.GetProto().GetExpressions())
 	}
 
 	pk := r.tables[tableName]

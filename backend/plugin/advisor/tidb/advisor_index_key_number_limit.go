@@ -6,8 +6,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pkg/errors"
+
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
+	"github.com/pingcap/tidb/pkg/parser/ast"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -20,7 +23,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleIndexKeyNumberLimit, &IndexKeyNumberLimitAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_INDEX_KEY_NUMBER_LIMIT, &IndexKeyNumberLimitAdvisor{})
 }
 
 // IndexKeyNumberLimitAdvisor is the advisor checking for index key number limit.
@@ -29,23 +32,24 @@ type IndexKeyNumberLimitAdvisor struct {
 
 // Check checks for index key number limit.
 func (*IndexKeyNumberLimitAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalNumberTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	numberPayload := checkCtx.Rule.GetNumberPayload()
+	if numberPayload == nil {
+		return nil, errors.New("number_payload is required for index key number limit rule")
 	}
 	checker := &indexKeyNumberLimitChecker{
 		level: level,
-		title: string(checkCtx.Rule.Type),
-		max:   payload.Number,
+		title: checkCtx.Rule.Type.String(),
+		max:   int(numberPayload.Number),
 	}
 
 	for _, stmt := range stmtList {
@@ -108,7 +112,7 @@ func (checker *indexKeyNumberLimitChecker) Enter(in ast.Node) (ast.Node, bool) {
 	for _, index := range indexList {
 		checker.adviceList = append(checker.adviceList, &storepb.Advice{
 			Status:        checker.level,
-			Code:          advisor.IndexKeyNumberExceedsLimit.Int32(),
+			Code:          code.IndexKeyNumberExceedsLimit.Int32(),
 			Title:         checker.title,
 			Content:       fmt.Sprintf("The number of index `%s` in table `%s` should be not greater than %d", index.index, index.table, checker.max),
 			StartPosition: common.ConvertANTLRLineToPosition(index.line),

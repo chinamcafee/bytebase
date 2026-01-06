@@ -6,140 +6,70 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"time"
 
 	"github.com/pkg/errors"
-	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/qb"
-	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 )
 
 // SheetMessage is the message for a sheet.
 type SheetMessage struct {
-	ProjectID string
-
-	CreatorID int
-
-	Title     string
+	// SHA256 hash of the statement (hex-encoded)
+	Sha256 string
+	// SQL statement content
 	Statement string
-	Payload   *storepb.SheetPayload
-
-	// Sha256 is the Sha256 hash of the statement.
-	Sha256 []byte
-
-	// Output only fields
-	UID       int
-	Size      int64
-	CreatedAt time.Time
+	// Size of the statement in bytes
+	Size int64
 }
 
-func (s *SheetMessage) GetSha256Hex() string {
-	return hex.EncodeToString(s.Sha256)
-}
-
-// FindSheetMessage is the API message for finding sheets.
-type FindSheetMessage struct {
-	UID *int
-
-	// Used to find the creator's sheet list.
-	// When finding shared PROJECT/PUBLIC sheets, this value should be empty.
-	// It does not make sense to set both `CreatorID` and `ExcludedCreatorID`.
-	CreatorID *int
-
-	// LoadFull is used if we want to load the full sheet.
-	LoadFull bool
-
-	// Related fields
-	ProjectID *string
-}
-
-// PatchSheetMessage is the message to patch a sheet.
-type PatchSheetMessage struct {
-	UID       int
-	UpdaterID int
-	Statement *string
-}
-
-// GetSheetStatementByID gets the statement of a sheet by ID.
-func (s *Store) GetSheetStatementByID(ctx context.Context, id int) (string, error) {
-	if v, ok := s.sheetStatementCache.Get(id); ok && s.enableCache {
-		return v, nil
-	}
-
-	sheet, err := s.GetSheet(ctx, &FindSheetMessage{UID: &id, LoadFull: true})
-	if err != nil {
-		return "", err
-	}
-	if sheet == nil {
-		return "", errors.Errorf("sheet not found with id %d", id)
-	}
-
-	statement := sheet.Statement
-	s.sheetStatementCache.Add(id, statement)
-	return statement, nil
-}
-
-// GetSheet gets a sheet.
-func (s *Store) GetSheet(ctx context.Context, find *FindSheetMessage) (*SheetMessage, error) {
-	shouldCache := !find.LoadFull && find.UID != nil
-	if shouldCache {
-		if v, ok := s.sheetCache.Get(*find.UID); ok && s.enableCache {
-			return v, nil
-		}
-	}
-
-	sheets, err := s.listSheets(ctx, find)
+// GetSheetTruncated gets a sheet by SHA256 hash with truncated statement (max 2MB).
+// Statement field will be truncated to MaxSheetSize (2MB).
+// Results are cached by SHA256 hex string.
+func (s *Store) GetSheetTruncated(ctx context.Context, sha256Hex string) (*SheetMessage, error) {
+	sheet, err := s.getSheet(ctx, sha256Hex, false)
 	if err != nil {
 		return nil, err
 	}
-	if len(sheets) == 0 {
+	if sheet == nil {
 		return nil, nil
 	}
-	if len(sheets) > 1 {
-		return nil, errors.Errorf("expected 1 sheet, got %d", len(sheets))
-	}
-	sheet := sheets[0]
-
-	if shouldCache {
-		s.sheetCache.Add(sheet.UID, sheet)
-	}
-
 	return sheet, nil
 }
 
-// listSheets returns a list of sheets.
-func (s *Store) listSheets(ctx context.Context, find *FindSheetMessage) ([]*SheetMessage, error) {
-	statementField := fmt.Sprintf("LEFT(sheet_blob.content, %d)", common.MaxSheetSize)
-	if find.LoadFull {
-		statementField = "sheet_blob.content"
+// GetSheetFull gets a sheet by SHA256 hash with the complete statement.
+// Statement field contains the complete content regardless of size.
+// Results are cached by SHA256 hex string.
+func (s *Store) GetSheetFull(ctx context.Context, sha256Hex string) (*SheetMessage, error) {
+	if v, ok := s.sheetFullCache.Get(sha256Hex); ok && s.enableCache {
+		return v, nil
+	}
+
+	sheet, err := s.getSheet(ctx, sha256Hex, true)
+	if err != nil {
+		return nil, err
+	}
+	if sheet == nil {
+		return nil, nil
+	}
+
+	s.sheetFullCache.Add(sha256Hex, sheet)
+	return sheet, nil
+}
+
+// getSheet is the internal helper for fetching a single sheet by SHA256.
+func (s *Store) getSheet(ctx context.Context, sha256Hex string, loadFull bool) (*SheetMessage, error) {
+	statementField := fmt.Sprintf("LEFT(content, %d)", common.MaxSheetSize)
+	if loadFull {
+		statementField = "content"
 	}
 
 	q := qb.Q().Space(fmt.Sprintf(`
 		SELECT
-			sheet.id,
-			sheet.creator_id,
-			sheet.created_at,
-			sheet.project,
-			sheet.name,
 			%s,
-			sheet.sha256,
-			sheet.payload,
-			OCTET_LENGTH(sheet_blob.content)
-		FROM sheet
-		LEFT JOIN sheet_blob ON sheet.sha256 = sheet_blob.sha256
-		WHERE TRUE`, statementField))
-
-	if v := find.UID; v != nil {
-		q.And("sheet.id = ?", *v)
-	}
-	if v := find.CreatorID; v != nil {
-		q.And("sheet.creator_id = ?", *v)
-	}
-	if v := find.ProjectID; v != nil {
-		q.And("sheet.project = ?", *v)
-	}
+			OCTET_LENGTH(content)
+		FROM sheet_blob
+		WHERE sha256 = decode(?, 'hex')`, statementField), sha256Hex)
 
 	query, args, err := q.ToSQL()
 	if err != nil {
@@ -158,31 +88,19 @@ func (s *Store) listSheets(ctx context.Context, find *FindSheetMessage) ([]*Shee
 	}
 	defer rows.Close()
 
-	var sheets []*SheetMessage
-	for rows.Next() {
-		var sheet SheetMessage
-		var payload []byte
+	var sheet *SheetMessage
+	if rows.Next() {
+		sheet = &SheetMessage{
+			Sha256: sha256Hex,
+		}
 		if err := rows.Scan(
-			&sheet.UID,
-			&sheet.CreatorID,
-			&sheet.CreatedAt,
-			&sheet.ProjectID,
-			&sheet.Title,
 			&sheet.Statement,
-			&sheet.Sha256,
-			&payload,
 			&sheet.Size,
 		); err != nil {
 			return nil, err
 		}
-		sheetPayload := &storepb.SheetPayload{}
-		if err := common.ProtojsonUnmarshaler.Unmarshal(payload, sheetPayload); err != nil {
-			return nil, err
-		}
-		sheet.Payload = sheetPayload
-
-		sheets = append(sheets, &sheet)
 	}
+
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
@@ -190,155 +108,28 @@ func (s *Store) listSheets(ctx context.Context, find *FindSheetMessage) ([]*Shee
 		return nil, err
 	}
 
-	return sheets, nil
+	if sheet == nil {
+		return nil, nil
+	}
+
+	return sheet, nil
 }
 
-// CreateSheet creates a new sheet.
-// You should not use this function directly to create sheets.
-// Use CreateSheet in component/sheet instead.
-func (s *Store) CreateSheet(ctx context.Context, create *SheetMessage) (*SheetMessage, error) {
-	if create.Payload == nil {
-		create.Payload = &storepb.SheetPayload{}
-	}
-	payload, err := protojson.Marshal(create.Payload)
-	if err != nil {
-		return nil, err
-	}
-
-	h := sha256.Sum256([]byte(create.Statement))
-	create.Sha256 = h[:]
-
-	if err := s.BatchCreateSheetBlob(ctx, [][]byte{create.Sha256}, []string{create.Statement}); err != nil {
-		return nil, errors.Wrapf(err, "failed to create sheet blobs")
-	}
-
-	q := qb.Q().Space(`
-		INSERT INTO sheet (
-			creator_id,
-			project,
-			name,
-			sha256,
-			payload
-		)
-		VALUES (?, ?, ?, ?, ?)
-		RETURNING id, created_at
-	`, create.CreatorID, create.ProjectID, create.Title, create.Sha256, payload)
-
-	query, args, err := q.ToSQL()
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to build sql")
-	}
-
-	tx, err := s.GetDB().BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	if err := tx.QueryRowContext(ctx, query, args...).Scan(
-		&create.UID,
-		&create.CreatedAt,
-	); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, common.FormatDBErrorEmptyRowWithQuery(query)
-		}
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, errors.Wrapf(err, "failed to commit transaction")
-	}
-
-	create.Size = int64(len(create.Statement))
-
-	return create, nil
-}
-
-// BatchCreateSheet creates a new sheet.
-// You should not use this function directly to create sheets.
-// Use BatchCreateSheet in component/sheet instead.
-func (s *Store) BatchCreateSheet(ctx context.Context, projectID string, creates []*SheetMessage, creatorUID int) ([]*SheetMessage, error) {
-	var names []string
+// CreateSheets creates sheet blobs using content-addressed storage.
+// Each sheet is identified by the SHA256 hash of its statement.
+// Duplicate statements share the same blob (ON CONFLICT DO NOTHING).
+func (s *Store) CreateSheets(ctx context.Context, creates ...*SheetMessage) ([]*SheetMessage, error) {
 	var statements []string
 	var sha256s [][]byte
-	var payloads [][]byte
 
 	for _, c := range creates {
-		names = append(names, c.Title)
 		statements = append(statements, c.Statement)
 		h := sha256.Sum256([]byte(c.Statement))
-		c.Sha256 = h[:]
-		sha256s = append(sha256s, c.Sha256)
-		if c.Payload == nil {
-			c.Payload = &storepb.SheetPayload{}
-		}
-		payload, err := protojson.Marshal(c.Payload)
-		if err != nil {
-			return nil, err
-		}
-		payloads = append(payloads, payload)
+		c.Sha256 = hex.EncodeToString(h[:])
+		sha256s = append(sha256s, h[:])
+		c.Size = int64(len(c.Statement))
 	}
 
-	if err := s.BatchCreateSheetBlob(ctx, sha256s, statements); err != nil {
-		return nil, errors.Wrapf(err, "failed to create sheet blobs")
-	}
-
-	q := qb.Q().Space(`
-		INSERT INTO sheet (
-			creator_id,
-			project,
-			name,
-			sha256,
-			payload
-		) SELECT
-			?,
-			?,
-			unnest(CAST(? AS TEXT[])),
-			unnest(CAST(? AS BYTEA[])),
-			unnest(CAST(? AS JSONB[]))
-		RETURNING id, created_at
-	`, creatorUID, projectID, names, sha256s, payloads)
-
-	query, args, err := q.ToSQL()
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to build sql")
-	}
-
-	tx, err := s.GetDB().BeginTx(ctx, nil)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to begin tx")
-	}
-	defer tx.Rollback()
-
-	rows, err := tx.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to query")
-	}
-	defer rows.Close()
-
-	for i := 0; rows.Next(); i++ {
-		creates[i].CreatorID = creatorUID
-
-		if err := rows.Scan(
-			&creates[i].UID,
-			&creates[i].CreatedAt,
-		); err != nil {
-			return nil, errors.Wrapf(err, "failed to scan")
-		}
-
-		creates[i].Size = int64(len(creates[i].Statement))
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, errors.Wrapf(err, "rows err")
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, errors.Wrapf(err, "failed to commit tx")
-	}
-
-	return creates, nil
-}
-
-func (s *Store) BatchCreateSheetBlob(ctx context.Context, sha256s [][]byte, contents []string) error {
 	q := qb.Q().Space(`
 		INSERT INTO sheet_blob (
 			sha256,
@@ -347,57 +138,44 @@ func (s *Store) BatchCreateSheetBlob(ctx context.Context, sha256s [][]byte, cont
 		 	unnest(CAST(? AS BYTEA[])),
 			unnest(CAST(? AS TEXT[]))
 		ON CONFLICT DO NOTHING
-	`, sha256s, contents)
-
-	query, args, err := q.ToSQL()
-	if err != nil {
-		return errors.Wrapf(err, "failed to build sql")
-	}
-
-	if _, err := s.GetDB().ExecContext(ctx, query, args...); err != nil {
-		return errors.Wrapf(err, "failed to exec")
-	}
-
-	return nil
-}
-
-// PatchSheet updates a sheet.
-func (s *Store) PatchSheet(ctx context.Context, patch *PatchSheetMessage) (*SheetMessage, error) {
-	if patch.Statement == nil {
-		return s.GetSheet(ctx, &FindSheetMessage{UID: &patch.UID})
-	}
-
-	h := sha256.Sum256([]byte(*patch.Statement))
-
-	if err := s.BatchCreateSheetBlob(ctx, [][]byte{h[:]}, []string{*patch.Statement}); err != nil {
-		return nil, errors.Wrapf(err, "failed to create sheet blobs")
-	}
-
-	q := qb.Q().Space(`
-		UPDATE sheet
-		SET
-			sha256 = ?
-		WHERE id = ?
-		RETURNING id
-	`, h[:], patch.UID)
+	`, sha256s, statements)
 
 	query, args, err := q.ToSQL()
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to build sql")
 	}
 
-	var uid int
-	if err := s.GetDB().QueryRowContext(ctx, query, args...).Scan(
-		&uid,
-	); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, &common.Error{Code: common.NotFound, Err: errors.Errorf("sheet ID not found: %d", patch.UID)}
-		}
-		return nil, errors.Wrapf(err, "failed to update sheet")
+	if _, err := s.GetDB().ExecContext(ctx, query, args...); err != nil {
+		return nil, errors.Wrapf(err, "failed to exec")
 	}
 
-	s.sheetStatementCache.Add(patch.UID, *patch.Statement)
-	s.sheetCache.Remove(patch.UID)
+	return creates, nil
+}
 
-	return s.GetSheet(ctx, &FindSheetMessage{UID: &patch.UID})
+// HasSheets checks if all sheets exist by SHA256 hashes.
+func (s *Store) HasSheets(ctx context.Context, sha256Hexes ...string) (bool, error) {
+	if len(sha256Hexes) == 0 {
+		return true, nil
+	}
+
+	// Remove duplicates
+	sha256Hexes = common.Uniq(sha256Hexes)
+
+	q := qb.Q().Space(`
+		SELECT COUNT(*)
+		FROM sheet_blob
+		WHERE sha256 IN (SELECT decode(unnest(CAST(? AS TEXT[])), 'hex'))`,
+		sha256Hexes)
+
+	query, args, err := q.ToSQL()
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to build sql")
+	}
+
+	var count int
+	if err := s.GetDB().QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return false, err
+	}
+
+	return count == len(sha256Hexes), nil
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/bytebase/bytebase/backend/common"
 	"github.com/bytebase/bytebase/backend/common/log"
+	"github.com/bytebase/bytebase/backend/component/config"
 	"github.com/bytebase/bytebase/backend/enterprise"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	v1pb "github.com/bytebase/bytebase/backend/generated-go/v1"
@@ -20,6 +21,7 @@ import (
 	"github.com/bytebase/bytebase/backend/plugin/idp/oauth2"
 	"github.com/bytebase/bytebase/backend/plugin/idp/oidc"
 	"github.com/bytebase/bytebase/backend/store"
+	"github.com/bytebase/bytebase/backend/utils"
 )
 
 // IdentityProviderService implements the identity provider service.
@@ -27,13 +29,15 @@ type IdentityProviderService struct {
 	v1connect.UnimplementedIdentityProviderServiceHandler
 	store          *store.Store
 	licenseService *enterprise.LicenseService
+	profile        *config.Profile
 }
 
 // NewIdentityProviderService creates a new IdentityProviderService.
-func NewIdentityProviderService(store *store.Store, licenseService *enterprise.LicenseService) *IdentityProviderService {
+func NewIdentityProviderService(store *store.Store, licenseService *enterprise.LicenseService, profile *config.Profile) *IdentityProviderService {
 	return &IdentityProviderService{
 		store:          store,
 		licenseService: licenseService,
+		profile:        profile,
 	}
 }
 
@@ -67,12 +71,8 @@ func (s *IdentityProviderService) CreateIdentityProvider(ctx context.Context, re
 		return nil, err
 	}
 
-	setting, err := s.store.GetWorkspaceGeneralSetting(ctx)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get workspace setting"))
-	}
-	if setting.ExternalUrl == "" {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.Errorf(setupExternalURLError))
+	if _, err := utils.GetEffectiveExternalURL(ctx, s.store, s.profile); err != nil {
+		return nil, err
 	}
 
 	if req.Msg.IdentityProvider == nil {
@@ -100,7 +100,7 @@ func (s *IdentityProviderService) CreateIdentityProvider(ctx context.Context, re
 		return connect.NewResponse(identityProvider), nil
 	}
 
-	identityProviderMessage, err = s.store.CreateIdentityProvider(ctx, identityProviderMessage)
+	identityProviderMessage, err := s.store.CreateIdentityProvider(ctx, identityProviderMessage)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to create identity provider"))
 	}
@@ -224,12 +224,9 @@ func (s *IdentityProviderService) TestIdentityProvider(ctx context.Context, req 
 		return nil, connect.NewError(connect.CodeNotFound, errors.Errorf("identity provider not found"))
 	}
 
-	setting, err := s.store.GetWorkspaceGeneralSetting(ctx)
+	externalURL, err := utils.GetEffectiveExternalURL(ctx, s.store, s.profile)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to get workspace setting"))
-	}
-	if setting.ExternalUrl == "" {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.Errorf(setupExternalURLError))
+		return nil, err
 	}
 
 	switch identityProvider.Type {
@@ -255,7 +252,7 @@ func (s *IdentityProviderService) TestIdentityProvider(ctx context.Context, req 
 			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to new oauth2 identity provider"))
 		}
 
-		redirectURL := fmt.Sprintf("%s/oauth/callback", setting.ExternalUrl)
+		redirectURL := fmt.Sprintf("%s/oauth/callback", externalURL)
 		token, err := oauth2IdentityProvider.ExchangeToken(ctx, redirectURL, oauth2Context.Code)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("failed to exchange access token, error: %s", err.Error()))
@@ -294,18 +291,20 @@ func (s *IdentityProviderService) TestIdentityProvider(ctx context.Context, req 
 			}
 			identityProvider.Config.GetOidcConfig().ClientSecret = storedIdentityProvider.Config.GetOidcConfig().ClientSecret
 		}
-		oauth2Context := req.Msg.GetOauth2Context()
-		if oauth2Context == nil {
-			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("missing OAuth2 context"))
+
+		oidcContext := req.Msg.GetOidcContext()
+		if oidcContext == nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("missing OIDC context"))
 		}
+
 		identityProviderConfig := convertIdentityProviderConfigToStore(identityProvider.Config)
 		oidcIdentityProvider, err := oidc.NewIdentityProvider(ctx, identityProviderConfig.GetOidcConfig())
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, errors.Wrapf(err, "failed to create new OIDC identity provider"))
 		}
 
-		redirectURL := fmt.Sprintf("%s/oidc/callback", setting.ExternalUrl)
-		token, err := oidcIdentityProvider.ExchangeToken(ctx, redirectURL, oauth2Context.Code)
+		redirectURL := fmt.Sprintf("%s/oidc/callback", externalURL)
+		token, err := oidcIdentityProvider.ExchangeToken(ctx, redirectURL, oidcContext.Code)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("failed to exchange access token, error: %s", err.Error()))
 		}

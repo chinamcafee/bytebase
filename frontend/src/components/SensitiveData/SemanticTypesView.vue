@@ -1,22 +1,29 @@
 <template>
-  <div class="w-full space-y-4">
-    <div class="flex items-center justify-end space-x-2">
-      <NButton
-        :disabled="!hasPermission || !hasSensitiveDataFeature"
-        @click="state.showTemplateDrawer = true"
+  <div class="w-full flex flex-col gap-y-4">
+    <div class="flex justify-end">
+      <PermissionGuardWrapper
+        v-slot="slotProps"
+        :permissions="['bb.policies.update']"
       >
-        {{ $t("settings.sensitive-data.semantic-types.use-predefined-type") }}
-      </NButton>
-      <NButton
-        type="primary"
-        :disabled="!hasPermission || !hasSensitiveDataFeature"
-        @click="onAdd"
-      >
-        <template #icon>
-          <PlusIcon class="h-4 w-4" />
-        </template>
-        {{ $t("common.add") }}
-      </NButton>
+        <div class="flex items-center gap-x-2">
+          <NButton
+            :disabled="slotProps.disabled || !hasSensitiveDataFeature"
+            @click="state.showTemplateDrawer = true"
+          >
+            {{ $t("settings.sensitive-data.semantic-types.use-predefined-type") }}
+          </NButton>
+          <NButton
+            type="primary"
+            :disabled="slotProps.disabled || !hasSensitiveDataFeature"
+            @click="onAdd"
+          >
+            <template #icon>
+              <PlusIcon class="h-4 w-4" />
+            </template>
+            {{ $t("common.add") }}
+          </NButton>
+        </div>
+      </PermissionGuardWrapper>
     </div>
     <div class="textinfolabel">
       {{ $t("settings.sensitive-data.semantic-types.label") }}
@@ -41,14 +48,15 @@ import { create } from "@bufbuild/protobuf";
 import { PlusIcon } from "lucide-vue-next";
 import { NButton } from "naive-ui";
 import { v4 as uuidv4 } from "uuid";
-import { computed, reactive, onMounted } from "vue";
+import { computed, onMounted, reactive } from "vue";
 import { useI18n } from "vue-i18n";
+import PermissionGuardWrapper from "@/components/Permission/PermissionGuardWrapper.vue";
 import { featureToRef, pushNotification, useSettingV1Store } from "@/store";
 import type { SemanticTypeSetting_SemanticType } from "@/types/proto-es/v1/setting_service_pb";
 import {
   SemanticTypeSetting_SemanticTypeSchema,
   Setting_SettingName,
-  ValueSchema as SettingValueSchema,
+  SettingValueSchema as SettingSettingValueSchema,
 } from "@/types/proto-es/v1/setting_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import { hasWorkspacePermissionV2 } from "@/utils";
@@ -79,7 +87,7 @@ const semanticTypeSettingValue = computed(() => {
   const semanticTypeSetting = settingStore.getSettingByName(
     Setting_SettingName.SEMANTIC_TYPES
   );
-  return semanticTypeSetting?.value?.value?.case === "semanticTypeSettingValue"
+  return semanticTypeSetting?.value?.value?.case === "semanticType"
     ? (semanticTypeSetting.value.value.value.types ?? [])
     : [];
 });
@@ -118,9 +126,9 @@ const onRemove = async (index: number) => {
 
   await settingStore.upsertSetting({
     name: Setting_SettingName.SEMANTIC_TYPES,
-    value: create(SettingValueSchema, {
+    value: create(SettingSettingValueSchema, {
       value: {
-        case: "semanticTypeSettingValue",
+        case: "semanticType",
         value: {
           types: state.semanticItemList
             .filter((data) => data.mode === "NORMAL")
@@ -159,9 +167,9 @@ const onUpsert = async (
 ) => {
   await settingStore.upsertSetting({
     name: Setting_SettingName.SEMANTIC_TYPES,
-    value: create(SettingValueSchema, {
+    value: create(SettingSettingValueSchema, {
       value: {
-        case: "semanticTypeSettingValue",
+        case: "semanticType",
         value: {
           types: semanticItemList,
         },
@@ -186,7 +194,7 @@ const onCancel = (index: number) => {
       Setting_SettingName.SEMANTIC_TYPES
     );
     const types =
-      semanticTypeSetting?.value?.value?.case === "semanticTypeSettingValue"
+      semanticTypeSetting?.value?.value?.case === "semanticType"
         ? (semanticTypeSetting.value.value.value.types ?? [])
         : [];
     const origin = types.find((s) => s.id === item.item.id);

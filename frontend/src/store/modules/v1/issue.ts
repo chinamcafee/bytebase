@@ -5,20 +5,16 @@ import { uniq } from "lodash-es";
 import { defineStore } from "pinia";
 import type { WatchCallback } from "vue";
 import { ref, watch } from "vue";
-import { issueServiceClientConnect } from "@/grpcweb";
-import { silentContextKey } from "@/grpcweb/context-key";
-import { SYSTEM_BOT_EMAIL, type IssueFilter } from "@/types";
-import {
-  GetIssueRequestSchema,
-  Issue_Type,
-  IssueSchema,
-  SearchIssuesRequestSchema,
-  UpdateIssueRequestSchema,
-} from "@/types/proto-es/v1/issue_service_pb";
+import { issueServiceClientConnect } from "@/connect";
+import { silentContextKey } from "@/connect/context-key";
+import { type IssueFilter, SYSTEM_BOT_EMAIL } from "@/types";
 import type { Issue } from "@/types/proto-es/v1/issue_service_pb";
 import {
-  IssueStatus,
+  GetIssueRequestSchema,
   Issue_ApprovalStatus,
+  Issue_Type,
+  IssueStatus,
+  SearchIssuesRequestSchema,
 } from "@/types/proto-es/v1/issue_service_pb";
 import {
   extractProjectResourceName,
@@ -27,8 +23,8 @@ import {
 import { useUserStore } from "../user";
 import { projectNamePrefix, userNamePrefix } from "./common";
 import {
-  shallowComposeIssue,
   type ComposeIssueConfig,
+  shallowComposeIssue,
 } from "./experimental-issue";
 import { useProjectV1Store } from "./project";
 import { useProjectIamPolicyStore } from "./projectIamPolicy";
@@ -43,6 +39,14 @@ export const buildIssueFilter = (find: IssueFilter): string => {
   const filter: string[] = [];
   if (find.creator) {
     filter.push(`creator == "${find.creator}"`);
+  }
+  if (find.currentApprover) {
+    filter.push(`current_approver == "${find.currentApprover}"`);
+  }
+  if (find.approvalStatus) {
+    filter.push(
+      `approval_status == "${Issue_ApprovalStatus[find.approvalStatus]}"`
+    );
   }
   if (find.statusList && find.statusList.length > 0) {
     filter.push(
@@ -62,18 +66,6 @@ export const buildIssueFilter = (find: IssueFilter): string => {
   if (find.type) {
     filter.push(`type == "${Issue_Type[find.type]}"`);
   }
-  if (find.taskType) {
-    filter.push(`task_type == "${find.taskType}"`);
-  }
-  if (find.instance) {
-    filter.push(`instance == "${find.instance}"`);
-  }
-  if (find.database) {
-    filter.push(`database == "${find.database}"`);
-  }
-  if (find.environment) {
-    filter.push(`environment == "${find.environment}"`);
-  }
   if (find.labels && find.labels.length > 0) {
     filter.push(`labels in [${find.labels.map((l) => `"${l}"`).join(",")}]`);
   }
@@ -81,16 +73,7 @@ export const buildIssueFilter = (find: IssueFilter): string => {
 };
 
 export const useIssueV1Store = defineStore("issue_v1", () => {
-  const regenerateReviewV1 = async (name: string) => {
-    const request = create(UpdateIssueRequestSchema, {
-      issue: create(IssueSchema, {
-        name,
-        approvalStatus: Issue_ApprovalStatus.CHECKING,
-      }),
-      updateMask: { paths: ["approval_status"] },
-    });
-    await issueServiceClientConnect.updateIssue(request);
-  };
+  const projectStore = useProjectV1Store();
 
   const listIssues = async (
     { find, pageSize, pageToken }: ListIssueParams,
@@ -105,12 +88,17 @@ export const useIssueV1Store = defineStore("issue_v1", () => {
     });
     const resp = await issueServiceClientConnect.searchIssues(request);
     const issues = resp.issues;
+
+    const projects = issues.map((issue) => {
+      return `projects/${extractProjectResourceName(issue.name)}`;
+    });
+    await projectStore.batchGetOrFetchProjects(projects);
     const composedIssues = await Promise.all(
       issues.map((issue) => shallowComposeIssue(issue, composeIssueConfig))
     );
     // Preprare creator for the issues.
     const users = uniq(composedIssues.map((issue) => issue.creator));
-    await useUserStore().batchGetUsers(users);
+    await useUserStore().batchGetOrFetchUsers(users);
     return {
       nextPageToken: resp.nextPageToken,
       issues: composedIssues,
@@ -123,17 +111,18 @@ export const useIssueV1Store = defineStore("issue_v1", () => {
     silent: boolean = false
   ) => {
     const request = create(GetIssueRequestSchema, { name });
-    const newIssue = await issueServiceClientConnect.getIssue(request, {
+    const issue = await issueServiceClientConnect.getIssue(request, {
       contextValues: createContextValues().set(silentContextKey, silent),
     });
-    const issue = newIssue;
+    await projectStore.getOrFetchProjectByName(
+      `projects/${extractProjectResourceName(issue.name)}`
+    );
     return shallowComposeIssue(issue, composeIssueConfig);
   };
 
   return {
     listIssues,
     fetchIssueByName,
-    regenerateReviewV1,
   };
 });
 

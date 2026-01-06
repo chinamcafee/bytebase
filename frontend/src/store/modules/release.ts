@@ -2,21 +2,20 @@ import { create } from "@bufbuild/protobuf";
 import { createContextValues } from "@connectrpc/connect";
 import { defineStore } from "pinia";
 import { computed, reactive, ref, unref, watch } from "vue";
-import { releaseServiceClientConnect } from "@/grpcweb";
-import { silentContextKey } from "@/grpcweb/context-key";
+import { releaseServiceClientConnect } from "@/connect";
+import { silentContextKey } from "@/connect/context-key";
 import type { MaybeRef, Pagination } from "@/types";
 import { isValidReleaseName, unknownRelease } from "@/types";
 import { State } from "@/types/proto-es/v1/common_pb";
 import type { Release } from "@/types/proto-es/v1/release_service_pb";
-import { ReleaseSchema } from "@/types/proto-es/v1/release_service_pb";
 import {
+  DeleteReleaseRequestSchema,
   GetReleaseRequestSchema,
   ListReleasesRequestSchema,
-  UpdateReleaseRequestSchema,
-  DeleteReleaseRequestSchema,
+  ReleaseSchema,
   UndeleteReleaseRequestSchema,
+  UpdateReleaseRequestSchema,
 } from "@/types/proto-es/v1/release_service_pb";
-import { DEFAULT_PAGE_SIZE } from "./common";
 
 export const useReleaseStore = defineStore("release", () => {
   const releaseMapByName = reactive(new Map<string, Release>());
@@ -32,7 +31,7 @@ export const useReleaseStore = defineStore("release", () => {
   ) => {
     const request = create(ListReleasesRequestSchema, {
       parent: project,
-      pageSize: pagination?.pageSize || DEFAULT_PAGE_SIZE,
+      pageSize: pagination?.pageSize,
       pageToken: pagination?.pageToken || "",
       showDeleted: Boolean(showDeleted),
     });

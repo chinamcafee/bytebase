@@ -21,12 +21,10 @@
       @input="onFileChange"
     />
     <slot>
-      <slot name="no-data">
-        <NEmpty class="py-6"></NEmpty>
-      </slot>
+      <NEmpty v-if="showNoDataPlaceholder" class="py-4"></NEmpty>
       <div class="text-sm text-gray-600 inline-flex pointer-events-none">
         <span
-          class="relative cursor-pointer rounded-md font-medium text-indigo-600 hover:text-indigo-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-indigo-500"
+          class="relative cursor-pointer rounded-md font-medium text-indigo-600 hover:text-indigo-500 focus-within:outline-hidden focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-indigo-500"
         >
           {{ $t("settings.general.workspace.select-logo") }}
         </span>
@@ -48,8 +46,7 @@
 
 <script lang="ts" setup>
 import { NEmpty } from "naive-ui";
-import type { PropType } from "vue";
-import { ref, reactive } from "vue";
+import { reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { pushNotification } from "@/store";
 
@@ -57,21 +54,12 @@ interface LocalState {
   dropAreaActive: boolean;
 }
 
-const props = defineProps({
-  maxFileSizeInMiB: {
-    required: true,
-    type: Number,
-  },
-  disabled: {
-    required: false,
-    type: Boolean,
-    default: false,
-  },
-  supportFileExtensions: {
-    required: true,
-    type: Object as PropType<string[]>,
-  },
-});
+const props = defineProps<{
+  maxFileSizeInMiB: number;
+  disabled?: boolean;
+  supportFileExtensions: string[];
+  showNoDataPlaceholder: boolean;
+}>();
 
 const emit = defineEmits(["on-select"]);
 
@@ -81,18 +69,17 @@ const state = reactive<LocalState>({
   dropAreaActive: false,
 });
 
-const uploader = ref<HTMLInputElement | null>(null);
+const uploader = ref<HTMLInputElement>();
 
 const onUploaderClick = () => {
   uploader.value?.click();
 };
 
 const onFileChange = () => {
-  const files: File[] = (uploader.value as any).files;
-  selectFile(files);
+  selectFile(uploader.value?.files);
 };
 
-const onFileDrop = (e: any) => {
+const onFileDrop = (e: DragEvent) => {
   e.preventDefault();
   state.dropAreaActive = false;
 
@@ -100,20 +87,23 @@ const onFileDrop = (e: any) => {
     return;
   }
 
-  const files: File[] = e.dataTransfer.files;
+  const files = e.dataTransfer?.files;
   selectFile(files);
 };
 
-const selectFile = (files: File[]) => {
-  if (!files.length) {
+const selectFile = (files: FileList | null | undefined) => {
+  if (!files || !files.length) {
     return;
   }
 
-  const file = files[0];
-  if (!validFile(file)) {
+  const file = files.item(0);
+  if (!file || !validFile(file)) {
     return;
   }
   emit("on-select", file);
+  if (uploader.value) {
+    uploader.value.value = "";
+  }
 };
 
 const validFile = (file: File): boolean => {

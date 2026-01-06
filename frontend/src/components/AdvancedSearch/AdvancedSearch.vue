@@ -12,11 +12,8 @@
       <template #prefix>
         <div
           class="flex flex-row items-center justify-start gap-x-2"
-          :style="{
-            'max-width': `calc(${containerWidth}px - 14rem)`,
-          }"
         >
-          <div class="flex items-center space-x-2">
+          <div class="flex items-center gap-x-2">
             <FilterIcon class="w-4 h-4 text-control-placeholder" />
             <span class="textinfolabel">
               {{ $t("issue.advanced-search.filter") }}
@@ -55,7 +52,7 @@
       <div
         v-show="showMenu"
         v-zindexable="{ enabled: true }"
-        class="absolute top-[36px] w-full bg-gray-100 shadow-xl origin-top-left rounded-[3px] overflow-clip"
+        class="absolute top-9 w-full bg-gray-100 shadow-xl origin-top-left rounded-[3px] overflow-clip"
       >
         <ScopeMenu
           :show="state.menuView === 'scope'"
@@ -83,33 +80,31 @@
 </template>
 
 <script lang="ts" setup>
-import { useDebounceFn, onClickOutside } from "@vueuse/core";
-import { useElementSize } from "@vueuse/core";
+import { onClickOutside, useDebounceFn } from "@vueuse/core";
 import { cloneDeep, last } from "lodash-es";
-import { FilterIcon } from "lucide-vue-next";
-import { XIcon } from "lucide-vue-next";
-import { NButton, NInput, type InputInst } from "naive-ui";
+import { FilterIcon, XIcon } from "lucide-vue-next";
+import { type InputInst, NButton, NInput } from "naive-ui";
 import scrollIntoView from "scroll-into-view-if-needed";
 import { zindexable as vZindexable } from "vdirs";
-import { reactive, watch, onMounted, ref, computed, nextTick } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useCurrentUserV1 } from "@/store";
 import { DEBOUNCE_SEARCH_DELAY } from "@/types";
 import type { SearchParams, SearchScopeId } from "@/utils";
 import {
+  buildSearchParamsBySearchText,
+  buildSearchTextBySearchParams,
   emptySearchParams,
   getValueFromSearchParams,
+  getValuesFromSearchParams,
   minmax,
   upsertScope,
-  buildSearchTextBySearchParams,
-  buildSearchParamsBySearchText,
-  mergeSearchParams,
   useDynamicLocalStorage,
 } from "@/utils";
 import ScopeMenu from "./ScopeMenu.vue";
 import ScopeTags from "./ScopeTags.vue";
-import ValueMenu from "./ValueMenu.vue";
 import type { ScopeOption } from "./types";
+import ValueMenu from "./ValueMenu.vue";
 
 const props = withDefaults(
   defineProps<{
@@ -117,23 +112,28 @@ const props = withDefaults(
     scopeOptions?: ScopeOption[];
     placeholder?: string | undefined;
     autofocus?: boolean;
-    overrideRouteQuery?: boolean;
+    cacheQuery?: boolean;
+    // Fallback params when no URL params and no cache.
+    // Precedence: URL params > cache > defaultParams.
+    // Readonly scopes from props.params are always preserved.
+    defaultParams?: SearchParams;
   }>(),
   {
     scopeOptions: () => [],
     autofocus: false,
     placeholder: undefined,
-    overrideRouteQuery: true,
+    cacheQuery: true,
+    defaultParams: undefined,
   }
 );
 
 const emit = defineEmits<{
+  (event: "keyup:enter"): void;
   (event: "update:params", params: SearchParams): void;
   (event: "select-unsupported-scope", id: SearchScopeId): void;
 }>();
 
 interface LocalState {
-  searchText: string;
   currentScope?: SearchScopeId;
   menuView?: "value" | "scope";
   scopeOptions: ScopeOption[];
@@ -152,7 +152,7 @@ const me = useCurrentUserV1();
 const cachedQuery = useDynamicLocalStorage<string>(
   computed(
     () =>
-      `bb.advanced-search.${me.value.name}.${router.currentRoute.value.name?.toString()}`
+      `bb.advanced-search.${me.value.name}.${router.currentRoute.value.path}`
   ),
   ""
 );
@@ -167,19 +167,7 @@ const defaultSearchParams = () => {
   return params;
 };
 
-const buildSearchTextByParams = (params: SearchParams | undefined): string => {
-  const prefix = (params?.scopes ?? [])
-    .map((scope) => `${scope.id}:${scope.value}`)
-    .join(" ");
-  const query = params?.query ?? "";
-  if (!prefix && !query) {
-    return "";
-  }
-  return `${prefix} ${query}`;
-};
-
 const state = reactive<LocalState>({
-  searchText: buildSearchTextByParams(props.params),
   scopeOptions: [],
   fetchDataStateMap: new Map(),
 });
@@ -196,20 +184,12 @@ const containerRef = ref<HTMLElement>();
 const tagsContainerRef = ref<HTMLElement>();
 const inputText = ref(props.params.query);
 const inputRef = ref<InputInst>();
-const menuIndex = ref(-1);
-const { width: containerWidth } = useElementSize(containerRef);
+const menuIndex = ref(0);
 const focusedTagId = ref<SearchScopeId>();
 
 const editableScopes = computed(() => {
   return props.params.scopes.filter((s) => !s.readonly);
 });
-
-watch(
-  () => props.params,
-  (params) => {
-    state.searchText = buildSearchTextByParams(params);
-  }
-);
 
 const valueOptions = computed(() => {
   if (state.menuView === "value" && currentScopeOption.value) {
@@ -319,33 +299,26 @@ const visibleScopeOptions = computed(() => {
 const visibleValueOptions = computed(() => {
   if (!state.currentScope) return [];
 
+  const selectedValues = new Set(
+    getValuesFromSearchParams(props.params, state.currentScope)
+  );
+  const options = valueOptions.value.filter(
+    (option) => !selectedValues.has(option.value)
+  );
+
   const keyword = currentValueForScope.value
     .trim()
     .replace(/:.*$/, "")
     .toLowerCase();
   if (!keyword || currentScopeOption.value?.search) {
-    return valueOptions.value;
+    return options;
   }
 
-  const filtered = valueOptions.value.filter(
+  return options.filter(
     (option) =>
       option.value.toLowerCase().includes(keyword) ||
       option.keywords.some((key) => key.includes(keyword))
   );
-
-  const currentValue = getValueFromSearchParams(
-    props.params,
-    state.currentScope
-  );
-  const option = valueOptions.value.find((opt) => opt.value === currentValue);
-  if (currentValue && option) {
-    // If we have current value, put it to the first if it doesn't match the keyword
-    const index = filtered.findIndex((opt) => opt.value === currentValue);
-    if (index < 0) {
-      filtered.unshift(option);
-    }
-  }
-  return filtered;
 });
 
 const visibleOptions = computed(() => {
@@ -569,42 +542,35 @@ const handleKeyUp = (e: KeyboardEvent) => {
       return;
     }
   }
-  if (maybeSelectMatchedScope()) {
-    maybeEmitIncompleteValue();
-    return;
-  }
-  if (maybeDeselectMismatchedScope()) {
-    maybeEmitIncompleteValue();
-    return;
-  }
   if (key === "Enter") {
     // Press enter to select scope (dive into the next step)
     // or select value
     const index = menuIndex.value;
-    if (index < 0) {
-      hideMenu();
-      return;
-    }
     if (state.menuView === "scope") {
       const option = visibleScopeOptions.value[index];
       if (option) {
         selectScope(option.id);
-        maybeEmitIncompleteValue();
-        return;
+        return maybeEmitIncompleteValue();
       }
     }
     if (state.menuView === "value") {
       if (visibleValueOptions.value.length === 0) {
         const val = extractValue();
         if (val) {
-          selectValue(val);
-          return;
+          return selectValue(val);
         }
       } else if (visibleValueOptions.value[index]) {
-        selectValue(visibleValueOptions.value[index].value);
-        return;
+        return selectValue(visibleValueOptions.value[index].value);
       }
     }
+    return emit("keyup:enter");
+  }
+
+  if (maybeSelectMatchedScope()) {
+    return maybeEmitIncompleteValue();
+  }
+  if (maybeDeselectMismatchedScope()) {
+    return maybeEmitIncompleteValue();
   }
 
   maybeEmitIncompleteValue();
@@ -631,22 +597,54 @@ const scrollScopeTagIntoViewIfNeeded = (id: SearchScopeId) => {
   });
 };
 
+// Check if params has meaningful content (non-empty, excluding readonly scopes)
+const hasParams = (params: SearchParams): boolean => {
+  if (params.query.trim().length > 0) return true;
+  // Readonly scopes don't count as "URL params" - they're set by parent
+  return params.scopes.some((s) => !s.readonly);
+};
+
 onMounted(() => {
   if (props.autofocus) {
     inputRef.value?.inputElRef?.focus();
   }
+
+  // Precedence: URL params > cache > defaultParams
+  // Parent passes non-empty params only when URL has ?q=...
+  if (hasParams(props.params)) {
+    // URL had params - use as-is
+    return;
+  }
+
+  // Preserve readonly scopes from props.params (e.g., project=xx in ProjectDatabasesPanel)
+  const readonlyScopes = props.params.scopes.filter((s) => s.readonly);
+
+  // No URL params - check cache
   const qs = cachedQuery.value;
   if (qs.length > 0) {
+    // Cache exists: restore from cache
     const params = buildSearchParamsBySearchText(qs);
-    const existedScopes = props.params.scopes.reduce((map, scope) => {
-      map.set(scope.id, scope.readonly ?? false);
-      return map;
-    }, new Map<SearchScopeId, boolean>());
-    params.scopes = params.scopes.map((scope) => ({
-      ...scope,
-      readonly: existedScopes.get(scope.id),
-    }));
-    emit("update:params", mergeSearchParams(cloneDeep(props.params), params));
+    // Filter to only include scopes that are valid for this search context
+    // and not already covered by readonly scopes
+    const readonlyScopeIds = new Set(readonlyScopes.map((s) => s.id));
+    params.scopes = params.scopes.filter((scope) => {
+      if (readonlyScopeIds.has(scope.id)) return false;
+      return props.scopeOptions.find((op) => op.id === scope.id);
+    });
+    // Prepend readonly scopes
+    params.scopes = [...readonlyScopes, ...params.scopes];
+    emit("update:params", params);
+    return;
+  }
+
+  // No cache: use defaults if provided
+  if (props.defaultParams) {
+    const params = cloneDeep(props.defaultParams);
+    // Prepend readonly scopes
+    const readonlyScopeIds = new Set(readonlyScopes.map((s) => s.id));
+    params.scopes = params.scopes.filter((s) => !readonlyScopeIds.has(s.id));
+    params.scopes = [...readonlyScopes, ...params.scopes];
+    emit("update:params", params);
   }
 });
 
@@ -654,7 +652,7 @@ watch(
   () => state.menuView,
   () => {
     focusedTagId.value = undefined;
-    menuIndex.value = -1;
+    menuIndex.value = 0;
     if (state.menuView === "value" && state.currentScope) {
       const value = getValueFromSearchParams(props.params, state.currentScope);
       if (value) {
@@ -697,10 +695,8 @@ watch(visibleValueOptions, (newOptions, oldOptions) => {
 watch(
   () => props.params,
   (params) => {
-    if (!inputText.value) {
-      inputText.value = params.query;
-    }
-    if (props.overrideRouteQuery) {
+    inputText.value = params.query;
+    if (props.cacheQuery) {
       cachedQuery.value = buildSearchTextBySearchParams(params);
     }
   },

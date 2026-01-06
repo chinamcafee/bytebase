@@ -7,12 +7,12 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
-	"github.com/pkg/errors"
+	"github.com/bytebase/parser/mysql"
 
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
 var (
@@ -20,8 +20,8 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleStatementMaxExecutionTime, &MaxExecutionTimeAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleStatementMaxExecutionTime, &MaxExecutionTimeAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_STATEMENT_MAX_EXECUTION_TIME, &MaxExecutionTimeAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_STATEMENT_MAX_EXECUTION_TIME, &MaxExecutionTimeAdvisor{})
 }
 
 // MaxExecutionTimeAdvisor is the advisor checking for the max execution time.
@@ -29,11 +29,6 @@ type MaxExecutionTimeAdvisor struct {
 }
 
 func (*MaxExecutionTimeAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to stmt list")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
@@ -46,15 +41,22 @@ func (*MaxExecutionTimeAdvisor) Check(_ context.Context, checkCtx advisor.Contex
 	}
 
 	// Create the rule
-	rule := NewMaxExecutionTimeRule(level, string(checkCtx.Rule.Type), systemVariable)
+	rule := NewMaxExecutionTimeRule(level, checkCtx.Rule.Type.String(), systemVariable)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -152,7 +154,7 @@ func (r *MaxExecutionTimeRule) checkSetStatement(ctx *mysql.SetStatementContext)
 func (r *MaxExecutionTimeRule) setAdvice() {
 	r.adviceList = append(r.adviceList, &storepb.Advice{
 		Status:  r.level,
-		Code:    advisor.StatementNoMaxExecutionTime.Int32(),
+		Code:    code.StatementNoMaxExecutionTime.Int32(),
 		Title:   r.title,
 		Content: fmt.Sprintf("The %s is not set", r.systemVariable),
 	})

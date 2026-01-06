@@ -5,8 +5,8 @@
 import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 import type { EmptySchema, FieldMask } from "@bufbuild/protobuf/wkt";
-import type { GetIamPolicyRequestSchema, IamPolicy, IamPolicySchema, SetIamPolicyRequestSchema } from "./iam_policy_pb";
-import type { State } from "./common_pb";
+import type { State, WebhookType } from "./common_pb";
+import type { GetIamPolicyRequestSchema, IamPolicySchema, SetIamPolicyRequestSchema } from "./iam_policy_pb";
 
 /**
  * Describes the file v1/project_service.proto.
@@ -31,6 +31,43 @@ export declare type GetProjectRequest = Message<"bytebase.v1.GetProjectRequest">
  * Use `create(GetProjectRequestSchema)` to create a new message.
  */
 export declare const GetProjectRequestSchema: GenMessage<GetProjectRequest>;
+
+/**
+ * @generated from message bytebase.v1.BatchGetProjectsRequest
+ */
+export declare type BatchGetProjectsRequest = Message<"bytebase.v1.BatchGetProjectsRequest"> & {
+  /**
+   * The names of projects to retrieve.
+   * Format: projects/{project}
+   *
+   * @generated from field: repeated string names = 1;
+   */
+  names: string[];
+};
+
+/**
+ * Describes the message bytebase.v1.BatchGetProjectsRequest.
+ * Use `create(BatchGetProjectsRequestSchema)` to create a new message.
+ */
+export declare const BatchGetProjectsRequestSchema: GenMessage<BatchGetProjectsRequest>;
+
+/**
+ * @generated from message bytebase.v1.BatchGetProjectsResponse
+ */
+export declare type BatchGetProjectsResponse = Message<"bytebase.v1.BatchGetProjectsResponse"> & {
+  /**
+   * The projects from the specified request.
+   *
+   * @generated from field: repeated bytebase.v1.Project projects = 1;
+   */
+  projects: Project[];
+};
+
+/**
+ * Describes the message bytebase.v1.BatchGetProjectsResponse.
+ * Use `create(BatchGetProjectsResponseSchema)` to create a new message.
+ */
+export declare const BatchGetProjectsResponseSchema: GenMessage<BatchGetProjectsResponse>;
 
 /**
  * @generated from message bytebase.v1.ListProjectsRequest
@@ -72,6 +109,18 @@ export declare type ListProjectsRequest = Message<"bytebase.v1.ListProjectsReque
    * @generated from field: string filter = 4;
    */
   filter: string;
+
+  /**
+   * The order by of projects.
+   * Support title. The default sorting order is ascending.
+   * For example:
+   * - order_by = "title"
+   * - order_by = "title desc"
+   * - order_by = "title asc"
+   *
+   * @generated from field: string order_by = 5;
+   */
+  orderBy: string;
 };
 
 /**
@@ -167,6 +216,18 @@ export declare type SearchProjectsRequest = Message<"bytebase.v1.SearchProjectsR
    * @generated from field: string page_token = 4;
    */
   pageToken: string;
+
+  /**
+   * The order by of projects.
+   * Support title. The default sorting order is ascending.
+   * For example:
+   * - order_by = "title"
+   * - order_by = "title desc"
+   * - order_by = "title asc"
+   *
+   * @generated from field: string order_by = 5;
+   */
+  orderBy: string;
 };
 
 /**
@@ -354,74 +415,6 @@ export declare type BatchDeleteProjectsRequest = Message<"bytebase.v1.BatchDelet
 export declare const BatchDeleteProjectsRequestSchema: GenMessage<BatchDeleteProjectsRequest>;
 
 /**
- * @generated from message bytebase.v1.BatchGetIamPolicyRequest
- */
-export declare type BatchGetIamPolicyRequest = Message<"bytebase.v1.BatchGetIamPolicyRequest"> & {
-  /**
-   * The scope of the batch get. Typically it's "projects/-".
-   *
-   * @generated from field: string scope = 1;
-   */
-  scope: string;
-
-  /**
-   * @generated from field: repeated string names = 2;
-   */
-  names: string[];
-};
-
-/**
- * Describes the message bytebase.v1.BatchGetIamPolicyRequest.
- * Use `create(BatchGetIamPolicyRequestSchema)` to create a new message.
- */
-export declare const BatchGetIamPolicyRequestSchema: GenMessage<BatchGetIamPolicyRequest>;
-
-/**
- * @generated from message bytebase.v1.BatchGetIamPolicyResponse
- */
-export declare type BatchGetIamPolicyResponse = Message<"bytebase.v1.BatchGetIamPolicyResponse"> & {
-  /**
-   * The policy results for each requested project.
-   *
-   * @generated from field: repeated bytebase.v1.BatchGetIamPolicyResponse.PolicyResult policy_results = 1;
-   */
-  policyResults: BatchGetIamPolicyResponse_PolicyResult[];
-};
-
-/**
- * Describes the message bytebase.v1.BatchGetIamPolicyResponse.
- * Use `create(BatchGetIamPolicyResponseSchema)` to create a new message.
- */
-export declare const BatchGetIamPolicyResponseSchema: GenMessage<BatchGetIamPolicyResponse>;
-
-/**
- * Result for a single project's IAM policy.
- *
- * @generated from message bytebase.v1.BatchGetIamPolicyResponse.PolicyResult
- */
-export declare type BatchGetIamPolicyResponse_PolicyResult = Message<"bytebase.v1.BatchGetIamPolicyResponse.PolicyResult"> & {
-  /**
-   * The project resource name.
-   *
-   * @generated from field: string project = 1;
-   */
-  project: string;
-
-  /**
-   * The IAM policy for the project.
-   *
-   * @generated from field: bytebase.v1.IamPolicy policy = 2;
-   */
-  policy?: IamPolicy;
-};
-
-/**
- * Describes the message bytebase.v1.BatchGetIamPolicyResponse.PolicyResult.
- * Use `create(BatchGetIamPolicyResponse_PolicyResultSchema)` to create a new message.
- */
-export declare const BatchGetIamPolicyResponse_PolicyResultSchema: GenMessage<BatchGetIamPolicyResponse_PolicyResult>;
-
-/**
  * A label for categorizing and organizing issues.
  *
  * @generated from message bytebase.v1.Label
@@ -470,77 +463,63 @@ export declare type Project = Message<"bytebase.v1.Project"> & {
   /**
    * The lifecycle state of the project.
    *
-   * @generated from field: bytebase.v1.State state = 3;
+   * @generated from field: bytebase.v1.State state = 2;
    */
   state: State;
 
   /**
    * The title or name of a project. It's not unique within the workspace.
    *
-   * @generated from field: string title = 4;
+   * @generated from field: string title = 3;
    */
   title: string;
 
   /**
    * The list of webhooks configured for the project.
    *
-   * @generated from field: repeated bytebase.v1.Webhook webhooks = 11;
+   * @generated from field: repeated bytebase.v1.Webhook webhooks = 4;
    */
   webhooks: Webhook[];
 
   /**
    * The data classification configuration ID for the project.
    *
-   * @generated from field: string data_classification_config_id = 12;
+   * @generated from field: string data_classification_config_id = 5;
    */
   dataClassificationConfigId: string;
 
   /**
    * Labels available for tagging issues in this project.
    *
-   * @generated from field: repeated bytebase.v1.Label issue_labels = 13;
+   * @generated from field: repeated bytebase.v1.Label issue_labels = 6;
    */
   issueLabels: Label[];
 
   /**
    * Force issue labels to be used when creating an issue.
    *
-   * @generated from field: bool force_issue_labels = 14;
+   * @generated from field: bool force_issue_labels = 7;
    */
   forceIssueLabels: boolean;
 
   /**
-   * Allow modifying SQL statements after issue is created.
-   *
-   * @generated from field: bool allow_modify_statement = 15;
-   */
-  allowModifyStatement: boolean;
-
-  /**
-   * Enable automatic issue resolution when tasks complete.
-   *
-   * @generated from field: bool auto_resolve_issue = 16;
-   */
-  autoResolveIssue: boolean;
-
-  /**
    * Enforce issue title to be created by user instead of generated by Bytebase.
    *
-   * @generated from field: bool enforce_issue_title = 17;
+   * @generated from field: bool enforce_issue_title = 10;
    */
   enforceIssueTitle: boolean;
 
   /**
    * Whether to automatically enable backup for database changes.
    *
-   * @generated from field: bool auto_enable_backup = 18;
+   * @generated from field: bool auto_enable_backup = 11;
    */
   autoEnableBackup: boolean;
 
   /**
    * Whether to skip backup errors and continue with data migration.
    *
-   * @generated from field: bool skip_backup_errors = 19;
+   * @generated from field: bool skip_backup_errors = 12;
    */
   skipBackupErrors: boolean;
 
@@ -548,21 +527,21 @@ export declare type Project = Message<"bytebase.v1.Project"> & {
    * Whether to enable database tenant mode for PostgreSQL.
    * If enabled, issues will include "set role <db_owner>" statement.
    *
-   * @generated from field: bool postgres_database_tenant_mode = 20;
+   * @generated from field: bool postgres_database_tenant_mode = 13;
    */
   postgresDatabaseTenantMode: boolean;
 
   /**
    * Whether to allow issue creators to self-approve their own issues.
    *
-   * @generated from field: bool allow_self_approval = 21;
+   * @generated from field: bool allow_self_approval = 14;
    */
   allowSelfApproval: boolean;
 
   /**
    * Execution retry policy for task runs.
    *
-   * @generated from field: bytebase.v1.Project.ExecutionRetryPolicy execution_retry_policy = 22;
+   * @generated from field: bytebase.v1.Project.ExecutionRetryPolicy execution_retry_policy = 15;
    */
   executionRetryPolicy?: Project_ExecutionRetryPolicy;
 
@@ -570,14 +549,14 @@ export declare type Project = Message<"bytebase.v1.Project"> & {
    * The maximum number of database rows to sample during CI data validation.
    * Without specification, sampling is disabled, resulting in full validation.
    *
-   * @generated from field: int32 ci_sampling_size = 23;
+   * @generated from field: int32 ci_sampling_size = 16;
    */
   ciSamplingSize: number;
 
   /**
    * The maximum number of parallel tasks allowed during rollout execution.
    *
-   * @generated from field: int32 parallel_tasks_per_rollout = 24;
+   * @generated from field: int32 parallel_tasks_per_rollout = 17;
    */
   parallelTasksPerRollout: number;
 
@@ -585,7 +564,7 @@ export declare type Project = Message<"bytebase.v1.Project"> & {
    * Labels are key-value pairs that can be attached to the project.
    * For example, { "environment": "production", "team": "backend" }
    *
-   * @generated from field: map<string, string> labels = 25;
+   * @generated from field: map<string, string> labels = 18;
    */
   labels: { [key: string]: string };
 
@@ -593,9 +572,23 @@ export declare type Project = Message<"bytebase.v1.Project"> & {
    * Whether to enforce SQL review checks to pass before issue creation.
    * If enabled, issues cannot be created when SQL review finds errors.
    *
-   * @generated from field: bool enforce_sql_review = 26;
+   * @generated from field: bool enforce_sql_review = 19;
    */
   enforceSqlReview: boolean;
+
+  /**
+   * Whether to require issue approval before rollout.
+   *
+   * @generated from field: bool require_issue_approval = 20;
+   */
+  requireIssueApproval: boolean;
+
+  /**
+   * Whether to require plan check to have no error before rollout.
+   *
+   * @generated from field: bool require_plan_check_no_error = 21;
+   */
+  requirePlanCheckNoError: boolean;
 };
 
 /**
@@ -758,11 +751,12 @@ export declare type Webhook = Message<"bytebase.v1.Webhook"> & {
   name: string;
 
   /**
+   * Webhook integration type.
    * type is the type of the webhook.
    *
-   * @generated from field: bytebase.v1.Webhook.Type type = 2;
+   * @generated from field: bytebase.v1.WebhookType type = 2;
    */
-  type: Webhook_Type;
+  type: WebhookType;
 
   /**
    * title is the title of the webhook.
@@ -791,15 +785,11 @@ export declare type Webhook = Message<"bytebase.v1.Webhook"> & {
    * notification_types is the list of activities types that the webhook is interested in.
    * Bytebase will only send notifications to the webhook if the activity type is in the list.
    * It should not be empty, and should be a subset of the following:
-   * - ISSUE_CREATE
-   * - ISSUE_COMMENT_CREATE
-   * - ISSUE_FIELD_UPDATE
-   * - ISSUE_STATUS_UPDATE
-   * - ISSUE_APPROVAL_NOTIFY
-   * - ISSUE_PIPELINE_STAGE_STATUS_UPDATE
-   * - ISSUE_PIPELINE_TASK_RUN_STATUS_UPDATE
-   * - NOTIFY_ISSUE_APPROVED
-   * - NOTIFY_PIPELINE_ROLLOUT
+   * - ISSUE_CREATED
+   * - ISSUE_APPROVAL_REQUESTED
+   * - ISSUE_SENT_BACK
+   * - PIPELINE_FAILED
+   * - PIPELINE_COMPLETED
    *
    * @generated from field: repeated bytebase.v1.Activity.Type notification_types = 5;
    */
@@ -811,74 +801,6 @@ export declare type Webhook = Message<"bytebase.v1.Webhook"> & {
  * Use `create(WebhookSchema)` to create a new message.
  */
 export declare const WebhookSchema: GenMessage<Webhook>;
-
-/**
- * Webhook integration type.
- *
- * @generated from enum bytebase.v1.Webhook.Type
- */
-export enum Webhook_Type {
-  /**
-   * Unspecified type.
-   *
-   * @generated from enum value: TYPE_UNSPECIFIED = 0;
-   */
-  TYPE_UNSPECIFIED = 0,
-
-  /**
-   * Slack integration.
-   *
-   * @generated from enum value: SLACK = 1;
-   */
-  SLACK = 1,
-
-  /**
-   * Discord integration.
-   *
-   * @generated from enum value: DISCORD = 2;
-   */
-  DISCORD = 2,
-
-  /**
-   * Microsoft Teams integration.
-   *
-   * @generated from enum value: TEAMS = 3;
-   */
-  TEAMS = 3,
-
-  /**
-   * DingTalk integration.
-   *
-   * @generated from enum value: DINGTALK = 4;
-   */
-  DINGTALK = 4,
-
-  /**
-   * Feishu integration.
-   *
-   * @generated from enum value: FEISHU = 5;
-   */
-  FEISHU = 5,
-
-  /**
-   * WeCom (WeChat Work) integration.
-   *
-   * @generated from enum value: WECOM = 6;
-   */
-  WECOM = 6,
-
-  /**
-   * Lark integration.
-   *
-   * @generated from enum value: LARK = 8;
-   */
-  LARK = 8,
-}
-
-/**
- * Describes the enum bytebase.v1.Webhook.Type.
- */
-export declare const Webhook_TypeSchema: GenEnum<Webhook_Type>;
 
 /**
  * Activity types for webhook notifications.
@@ -908,71 +830,39 @@ export enum Activity_Type {
   TYPE_UNSPECIFIED = 0,
 
   /**
-   * Notifications via webhooks.
+   * ISSUE_CREATED represents a new issue creation event.
    *
-   * NOTIFY_ISSUE_APPROVED represents the issue approved notification.
-   *
-   * @generated from enum value: NOTIFY_ISSUE_APPROVED = 23;
+   * @generated from enum value: ISSUE_CREATED = 10;
    */
-  NOTIFY_ISSUE_APPROVED = 23,
+  ISSUE_CREATED = 10,
 
   /**
-   * NOTIFY_PIPELINE_ROLLOUT represents the pipeline rollout notification.
+   * ISSUE_APPROVAL_REQUESTED represents an approval request event.
    *
-   * @generated from enum value: NOTIFY_PIPELINE_ROLLOUT = 24;
+   * @generated from enum value: ISSUE_APPROVAL_REQUESTED = 11;
    */
-  NOTIFY_PIPELINE_ROLLOUT = 24,
+  ISSUE_APPROVAL_REQUESTED = 11,
 
   /**
-   * Issue related activity types.
+   * ISSUE_SENT_BACK represents an issue being sent back by an approver.
    *
-   * ISSUE_CREATE represents creating an issue.
-   *
-   * @generated from enum value: ISSUE_CREATE = 1;
+   * @generated from enum value: ISSUE_SENT_BACK = 12;
    */
-  ISSUE_CREATE = 1,
+  ISSUE_SENT_BACK = 12,
 
   /**
-   * ISSUE_COMMENT_CREATE represents commenting on an issue.
+   * PIPELINE_FAILED represents a pipeline failure event.
    *
-   * @generated from enum value: ISSUE_COMMENT_CREATE = 2;
+   * @generated from enum value: PIPELINE_FAILED = 13;
    */
-  ISSUE_COMMENT_CREATE = 2,
+  PIPELINE_FAILED = 13,
 
   /**
-   * ISSUE_FIELD_UPDATE represents updating the issue field, likes title, description, etc.
+   * PIPELINE_COMPLETED represents a pipeline completion event.
    *
-   * @generated from enum value: ISSUE_FIELD_UPDATE = 3;
+   * @generated from enum value: PIPELINE_COMPLETED = 14;
    */
-  ISSUE_FIELD_UPDATE = 3,
-
-  /**
-   * ISSUE_STATUS_UPDATE represents the issue status change, including OPEN, CLOSE, CANCEL fow now.
-   *
-   * @generated from enum value: ISSUE_STATUS_UPDATE = 4;
-   */
-  ISSUE_STATUS_UPDATE = 4,
-
-  /**
-   * ISSUE_APPROVAL_NOTIFY is the type for notifying issue approval.
-   *
-   * @generated from enum value: ISSUE_APPROVAL_NOTIFY = 21;
-   */
-  ISSUE_APPROVAL_NOTIFY = 21,
-
-  /**
-   * ISSUE_PIPELINE_STAGE_STATUS_UPDATE represents the pipeline stage status change, including BEGIN, END for now.
-   *
-   * @generated from enum value: ISSUE_PIPELINE_STAGE_STATUS_UPDATE = 5;
-   */
-  ISSUE_PIPELINE_STAGE_STATUS_UPDATE = 5,
-
-  /**
-   * ISSUE_PIPELINE_TASK_RUN_STATUS_UPDATE represents the pipeline task run status change, including PENDING, RUNNING, DONE, FAILED, CANCELED.
-   *
-   * @generated from enum value: ISSUE_PIPELINE_TASK_RUN_STATUS_UPDATE = 22;
-   */
-  ISSUE_PIPELINE_TASK_RUN_STATUS_UPDATE = 22,
+  PIPELINE_COMPLETED = 14,
 }
 
 /**
@@ -997,6 +887,17 @@ export declare const ProjectService: GenService<{
     methodKind: "unary";
     input: typeof GetProjectRequestSchema;
     output: typeof ProjectSchema;
+  },
+  /**
+   * BatchGetProjects retrieves multiple projects by their names.
+   * Permissions required: bb.projects.get
+   *
+   * @generated from rpc bytebase.v1.ProjectService.BatchGetProjects
+   */
+  batchGetProjects: {
+    methodKind: "unary";
+    input: typeof BatchGetProjectsRequestSchema;
+    output: typeof BatchGetProjectsResponseSchema;
   },
   /**
    * Lists all projects in the workspace with optional filtering.
@@ -1085,17 +986,6 @@ export declare const ProjectService: GenService<{
     methodKind: "unary";
     input: typeof GetIamPolicyRequestSchema;
     output: typeof IamPolicySchema;
-  },
-  /**
-   * Deprecated. No permission check implemented.
-   * Permissions required: None
-   *
-   * @generated from rpc bytebase.v1.ProjectService.BatchGetIamPolicy
-   */
-  batchGetIamPolicy: {
-    methodKind: "unary";
-    input: typeof BatchGetIamPolicyRequestSchema;
-    output: typeof BatchGetIamPolicyResponseSchema;
   },
   /**
    * Sets the IAM policy for a project.

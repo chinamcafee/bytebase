@@ -1,7 +1,7 @@
 <template>
   <FormLayout :title="create ? $t('project.webhook.creation.title') : ''">
     <template v-if="!create" #title>
-      <div class="flex flex-row space-x-2 items-center">
+      <div class="flex flex-row gap-x-2 items-center">
         <WebhookTypeIcon :type="props.webhook.type" class="h-6 w-6" />
         <h3 class="text-lg leading-6 font-medium text-main">
           {{ props.webhook.title }}
@@ -10,6 +10,9 @@
       <NDivider />
     </template>
     <template #body>
+      <MissingExternalURLAttention
+        class="mb-6"
+      />
       <div class="flex flex-col gap-y-4">
         <div v-if="create">
           <div>
@@ -25,7 +28,7 @@
                 :key="index"
               >
                 <div
-                  class="flex justify-center px-2 py-4 rounded border border-control-border hover:bg-control-bg-hover cursor-pointer"
+                  class="flex justify-center px-2 py-4 rounded-sm border border-control-border hover:bg-control-bg-hover cursor-pointer"
                   @click.capture="state.webhook.type = item.type"
                 >
                   <div class="flex flex-col items-center">
@@ -87,13 +90,47 @@
             :disabled="!allowEdit"
           />
         </div>
+        <div>
+          <div class="text-md leading-6 font-medium text-main">
+            {{ $t("project.webhook.triggering-activity") }}
+            <RequiredStar />
+          </div>
+          <div class="flex flex-col gap-y-4 mt-2">
+            <div v-for="(item, index) in webhookActivityItemList" :key="index">
+              <div>
+                <div class="flex items-center">
+                  <NCheckbox
+                    :label="item.title"
+                    :checked="isEventOn(item.activity)"
+                    @update:checked="
+                      (on: boolean) => {
+                        toggleEvent(item.activity, on);
+                      }
+                    "
+                  />
+                  <NTooltip
+                    v-if="
+                      webhookSupportDirectMessage && item.supportDirectMessage
+                    "
+                  >
+                    <template #trigger>
+                      <InfoIcon class="w-4 h-auto text-gray-500" />
+                    </template>
+                    {{ $t("project.webhook.activity-support-direct-message") }}
+                  </NTooltip>
+                </div>
+                <div class="textinfolabel">{{ item.label }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
         <div v-if="webhookSupportDirectMessage">
           <div class="text-md leading-6 font-medium text-main">
             {{ $t("project.webhook.direct-messages") }}
           </div>
-          <BBAttention class="my-2" :type="imApp?.enabled ? 'info' : 'warning'">
+          <BBAttention class="my-2" :type="imApp ? 'info' : 'warning'">
             <template #default>
-              <span v-if="imApp?.enabled">
+              <span v-if="imApp">
                 {{ $t("project.webhook.direct-messages-tip") }}
               </span>
               <i18n-t
@@ -141,44 +178,10 @@
             />
           </div>
         </div>
-        <div>
-          <div class="text-md leading-6 font-medium text-main">
-            {{ $t("project.webhook.triggering-activity") }}
-            <RequiredStar />
-          </div>
-          <div class="flex flex-col space-y-4 mt-2">
-            <div v-for="(item, index) in webhookActivityItemList" :key="index">
-              <div>
-                <div class="flex items-center">
-                  <NCheckbox
-                    :label="item.title"
-                    :checked="isEventOn(item.activity)"
-                    @update:checked="
-                      (on: boolean) => {
-                        toggleEvent(item.activity, on);
-                      }
-                    "
-                  />
-                  <NTooltip
-                    v-if="
-                      webhookSupportDirectMessage && item.supportDirectMessage
-                    "
-                  >
-                    <template #trigger>
-                      <InfoIcon class="w-4 h-auto text-gray-500" />
-                    </template>
-                    {{ $t("project.webhook.activity-support-direct-message") }}
-                  </NTooltip>
-                </div>
-                <div class="textinfolabel">{{ item.label }}</div>
-              </div>
-            </div>
-          </div>
-          <div class="mt-4">
-            <NButton @click.prevent="testWebhook">
-              {{ $t("project.webhook.test-webhook") }}
-            </NButton>
-          </div>
+        <div class="mt-4">
+          <NButton @click.prevent="testWebhook">
+            {{ $t("project.webhook.test-webhook") }}
+          </NButton>
         </div>
       </div>
     </template>
@@ -201,7 +204,7 @@
           :require-confirm="true"
           @confirm="deleteWebhook"
         />
-        <div class="space-x-3">
+        <div class="flex items-center gap-x-3">
           <NButton v-if="create" @click.prevent="cancel">
             {{ $t("common.cancel") }}
           </NButton>
@@ -240,28 +243,30 @@ import { InfoIcon } from "lucide-vue-next";
 import {
   NButton,
   NCheckbox,
+  NDivider,
   NInput,
   NRadio,
   NRadioGroup,
   NTooltip,
-  NDivider,
 } from "naive-ui";
-import { reactive, computed, watch } from "vue";
+import { computed, reactive, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { BBAttention, BBButtonConfirm } from "@/bbkit";
 import RequiredStar from "@/components/RequiredStar.vue";
+import { MissingExternalURLAttention } from "@/components/v2/Form";
 import FormLayout from "@/components/v2/Form/FormLayout.vue";
+import { useBodyLayoutContext } from "@/layouts/common";
 import {
-  PROJECT_V1_ROUTE_WEBHOOKS,
   PROJECT_V1_ROUTE_WEBHOOK_DETAIL,
+  PROJECT_V1_ROUTE_WEBHOOKS,
 } from "@/router/dashboard/projectV1";
 import { WORKSPACE_ROUTE_IM } from "@/router/dashboard/workspaceRoutes";
 import {
   pushNotification,
+  useGracefulRequest,
   useProjectV1Store,
   useProjectWebhookV1Store,
-  useGracefulRequest,
   useSettingV1Store,
 } from "@/store";
 import {
@@ -269,7 +274,6 @@ import {
   projectWebhookV1TypeItemList,
 } from "@/types";
 import {
-  Webhook_Type,
   type Activity_Type,
   type Project,
   type Webhook,
@@ -300,6 +304,9 @@ const { t } = useI18n();
 const settingStore = useSettingV1Store();
 const projectStore = useProjectV1Store();
 const projectWebhookV1Store = useProjectWebhookV1Store();
+const { overrideMainContainerClass } = useBodyLayoutContext();
+
+overrideMainContainerClass("!pb-0");
 
 const state = reactive<LocalState>({
   webhook: cloneDeep(props.webhook),
@@ -348,7 +355,7 @@ const imSetting = computed(() => {
   const setting = settingStore.getSettingByName(Setting_SettingName.APP_IM);
   if (!setting?.value?.value) return undefined;
   const value = setting.value.value;
-  if (value.case === "appImSettingValue") {
+  if (value.case === "appIm") {
     return value.value;
   }
   return undefined;
@@ -358,19 +365,9 @@ const imApp = computed(() => {
   if (!selectedWebhook.value?.supportDirectMessage) {
     return undefined;
   }
-  switch (selectedWebhook.value.type) {
-    case Webhook_Type.SLACK:
-      return imSetting.value?.slack;
-    case Webhook_Type.FEISHU:
-      return imSetting.value?.feishu;
-    case Webhook_Type.LARK:
-      return imSetting.value?.lark;
-    case Webhook_Type.WECOM:
-      return imSetting.value?.wecom;
-    case Webhook_Type.DINGTALK:
-      return imSetting.value?.dingtalk;
-  }
-  return undefined;
+  return imSetting.value?.settings.find(
+    (setting) => setting.type === selectedWebhook.value?.type
+  );
 });
 
 const webhookSupportDirectMessage = computed(

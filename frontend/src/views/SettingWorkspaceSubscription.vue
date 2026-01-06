@@ -84,7 +84,7 @@
       <div class="mb-3 text-sm text-gray-400">
         {{ $t("settings.general.workspace.id-description") }}
       </div>
-      <div class="mb-4 flex items-center space-x-2">
+      <div class="mb-4 flex items-center gap-x-2">
         <NInput
           ref="workspaceIdField"
           class="w-full"
@@ -102,7 +102,6 @@
     </div>
     <div
       v-if="
-        allowEdit &&
         subscriptionStore.isSelfHostLicense &&
         !actuatorStore.isSaaSMode
       "
@@ -119,7 +118,7 @@
         <LearnMoreLink url="https://www.bytebase.com/pricing?source=console" />
         <div class="ml-1 inline-block">
           <RequireEnterpriseButton
-            v-if="subscriptionStore.showTrial"
+            v-if="subscriptionStore.showTrial && allowEdit"
             text
             type="primary"
             size="small"
@@ -132,13 +131,14 @@
       <NInput
         v-model:value="state.license"
         type="textarea"
+        :disabled="!allowEdit"
         :placeholder="$t('common.sensitive-placeholder')"
       />
       <div class="ml-auto mt-3">
         <NButton
           type="primary"
           class="capitalize"
-          :disabled="disabled"
+          :disabled="disabled || !allowEdit"
           @click="uploadLicense"
         >
           {{ $t("subscription.upload-license") }}
@@ -155,15 +155,13 @@ import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import LearnMoreLink from "@/components/LearnMoreLink.vue";
 import RequireEnterpriseButton from "@/components/RequireEnterpriseButton.vue";
-import WorkspaceInstanceLicenseStats from "@/components/WorkspaceInstanceLicenseStats.vue";
 import { CopyButton } from "@/components/v2";
+import WorkspaceInstanceLicenseStats from "@/components/WorkspaceInstanceLicenseStats.vue";
 import {
   pushNotification,
   useActuatorV1Store,
-  useSettingV1Store,
   useSubscriptionV1Store,
 } from "@/store";
-import { Setting_SettingName } from "@/types/proto-es/v1/setting_service_pb";
 import { PlanType } from "@/types/proto-es/v1/subscription_service_pb";
 import { hasWorkspacePermissionV2 } from "@/utils";
 
@@ -178,7 +176,6 @@ const props = defineProps<{
 
 const { t } = useI18n();
 const subscriptionStore = useSubscriptionV1Store();
-const settingV1Store = useSettingV1Store();
 const actuatorStore = useActuatorV1Store();
 
 const state = reactive<LocalState>({
@@ -199,7 +196,7 @@ const activeUserCountWithoutBot = computed(() =>
 
 const userLimit = computed((): string => {
   if (subscriptionStore.userCountLimit === Number.MAX_VALUE) {
-    return t("subscription.unlimited");
+    return t("common.unlimited");
   }
   return `${subscriptionStore.userCountLimit}`;
 });
@@ -207,12 +204,7 @@ const userLimit = computed((): string => {
 const workspaceIdField = ref<HTMLInputElement | null>(null);
 
 const workspaceId = computed(() => {
-  const setting = settingV1Store.getSettingByName(
-    Setting_SettingName.WORKSPACE_ID
-  );
-  return setting?.value?.value?.case === "stringValue"
-    ? setting.value.value.value
-    : "";
+  return actuatorStore.serverInfo?.workspaceId ?? "";
 });
 
 const selectWorkspaceId = () => {

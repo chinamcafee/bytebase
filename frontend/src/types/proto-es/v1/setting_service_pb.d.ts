@@ -5,11 +5,9 @@
 import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 import type { Duration, FieldMask } from "@bufbuild/protobuf/wkt";
+import type { WebhookType } from "./common_pb";
 import type { ApprovalTemplate } from "./issue_service_pb";
 import type { Expr } from "../google/type/expr_pb";
-import type { Engine } from "./common_pb";
-import type { ColumnMetadata, TableMetadata } from "./database_service_pb";
-import type { ColumnCatalog, TableCatalog } from "./database_catalog_service_pb";
 
 /**
  * Describes the file v1/setting_service.proto.
@@ -129,10 +127,9 @@ export declare const UpdateSettingRequestSchema: GenMessage<UpdateSettingRequest
  */
 export declare type Setting = Message<"bytebase.v1.Setting"> & {
   /**
-   * The resource name of the setting. Must be one of the following forms:
-   *
-   * - `setting/{setting}`
-   * For example, "settings/bb.branding.logo"
+   * The resource name of the setting.
+   * Format: settings/{setting}
+   * Example: "settings/SEMANTIC_TYPES"
    *
    * @generated from field: string name = 1;
    */
@@ -141,9 +138,9 @@ export declare type Setting = Message<"bytebase.v1.Setting"> & {
   /**
    * The configuration value of the setting.
    *
-   * @generated from field: bytebase.v1.Value value = 2;
+   * @generated from field: bytebase.v1.SettingValue value = 2;
    */
-  value?: Value;
+  value?: SettingValue;
 };
 
 /**
@@ -162,84 +159,39 @@ export enum Setting_SettingName {
   SETTING_NAME_UNSPECIFIED = 0,
 
   /**
-   * @generated from enum value: AUTH_SECRET = 1;
+   * @generated from enum value: WORKSPACE_PROFILE = 1;
    */
-  AUTH_SECRET = 1,
+  WORKSPACE_PROFILE = 1,
 
   /**
-   * @generated from enum value: BRANDING_LOGO = 2;
+   * @generated from enum value: WORKSPACE_APPROVAL = 2;
    */
-  BRANDING_LOGO = 2,
+  WORKSPACE_APPROVAL = 2,
 
   /**
-   * @generated from enum value: WORKSPACE_ID = 3;
+   * @generated from enum value: APP_IM = 3;
    */
-  WORKSPACE_ID = 3,
+  APP_IM = 3,
 
   /**
-   * @generated from enum value: WORKSPACE_PROFILE = 4;
+   * @generated from enum value: AI = 4;
    */
-  WORKSPACE_PROFILE = 4,
+  AI = 4,
 
   /**
-   * @generated from enum value: WORKSPACE_APPROVAL = 5;
+   * @generated from enum value: DATA_CLASSIFICATION = 5;
    */
-  WORKSPACE_APPROVAL = 5,
+  DATA_CLASSIFICATION = 5,
 
   /**
-   * @generated from enum value: WORKSPACE_EXTERNAL_APPROVAL = 6;
+   * @generated from enum value: SEMANTIC_TYPES = 6;
    */
-  WORKSPACE_EXTERNAL_APPROVAL = 6,
+  SEMANTIC_TYPES = 6,
 
   /**
-   * @generated from enum value: ENTERPRISE_LICENSE = 7;
+   * @generated from enum value: ENVIRONMENT = 7;
    */
-  ENTERPRISE_LICENSE = 7,
-
-  /**
-   * @generated from enum value: APP_IM = 8;
-   */
-  APP_IM = 8,
-
-  /**
-   * @generated from enum value: WATERMARK = 9;
-   */
-  WATERMARK = 9,
-
-  /**
-   * @generated from enum value: AI = 10;
-   */
-  AI = 10,
-
-  /**
-   * @generated from enum value: SCHEMA_TEMPLATE = 13;
-   */
-  SCHEMA_TEMPLATE = 13,
-
-  /**
-   * @generated from enum value: DATA_CLASSIFICATION = 14;
-   */
-  DATA_CLASSIFICATION = 14,
-
-  /**
-   * @generated from enum value: SEMANTIC_TYPES = 15;
-   */
-  SEMANTIC_TYPES = 15,
-
-  /**
-   * @generated from enum value: SCIM = 17;
-   */
-  SCIM = 17,
-
-  /**
-   * @generated from enum value: PASSWORD_RESTRICTION = 18;
-   */
-  PASSWORD_RESTRICTION = 18,
-
-  /**
-   * @generated from enum value: ENVIRONMENT = 19;
-   */
-  ENVIRONMENT = 19,
+  ENVIRONMENT = 7,
 }
 
 /**
@@ -250,121 +202,71 @@ export declare const Setting_SettingNameSchema: GenEnum<Setting_SettingName>;
 /**
  * The data in setting value.
  *
- * @generated from message bytebase.v1.Value
+ * @generated from message bytebase.v1.SettingValue
  */
-export declare type Value = Message<"bytebase.v1.Value"> & {
+export declare type SettingValue = Message<"bytebase.v1.SettingValue"> & {
   /**
-   * Value is a oneof field for setting value.
-   *
-   * @generated from oneof bytebase.v1.Value.value
+   * @generated from oneof bytebase.v1.SettingValue.value
    */
   value: {
     /**
-     * Defines this value as being a string value.
-     *
-     * @generated from field: string string_value = 1;
-     */
-    value: string;
-    case: "stringValue";
-  } | {
-    /**
-     * @generated from field: bytebase.v1.AppIMSetting app_im_setting_value = 3;
+     * @generated from field: bytebase.v1.AppIMSetting app_im = 1;
      */
     value: AppIMSetting;
-    case: "appImSettingValue";
+    case: "appIm";
   } | {
     /**
-     * reserved 4; // was AgentPluginSetting agent_plugin_setting_value
-     *
-     * @generated from field: bytebase.v1.WorkspaceProfileSetting workspace_profile_setting_value = 5;
+     * @generated from field: bytebase.v1.WorkspaceProfileSetting workspace_profile = 2;
      */
     value: WorkspaceProfileSetting;
-    case: "workspaceProfileSettingValue";
+    case: "workspaceProfile";
   } | {
     /**
-     * @generated from field: bytebase.v1.WorkspaceApprovalSetting workspace_approval_setting_value = 6;
+     * @generated from field: bytebase.v1.WorkspaceApprovalSetting workspace_approval = 3;
      */
     value: WorkspaceApprovalSetting;
-    case: "workspaceApprovalSettingValue";
+    case: "workspaceApproval";
   } | {
     /**
-     * @generated from field: bytebase.v1.SchemaTemplateSetting schema_template_setting_value = 9;
-     */
-    value: SchemaTemplateSetting;
-    case: "schemaTemplateSettingValue";
-  } | {
-    /**
-     * @generated from field: bytebase.v1.DataClassificationSetting data_classification_setting_value = 10;
+     * @generated from field: bytebase.v1.DataClassificationSetting data_classification = 4;
      */
     value: DataClassificationSetting;
-    case: "dataClassificationSettingValue";
+    case: "dataClassification";
   } | {
     /**
-     * @generated from field: bytebase.v1.SemanticTypeSetting semantic_type_setting_value = 11;
+     * @generated from field: bytebase.v1.SemanticTypeSetting semantic_type = 5;
      */
     value: SemanticTypeSetting;
-    case: "semanticTypeSettingValue";
+    case: "semanticType";
   } | {
     /**
-     * @generated from field: bytebase.v1.SCIMSetting scim_setting = 14;
-     */
-    value: SCIMSetting;
-    case: "scimSetting";
-  } | {
-    /**
-     * @generated from field: bytebase.v1.PasswordRestrictionSetting password_restriction_setting = 15;
-     */
-    value: PasswordRestrictionSetting;
-    case: "passwordRestrictionSetting";
-  } | {
-    /**
-     * @generated from field: bytebase.v1.AISetting ai_setting = 16;
+     * @generated from field: bytebase.v1.AISetting ai = 6;
      */
     value: AISetting;
-    case: "aiSetting";
+    case: "ai";
   } | {
     /**
-     * @generated from field: bytebase.v1.EnvironmentSetting environment_setting = 17;
+     * @generated from field: bytebase.v1.EnvironmentSetting environment = 7;
      */
     value: EnvironmentSetting;
-    case: "environmentSetting";
+    case: "environment";
   } | { case: undefined; value?: undefined };
 };
 
 /**
- * Describes the message bytebase.v1.Value.
- * Use `create(ValueSchema)` to create a new message.
+ * Describes the message bytebase.v1.SettingValue.
+ * Use `create(SettingValueSchema)` to create a new message.
  */
-export declare const ValueSchema: GenMessage<Value>;
+export declare const SettingValueSchema: GenMessage<SettingValue>;
 
 /**
  * @generated from message bytebase.v1.AppIMSetting
  */
 export declare type AppIMSetting = Message<"bytebase.v1.AppIMSetting"> & {
   /**
-   * @generated from field: bytebase.v1.AppIMSetting.Slack slack = 1;
+   * @generated from field: repeated bytebase.v1.AppIMSetting.IMSetting settings = 1;
    */
-  slack?: AppIMSetting_Slack;
-
-  /**
-   * @generated from field: bytebase.v1.AppIMSetting.Feishu feishu = 2;
-   */
-  feishu?: AppIMSetting_Feishu;
-
-  /**
-   * @generated from field: bytebase.v1.AppIMSetting.Wecom wecom = 3;
-   */
-  wecom?: AppIMSetting_Wecom;
-
-  /**
-   * @generated from field: bytebase.v1.AppIMSetting.Lark lark = 4;
-   */
-  lark?: AppIMSetting_Lark;
-
-  /**
-   * @generated from field: bytebase.v1.AppIMSetting.DingTalk dingtalk = 5;
-   */
-  dingtalk?: AppIMSetting_DingTalk;
+  settings: AppIMSetting_IMSetting[];
 };
 
 /**
@@ -378,12 +280,7 @@ export declare const AppIMSettingSchema: GenMessage<AppIMSetting>;
  */
 export declare type AppIMSetting_Slack = Message<"bytebase.v1.AppIMSetting.Slack"> & {
   /**
-   * @generated from field: bool enabled = 1;
-   */
-  enabled: boolean;
-
-  /**
-   * @generated from field: string token = 2;
+   * @generated from field: string token = 1;
    */
   token: string;
 };
@@ -399,17 +296,12 @@ export declare const AppIMSetting_SlackSchema: GenMessage<AppIMSetting_Slack>;
  */
 export declare type AppIMSetting_Feishu = Message<"bytebase.v1.AppIMSetting.Feishu"> & {
   /**
-   * @generated from field: bool enabled = 1;
-   */
-  enabled: boolean;
-
-  /**
-   * @generated from field: string app_id = 2;
+   * @generated from field: string app_id = 1;
    */
   appId: string;
 
   /**
-   * @generated from field: string app_secret = 3;
+   * @generated from field: string app_secret = 2;
    */
   appSecret: string;
 };
@@ -425,22 +317,17 @@ export declare const AppIMSetting_FeishuSchema: GenMessage<AppIMSetting_Feishu>;
  */
 export declare type AppIMSetting_Wecom = Message<"bytebase.v1.AppIMSetting.Wecom"> & {
   /**
-   * @generated from field: bool enabled = 1;
-   */
-  enabled: boolean;
-
-  /**
-   * @generated from field: string corp_id = 2;
+   * @generated from field: string corp_id = 1;
    */
   corpId: string;
 
   /**
-   * @generated from field: string agent_id = 3;
+   * @generated from field: string agent_id = 2;
    */
   agentId: string;
 
   /**
-   * @generated from field: string secret = 4;
+   * @generated from field: string secret = 3;
    */
   secret: string;
 };
@@ -456,17 +343,12 @@ export declare const AppIMSetting_WecomSchema: GenMessage<AppIMSetting_Wecom>;
  */
 export declare type AppIMSetting_Lark = Message<"bytebase.v1.AppIMSetting.Lark"> & {
   /**
-   * @generated from field: bool enabled = 1;
-   */
-  enabled: boolean;
-
-  /**
-   * @generated from field: string app_id = 2;
+   * @generated from field: string app_id = 1;
    */
   appId: string;
 
   /**
-   * @generated from field: string app_secret = 3;
+   * @generated from field: string app_secret = 2;
    */
   appSecret: string;
 };
@@ -482,22 +364,17 @@ export declare const AppIMSetting_LarkSchema: GenMessage<AppIMSetting_Lark>;
  */
 export declare type AppIMSetting_DingTalk = Message<"bytebase.v1.AppIMSetting.DingTalk"> & {
   /**
-   * @generated from field: bool enabled = 1;
-   */
-  enabled: boolean;
-
-  /**
-   * @generated from field: string client_id = 2;
+   * @generated from field: string client_id = 1;
    */
   clientId: string;
 
   /**
-   * @generated from field: string client_secret = 3;
+   * @generated from field: string client_secret = 2;
    */
   clientSecret: string;
 
   /**
-   * @generated from field: string robot_code = 4;
+   * @generated from field: string robot_code = 3;
    */
   robotCode: string;
 };
@@ -507,6 +384,95 @@ export declare type AppIMSetting_DingTalk = Message<"bytebase.v1.AppIMSetting.Di
  * Use `create(AppIMSetting_DingTalkSchema)` to create a new message.
  */
 export declare const AppIMSetting_DingTalkSchema: GenMessage<AppIMSetting_DingTalk>;
+
+/**
+ * @generated from message bytebase.v1.AppIMSetting.Teams
+ */
+export declare type AppIMSetting_Teams = Message<"bytebase.v1.AppIMSetting.Teams"> & {
+  /**
+   * Azure AD tenant ID (Directory ID).
+   *
+   * @generated from field: string tenant_id = 1;
+   */
+  tenantId: string;
+
+  /**
+   * Azure AD application (client) ID.
+   *
+   * @generated from field: string client_id = 2;
+   */
+  clientId: string;
+
+  /**
+   * Azure AD client secret.
+   *
+   * @generated from field: string client_secret = 3;
+   */
+  clientSecret: string;
+};
+
+/**
+ * Describes the message bytebase.v1.AppIMSetting.Teams.
+ * Use `create(AppIMSetting_TeamsSchema)` to create a new message.
+ */
+export declare const AppIMSetting_TeamsSchema: GenMessage<AppIMSetting_Teams>;
+
+/**
+ * @generated from message bytebase.v1.AppIMSetting.IMSetting
+ */
+export declare type AppIMSetting_IMSetting = Message<"bytebase.v1.AppIMSetting.IMSetting"> & {
+  /**
+   * @generated from field: bytebase.v1.WebhookType type = 1;
+   */
+  type: WebhookType;
+
+  /**
+   * @generated from oneof bytebase.v1.AppIMSetting.IMSetting.payload
+   */
+  payload: {
+    /**
+     * @generated from field: bytebase.v1.AppIMSetting.Slack slack = 2;
+     */
+    value: AppIMSetting_Slack;
+    case: "slack";
+  } | {
+    /**
+     * @generated from field: bytebase.v1.AppIMSetting.Feishu feishu = 3;
+     */
+    value: AppIMSetting_Feishu;
+    case: "feishu";
+  } | {
+    /**
+     * @generated from field: bytebase.v1.AppIMSetting.Wecom wecom = 4;
+     */
+    value: AppIMSetting_Wecom;
+    case: "wecom";
+  } | {
+    /**
+     * @generated from field: bytebase.v1.AppIMSetting.Lark lark = 5;
+     */
+    value: AppIMSetting_Lark;
+    case: "lark";
+  } | {
+    /**
+     * @generated from field: bytebase.v1.AppIMSetting.DingTalk dingtalk = 6;
+     */
+    value: AppIMSetting_DingTalk;
+    case: "dingtalk";
+  } | {
+    /**
+     * @generated from field: bytebase.v1.AppIMSetting.Teams teams = 7;
+     */
+    value: AppIMSetting_Teams;
+    case: "teams";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message bytebase.v1.AppIMSetting.IMSetting.
+ * Use `create(AppIMSetting_IMSettingSchema)` to create a new message.
+ */
+export declare const AppIMSetting_IMSettingSchema: GenMessage<AppIMSetting_IMSetting>;
 
 /**
  * @generated from message bytebase.v1.WorkspaceProfileSetting
@@ -534,67 +500,111 @@ export declare type WorkspaceProfileSetting = Message<"bytebase.v1.WorkspaceProf
   require2fa: boolean;
 
   /**
-   * The duration for token.
+   * The duration for refresh token. Default is 7 days.
    *
-   * @generated from field: google.protobuf.Duration token_duration = 6;
+   * @generated from field: google.protobuf.Duration refresh_token_duration = 4;
    */
-  tokenDuration?: Duration;
+  refreshTokenDuration?: Duration;
+
+  /**
+   * The duration for access token. Default is 1 hour.
+   *
+   * @generated from field: google.protobuf.Duration access_token_duration = 18;
+   */
+  accessTokenDuration?: Duration;
 
   /**
    * The setting of custom announcement
    *
-   * @generated from field: bytebase.v1.Announcement announcement = 7;
+   * @generated from field: bytebase.v1.Announcement announcement = 5;
    */
   announcement?: Announcement;
 
   /**
    * The max duration for role expired.
    *
-   * @generated from field: google.protobuf.Duration maximum_role_expiration = 8;
+   * @generated from field: google.protobuf.Duration maximum_role_expiration = 6;
    */
   maximumRoleExpiration?: Duration;
 
   /**
    * The workspace domain, e.g., bytebase.com.
    *
-   * @generated from field: repeated string domains = 9;
+   * @generated from field: repeated string domains = 7;
    */
   domains: string[];
 
   /**
    * Only user and group from the domains can be created and login.
    *
-   * @generated from field: bool enforce_identity_domain = 10;
+   * @generated from field: bool enforce_identity_domain = 8;
    */
   enforceIdentityDomain: boolean;
 
   /**
    * The workspace database change mode.
    *
-   * @generated from field: bytebase.v1.DatabaseChangeMode database_change_mode = 11;
+   * @generated from field: bytebase.v1.DatabaseChangeMode database_change_mode = 9;
    */
   databaseChangeMode: DatabaseChangeMode;
 
   /**
    * Whether to disallow password signin. (Except workspace admins)
    *
-   * @generated from field: bool disallow_password_signin = 12;
+   * @generated from field: bool disallow_password_signin = 10;
    */
   disallowPasswordSignin: boolean;
 
   /**
    * Whether to enable metric collection for the workspace.
    *
-   * @generated from field: bool enable_metric_collection = 13;
+   * @generated from field: bool enable_metric_collection = 11;
    */
   enableMetricCollection: boolean;
 
   /**
    * The session expiration time if not activity detected for the user. Value <= 0 means no limit.
    *
-   * @generated from field: google.protobuf.Duration inactive_session_timeout = 14;
+   * @generated from field: google.protobuf.Duration inactive_session_timeout = 12;
    */
   inactiveSessionTimeout?: Duration;
+
+  /**
+   * Whether to enable audit logging to stdout in structured JSON format.
+   * Requires TEAM or ENTERPRISE license.
+   *
+   * @generated from field: bool enable_audit_log_stdout = 13;
+   */
+  enableAuditLogStdout: boolean;
+
+  /**
+   * Whether to display watermark on pages.
+   * Requires ENTERPRISE license.
+   *
+   * @generated from field: bool watermark = 14;
+   */
+  watermark: boolean;
+
+  /**
+   * The token for directory sync authentication.
+   *
+   * @generated from field: string directory_sync_token = 15;
+   */
+  directorySyncToken: string;
+
+  /**
+   * The branding logo as a data URI (e.g. data:image/png;base64,...).
+   *
+   * @generated from field: string branding_logo = 16;
+   */
+  brandingLogo: string;
+
+  /**
+   * Password restriction settings.
+   *
+   * @generated from field: bytebase.v1.WorkspaceProfileSetting.PasswordRestriction password_restriction = 17;
+   */
+  passwordRestriction?: WorkspaceProfileSetting_PasswordRestriction;
 };
 
 /**
@@ -602,6 +612,66 @@ export declare type WorkspaceProfileSetting = Message<"bytebase.v1.WorkspaceProf
  * Use `create(WorkspaceProfileSettingSchema)` to create a new message.
  */
 export declare const WorkspaceProfileSettingSchema: GenMessage<WorkspaceProfileSetting>;
+
+/**
+ * @generated from message bytebase.v1.WorkspaceProfileSetting.PasswordRestriction
+ */
+export declare type WorkspaceProfileSetting_PasswordRestriction = Message<"bytebase.v1.WorkspaceProfileSetting.PasswordRestriction"> & {
+  /**
+   * min_length is the minimum length for password, should no less than 8.
+   *
+   * @generated from field: int32 min_length = 1;
+   */
+  minLength: number;
+
+  /**
+   * require_number requires the password must contains at least one number.
+   *
+   * @generated from field: bool require_number = 2;
+   */
+  requireNumber: boolean;
+
+  /**
+   * require_letter requires the password must contains at least one letter, regardless of upper case or lower case
+   *
+   * @generated from field: bool require_letter = 3;
+   */
+  requireLetter: boolean;
+
+  /**
+   * require_uppercase_letter requires the password must contains at least one upper case letter.
+   *
+   * @generated from field: bool require_uppercase_letter = 4;
+   */
+  requireUppercaseLetter: boolean;
+
+  /**
+   * require_special_character requires the password must contains at least one special character.
+   *
+   * @generated from field: bool require_special_character = 5;
+   */
+  requireSpecialCharacter: boolean;
+
+  /**
+   * require_reset_password_for_first_login requires users to reset their password after the 1st login.
+   *
+   * @generated from field: bool require_reset_password_for_first_login = 6;
+   */
+  requireResetPasswordForFirstLogin: boolean;
+
+  /**
+   * password_rotation requires users to reset their password after the duration.
+   *
+   * @generated from field: google.protobuf.Duration password_rotation = 7;
+   */
+  passwordRotation?: Duration;
+};
+
+/**
+ * Describes the message bytebase.v1.WorkspaceProfileSetting.PasswordRestriction.
+ * Use `create(WorkspaceProfileSetting_PasswordRestrictionSchema)` to create a new message.
+ */
+export declare const WorkspaceProfileSetting_PasswordRestrictionSchema: GenMessage<WorkspaceProfileSetting_PasswordRestriction>;
 
 /**
  * @generated from message bytebase.v1.Announcement
@@ -696,16 +766,39 @@ export declare type WorkspaceApprovalSetting_Rule = Message<"bytebase.v1.Workspa
    * The condition that is associated with the rule.
    * The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
    *
-   * Support variables:
-   * source: the risk source, check the Source enum in the Risk message for the values, support "==" operator.
-   * level: the risk level, support 100 (low), 200 (moderate) and 300 (high), support "==" operator.
+   * The `source` field filters which rules apply. The `condition` field then evaluates with full context.
+   *
+   * All supported variables:
+   * statement.affected_rows: affected row count in the DDL/DML, support "==", "!=", "<", "<=", ">", ">=" operations.
+   * statement.table_rows: table row count number, support "==", "!=", "<", "<=", ">", ">=" operations.
+   * resource.environment_id: the environment resource id, support "==", "!=", "in [xx]", "!(in [xx])" operations.
+   * resource.project_id: the project resource id, support "==", "!=", "in [xx]", "!(in [xx])", "contains()", "matches()", "startsWith()", "endsWith()" operations.
+   * resource.db_engine: the database engine type, support "==", "!=", "in [xx]", "!(in [xx])" operations. Check the Engine enum for values.
+   * statement.sql_type: the SQL type, support "==", "!=", "in [xx]", "!(in [xx])" operations.
+   * resource.database_name: the database name, support "==", "!=", "in [xx]", "!(in [xx])", "contains()", "matches()", "startsWith()", "endsWith()" operations.
+   * resource.schema_name: the schema name, support "==", "!=", "in [xx]", "!(in [xx])", "contains()", "matches()", "startsWith()", "endsWith()" operations.
+   * resource.table_name: the table name, support "==", "!=", "in [xx]", "!(in [xx])", "contains()", "matches()", "startsWith()", "endsWith()" operations.
+   * statement.text: the SQL statement, support "contains()", "matches()", "startsWith()", "endsWith()" operations.
+   * request.expiration_days: the role expiration days for the request, support "==", "!=", "<", "<=", ">", ">=" operations.
+   * request.role: the request role full name, support "==", "!=", "in [xx]", "!(in [xx])", "contains()", "matches()", "startsWith()", "endsWith()" operations.
+   *
+   * When source is CHANGE_DATABASE, support: statement.*, resource.* (excluding request.*)
+   * When source is CREATE_DATABASE, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name
+   * When source is EXPORT_DATA, support: resource.environment_id, resource.project_id, resource.db_engine, resource.database_name, resource.schema_name, resource.table_name
+   * When source is REQUEST_ROLE, support: resource.project_id, request.expiration_days, request.role
    *
    * For examples:
-   * (source == "DML" && level == 200) || (source == "DDL" && level == 300)
+   * resource.environment_id == "prod" && statement.affected_rows >= 100
+   * resource.table_name.matches("sensitive_.*") && resource.db_engine == "MYSQL"
    *
    * @generated from field: google.type.Expr condition = 2;
    */
   condition?: Expr;
+
+  /**
+   * @generated from field: bytebase.v1.WorkspaceApprovalSetting.Rule.Source source = 3;
+   */
+  source: WorkspaceApprovalSetting_Rule_Source;
 };
 
 /**
@@ -715,128 +808,39 @@ export declare type WorkspaceApprovalSetting_Rule = Message<"bytebase.v1.Workspa
 export declare const WorkspaceApprovalSetting_RuleSchema: GenMessage<WorkspaceApprovalSetting_Rule>;
 
 /**
- * @generated from message bytebase.v1.SchemaTemplateSetting
+ * @generated from enum bytebase.v1.WorkspaceApprovalSetting.Rule.Source
  */
-export declare type SchemaTemplateSetting = Message<"bytebase.v1.SchemaTemplateSetting"> & {
+export enum WorkspaceApprovalSetting_Rule_Source {
   /**
-   * @generated from field: repeated bytebase.v1.SchemaTemplateSetting.FieldTemplate field_templates = 1;
+   * @generated from enum value: SOURCE_UNSPECIFIED = 0;
    */
-  fieldTemplates: SchemaTemplateSetting_FieldTemplate[];
+  SOURCE_UNSPECIFIED = 0,
 
   /**
-   * @generated from field: repeated bytebase.v1.SchemaTemplateSetting.ColumnType column_types = 2;
+   * @generated from enum value: CHANGE_DATABASE = 1;
    */
-  columnTypes: SchemaTemplateSetting_ColumnType[];
+  CHANGE_DATABASE = 1,
 
   /**
-   * @generated from field: repeated bytebase.v1.SchemaTemplateSetting.TableTemplate table_templates = 3;
+   * @generated from enum value: CREATE_DATABASE = 2;
    */
-  tableTemplates: SchemaTemplateSetting_TableTemplate[];
-};
+  CREATE_DATABASE = 2,
+
+  /**
+   * @generated from enum value: EXPORT_DATA = 3;
+   */
+  EXPORT_DATA = 3,
+
+  /**
+   * @generated from enum value: REQUEST_ROLE = 4;
+   */
+  REQUEST_ROLE = 4,
+}
 
 /**
- * Describes the message bytebase.v1.SchemaTemplateSetting.
- * Use `create(SchemaTemplateSettingSchema)` to create a new message.
+ * Describes the enum bytebase.v1.WorkspaceApprovalSetting.Rule.Source.
  */
-export declare const SchemaTemplateSettingSchema: GenMessage<SchemaTemplateSetting>;
-
-/**
- * @generated from message bytebase.v1.SchemaTemplateSetting.FieldTemplate
- */
-export declare type SchemaTemplateSetting_FieldTemplate = Message<"bytebase.v1.SchemaTemplateSetting.FieldTemplate"> & {
-  /**
-   * @generated from field: string id = 1;
-   */
-  id: string;
-
-  /**
-   * @generated from field: bytebase.v1.Engine engine = 2;
-   */
-  engine: Engine;
-
-  /**
-   * @generated from field: string category = 3;
-   */
-  category: string;
-
-  /**
-   * @generated from field: bytebase.v1.ColumnMetadata column = 4;
-   */
-  column?: ColumnMetadata;
-
-  /**
-   * @generated from field: bytebase.v1.ColumnCatalog catalog = 5;
-   */
-  catalog?: ColumnCatalog;
-};
-
-/**
- * Describes the message bytebase.v1.SchemaTemplateSetting.FieldTemplate.
- * Use `create(SchemaTemplateSetting_FieldTemplateSchema)` to create a new message.
- */
-export declare const SchemaTemplateSetting_FieldTemplateSchema: GenMessage<SchemaTemplateSetting_FieldTemplate>;
-
-/**
- * @generated from message bytebase.v1.SchemaTemplateSetting.ColumnType
- */
-export declare type SchemaTemplateSetting_ColumnType = Message<"bytebase.v1.SchemaTemplateSetting.ColumnType"> & {
-  /**
-   * @generated from field: bytebase.v1.Engine engine = 1;
-   */
-  engine: Engine;
-
-  /**
-   * @generated from field: bool enabled = 2;
-   */
-  enabled: boolean;
-
-  /**
-   * @generated from field: repeated string types = 3;
-   */
-  types: string[];
-};
-
-/**
- * Describes the message bytebase.v1.SchemaTemplateSetting.ColumnType.
- * Use `create(SchemaTemplateSetting_ColumnTypeSchema)` to create a new message.
- */
-export declare const SchemaTemplateSetting_ColumnTypeSchema: GenMessage<SchemaTemplateSetting_ColumnType>;
-
-/**
- * @generated from message bytebase.v1.SchemaTemplateSetting.TableTemplate
- */
-export declare type SchemaTemplateSetting_TableTemplate = Message<"bytebase.v1.SchemaTemplateSetting.TableTemplate"> & {
-  /**
-   * @generated from field: string id = 1;
-   */
-  id: string;
-
-  /**
-   * @generated from field: bytebase.v1.Engine engine = 2;
-   */
-  engine: Engine;
-
-  /**
-   * @generated from field: string category = 3;
-   */
-  category: string;
-
-  /**
-   * @generated from field: bytebase.v1.TableMetadata table = 4;
-   */
-  table?: TableMetadata;
-
-  /**
-   * @generated from field: bytebase.v1.TableCatalog catalog = 5;
-   */
-  catalog?: TableCatalog;
-};
-
-/**
- * Describes the message bytebase.v1.SchemaTemplateSetting.TableTemplate.
- * Use `create(SchemaTemplateSetting_TableTemplateSchema)` to create a new message.
- */
-export declare const SchemaTemplateSetting_TableTemplateSchema: GenMessage<SchemaTemplateSetting_TableTemplate>;
+export declare const WorkspaceApprovalSetting_Rule_SourceSchema: GenEnum<WorkspaceApprovalSetting_Rule_Source>;
 
 /**
  * @generated from message bytebase.v1.DataClassificationSetting
@@ -885,15 +889,6 @@ export declare type DataClassificationSetting_DataClassificationConfig = Message
    * @generated from field: map<string, bytebase.v1.DataClassificationSetting.DataClassificationConfig.DataClassification> classification = 4;
    */
   classification: { [key: string]: DataClassificationSetting_DataClassificationConfig_DataClassification };
-
-  /**
-   * If true, we will only store the classification in the config.
-   * Otherwise we will get the classification from table/column comment,
-   * and write back to the schema metadata.
-   *
-   * @generated from field: bool classification_from_config = 5;
-   */
-  classificationFromConfig: boolean;
 };
 
 /**
@@ -1030,25 +1025,25 @@ export declare type Algorithm = Message<"bytebase.v1.Algorithm"> & {
    */
   mask: {
     /**
-     * @generated from field: bytebase.v1.Algorithm.FullMask full_mask = 5;
+     * @generated from field: bytebase.v1.Algorithm.FullMask full_mask = 1;
      */
     value: Algorithm_FullMask;
     case: "fullMask";
   } | {
     /**
-     * @generated from field: bytebase.v1.Algorithm.RangeMask range_mask = 6;
+     * @generated from field: bytebase.v1.Algorithm.RangeMask range_mask = 2;
      */
     value: Algorithm_RangeMask;
     case: "rangeMask";
   } | {
     /**
-     * @generated from field: bytebase.v1.Algorithm.MD5Mask md5_mask = 7;
+     * @generated from field: bytebase.v1.Algorithm.MD5Mask md5_mask = 3;
      */
     value: Algorithm_MD5Mask;
     case: "md5Mask";
   } | {
     /**
-     * @generated from field: bytebase.v1.Algorithm.InnerOuterMask inner_outer_mask = 8;
+     * @generated from field: bytebase.v1.Algorithm.InnerOuterMask inner_outer_mask = 4;
      */
     value: Algorithm_InnerOuterMask;
     case: "innerOuterMask";
@@ -1104,14 +1099,17 @@ export declare const Algorithm_RangeMaskSchema: GenMessage<Algorithm_RangeMask>;
  */
 export declare type Algorithm_RangeMask_Slice = Message<"bytebase.v1.Algorithm.RangeMask.Slice"> & {
   /**
-   * start is the start index of the original value, start from 0 and should be less than stop.
+   * start is the start character index (0-based) of the original value, should be less than end.
+   * Uses character indices (not byte offsets) for display-oriented masking.
+   * Example: For "你好world", character index 2 refers to 'w' (the 3rd character).
    *
    * @generated from field: int32 start = 1;
    */
   start: number;
 
   /**
-   * stop is the stop index of the original value, should be less than the length of the original value.
+   * end is the end character index (exclusive) of the original value.
+   * Uses character indices (not byte offsets) for display-oriented masking.
    *
    * @generated from field: int32 end = 2;
    */
@@ -1204,82 +1202,6 @@ export enum Algorithm_InnerOuterMask_MaskType {
  * Describes the enum bytebase.v1.Algorithm.InnerOuterMask.MaskType.
  */
 export declare const Algorithm_InnerOuterMask_MaskTypeSchema: GenEnum<Algorithm_InnerOuterMask_MaskType>;
-
-/**
- * @generated from message bytebase.v1.SCIMSetting
- */
-export declare type SCIMSetting = Message<"bytebase.v1.SCIMSetting"> & {
-  /**
-   * @generated from field: string token = 1;
-   */
-  token: string;
-};
-
-/**
- * Describes the message bytebase.v1.SCIMSetting.
- * Use `create(SCIMSettingSchema)` to create a new message.
- */
-export declare const SCIMSettingSchema: GenMessage<SCIMSetting>;
-
-/**
- * @generated from message bytebase.v1.PasswordRestrictionSetting
- */
-export declare type PasswordRestrictionSetting = Message<"bytebase.v1.PasswordRestrictionSetting"> & {
-  /**
-   * min_length is the minimum length for password, should no less than 8.
-   *
-   * @generated from field: int32 min_length = 1;
-   */
-  minLength: number;
-
-  /**
-   * require_number requires the password must contains at least one number.
-   *
-   * @generated from field: bool require_number = 2;
-   */
-  requireNumber: boolean;
-
-  /**
-   * require_letter requires the password must contains at least one letter, regardless of upper case or lower case
-   *
-   * @generated from field: bool require_letter = 3;
-   */
-  requireLetter: boolean;
-
-  /**
-   * require_uppercase_letter requires the password must contains at least one upper case letter.
-   *
-   * @generated from field: bool require_uppercase_letter = 4;
-   */
-  requireUppercaseLetter: boolean;
-
-  /**
-   * require_special_character requires the password must contains at least one special character.
-   *
-   * @generated from field: bool require_special_character = 5;
-   */
-  requireSpecialCharacter: boolean;
-
-  /**
-   * require_reset_password_for_first_login requires users to reset their password after the 1st login.
-   *
-   * @generated from field: bool require_reset_password_for_first_login = 6;
-   */
-  requireResetPasswordForFirstLogin: boolean;
-
-  /**
-   * password_rotation requires users to reset their password after the duration.
-   *
-   * @generated from field: google.protobuf.Duration password_rotation = 7;
-   */
-  passwordRotation?: Duration;
-};
-
-/**
- * Describes the message bytebase.v1.PasswordRestrictionSetting.
- * Use `create(PasswordRestrictionSettingSchema)` to create a new message.
- */
-export declare const PasswordRestrictionSettingSchema: GenMessage<PasswordRestrictionSetting>;
 
 /**
  * @generated from message bytebase.v1.AISetting

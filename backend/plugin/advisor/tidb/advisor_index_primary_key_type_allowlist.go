@@ -7,14 +7,16 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
 	tidbparser "github.com/bytebase/bytebase/backend/plugin/parser/tidb"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -23,7 +25,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleIndexPrimaryKeyTypeAllowlist, &IndexPrimaryKeyTypeAllowlistAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_INDEX_PRIMARY_KEY_TYPE_ALLOWLIST, &IndexPrimaryKeyTypeAllowlistAdvisor{})
 }
 
 // IndexPrimaryKeyTypeAllowlistAdvisor is the advisor checking for primary key type allowlist.
@@ -32,28 +34,26 @@ type IndexPrimaryKeyTypeAllowlistAdvisor struct {
 
 // Check checks for primary key type allowlist.
 func (*IndexPrimaryKeyTypeAllowlistAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalStringArrayTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
+	stringArrayPayload := checkCtx.Rule.GetStringArrayPayload()
 	allowlist := make(map[string]bool)
-	for _, tp := range payload.List {
+	for _, tp := range stringArrayPayload.List {
 		allowlist[strings.ToLower(tp)] = true
 	}
 	checker := &indexPrimaryKeyTypeAllowlistChecker{
 		level:            level,
-		title:            string(checkCtx.Rule.Type),
+		title:            checkCtx.Rule.Type.String(),
 		allowlist:        allowlist,
-		catalog:          checkCtx.Catalog,
+		originalMetadata: checkCtx.OriginalMetadata,
 		tablesNewColumns: make(map[string]columnNameToColumnDef),
 	}
 
@@ -73,7 +73,7 @@ type indexPrimaryKeyTypeAllowlistChecker struct {
 	text             string
 	line             int
 	allowlist        map[string]bool
-	catalog          *catalog.Finder
+	originalMetadata *model.DatabaseMetadata
 	tablesNewColumns tableNewColumn
 }
 
@@ -119,7 +119,7 @@ func (v *indexPrimaryKeyTypeAllowlistChecker) Enter(in ast.Node) (ast.Node, bool
 	for _, pd := range pkDataList {
 		v.adviceList = append(v.adviceList, &storepb.Advice{
 			Status:        v.level,
-			Code:          advisor.IndexPKType.Int32(),
+			Code:          code.IndexPKType.Int32(),
 			Title:         v.title,
 			Content:       fmt.Sprintf("The column `%s` in table `%s` is one of the primary key, but its type \"%s\" is not in allowlist", pd.column, pd.table, pd.columnType),
 			StartPosition: common.ConvertANTLRLineToPosition(pd.line),
@@ -199,12 +199,9 @@ func (v *indexPrimaryKeyTypeAllowlistChecker) getPKColumnType(tableName string, 
 	if colDef, ok := v.tablesNewColumns.get(tableName, columnName); ok {
 		return tidbparser.TypeString(colDef.Tp.GetType()), nil
 	}
-	column := v.catalog.Origin.FindColumn(&catalog.ColumnFind{
-		TableName:  tableName,
-		ColumnName: columnName,
-	})
+	column := v.originalMetadata.GetSchemaMetadata("").GetTable(tableName).GetColumn(columnName)
 	if column != nil {
-		return column.Type(), nil
+		return column.GetProto().Type, nil
 	}
 	return "", errors.Errorf("cannot find the type of `%s`.`%s`", tableName, columnName)
 }

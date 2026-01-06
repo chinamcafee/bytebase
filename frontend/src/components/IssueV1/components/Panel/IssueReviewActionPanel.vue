@@ -20,7 +20,7 @@
         <PlanCheckRunBar
           v-if="issue.planCheckRunList.length > 0"
           class="shrink-0 flex-col gap-y-1"
-          label-class="!text-base"
+          label-class="text-base!"
           :allow-run-checks="false"
           :plan-name="issue.plan"
           :plan-check-run-list="issue.planCheckRunList"
@@ -103,13 +103,13 @@ import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { IssueReviewAction } from "@/components/IssueV1/logic";
 import {
-  useIssueContext,
   issueReviewActionDisplayName,
   planCheckRunSummaryForIssue,
+  useIssueContext,
 } from "@/components/IssueV1/logic";
 import PlanCheckRunBar from "@/components/PlanCheckRun/PlanCheckRunBar.vue";
 import RequiredStar from "@/components/RequiredStar.vue";
-import { issueServiceClientConnect } from "@/grpcweb";
+import { issueServiceClientConnect } from "@/connect";
 import { useCurrentProjectV1 } from "@/store";
 import {
   ApproveIssueRequestSchema,

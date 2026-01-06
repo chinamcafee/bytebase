@@ -9,12 +9,28 @@
       class="textlabel mt-2"
       :disabled="!allowEdit"
     >
-      <NRadio
-        v-for="option in iamExtensionOptions"
-        :value="option.value"
-        :key="option.value"
-        :label="option.label"
-      />
+      <template v-for="option in iamExtensionOptions" :key="option.value">
+        <NTooltip
+          v-if="option.disabled"
+          :show-arrow="true"
+          trigger="hover"
+        >
+          <template #trigger>
+            <NRadio
+              :value="option.value"
+              :label="option.label"
+              :disabled="!allowEdit || option.disabled"
+            />
+          </template>
+          {{ $t("instance.iam-extension.saas-default-credential-restriction") }}
+        </NTooltip>
+        <NRadio
+          v-else
+          :value="option.value"
+          :label="option.label"
+          :disabled="!allowEdit"
+        />
+      </template>
     </NRadioGroup>
     <template v-if="credentialSource === 'specific-credential'">
       <div
@@ -222,7 +238,7 @@
     </template>
     <div
       v-else-if="credentialSource === 'default'"
-      class="mt-1 sm:col-span-3 sm:col-start-1 textinfolabel !leading-6 credential"
+      class="mt-1 sm:col-span-3 sm:col-start-1 textinfolabel leading-6! credential"
     >
       <span
         v-if="
@@ -268,13 +284,14 @@
 <script lang="tsx" setup>
 /* eslint-disable vue/no-mutating-props */
 import { create } from "@bufbuild/protobuf";
-import { NRadioGroup, NRadio, NInput } from "naive-ui";
-import { computed, watch, ref } from "vue";
+import { NInput, NRadio, NRadioGroup, NTooltip } from "naive-ui";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useActuatorV1Store } from "@/store";
 import {
   DataSource_AuthenticationType,
-  DataSource_AzureCredentialSchema,
   DataSource_AWSCredentialSchema,
+  DataSource_AzureCredentialSchema,
   DataSource_GCPCredentialSchema,
 } from "@/types/proto-es/v1/instance_service_pb";
 import type { EditDataSource } from "../common";
@@ -288,14 +305,31 @@ const props = defineProps<{
 }>();
 
 const credentialSource = ref<credentialSource>("default");
+const actuatorStore = useActuatorV1Store();
 
 const { t } = useI18n();
+
+const isIAMAuthentication = computed(() => {
+  return (
+    props.dataSource.authenticationType ===
+      DataSource_AuthenticationType.GOOGLE_CLOUD_SQL_IAM ||
+    props.dataSource.authenticationType ===
+      DataSource_AuthenticationType.AWS_RDS_IAM ||
+    props.dataSource.authenticationType ===
+      DataSource_AuthenticationType.AZURE_IAM
+  );
+});
+
+const isDefaultCredentialDisabled = computed(() => {
+  return actuatorStore.isSaaSMode && isIAMAuthentication.value;
+});
 
 const iamExtensionOptions = computed(() => {
   return [
     {
       label: t("common.Default"),
       value: "default",
+      disabled: isDefaultCredentialDisabled.value,
     },
     {
       label: t("instance.iam-extension.specific-credential"),
@@ -325,6 +359,17 @@ watch(
   () => {
     credentialSource.value = "default";
   }
+);
+
+// Force specific credential in SaaS mode for IAM authentication
+watch(
+  () => isDefaultCredentialDisabled.value,
+  (disabled) => {
+    if (disabled && credentialSource.value === "default") {
+      credentialSource.value = "specific-credential";
+    }
+  },
+  { immediate: true }
 );
 
 watch(
@@ -383,6 +428,9 @@ watch(
 
 <style lang="postcss" scoped>
 .credential :deep(.code) {
-  @apply bg-gray-100 p-1 rounded-sm mr-1;
+  background-color: var(--color-gray-100);
+  padding: 0.25rem;
+  border-radius: 0.125rem;
+  margin-right: 0.25rem;
 }
 </style>

@@ -17,174 +17,111 @@ func convertToSettingMessage(setting *store.SettingMessage, profile *config.Prof
 	settingName := fmt.Sprintf("%s%s", common.SettingNamePrefix, convertStoreSettingNameToV1(setting.Name).String())
 	switch setting.Name {
 	case storepb.SettingName_APP_IM:
-		storeValue := new(storepb.AppIMSetting)
-		if err := common.ProtojsonUnmarshaler.Unmarshal([]byte(setting.Value), storeValue); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to unmarshal setting value for %s with error: %v", setting.Name, err))
+		storeValue, ok := setting.Value.(*storepb.AppIMSetting)
+		if !ok {
+			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("invalid setting value type for %s", setting.Name))
 		}
+		v1Value := convertToAppIMSetting(storeValue)
 		return &v1pb.Setting{
 			Name: settingName,
-			Value: &v1pb.Value{
-				Value: &v1pb.Value_AppImSettingValue{
-					AppImSettingValue: &v1pb.AppIMSetting{
-						Slack: &v1pb.AppIMSetting_Slack{
-							Enabled: storeValue.GetSlack().GetEnabled(),
-						},
-						Feishu: &v1pb.AppIMSetting_Feishu{
-							Enabled: storeValue.GetFeishu().GetEnabled(),
-						},
-						Wecom: &v1pb.AppIMSetting_Wecom{
-							Enabled: storeValue.GetWecom().GetEnabled(),
-						},
-						Lark: &v1pb.AppIMSetting_Lark{
-							Enabled: storeValue.GetLark().GetEnabled(),
-						},
-						Dingtalk: &v1pb.AppIMSetting_DingTalk{
-							Enabled: storeValue.GetDingtalk().GetEnabled(),
-						},
-					},
+			Value: &v1pb.SettingValue{
+				Value: &v1pb.SettingValue_AppIm{
+					AppIm: v1Value,
 				},
 			},
 		}, nil
 	case storepb.SettingName_WORKSPACE_PROFILE:
-		storeValue := new(storepb.WorkspaceProfileSetting)
-		if err := common.ProtojsonUnmarshaler.Unmarshal([]byte(setting.Value), storeValue); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to unmarshal setting value for %s with error: %v", setting.Name, err))
+		storeValue, ok := setting.Value.(*storepb.WorkspaceProfileSetting)
+		if !ok {
+			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("invalid setting value type for %s", setting.Name))
 		}
 		v1Value := convertToWorkspaceProfileSetting(storeValue)
 		v1Value.DisallowSignup = v1Value.DisallowSignup || profile.SaaS
 		return &v1pb.Setting{
 			Name: settingName,
-			Value: &v1pb.Value{
-				Value: &v1pb.Value_WorkspaceProfileSettingValue{
-					WorkspaceProfileSettingValue: v1Value,
+			Value: &v1pb.SettingValue{
+				Value: &v1pb.SettingValue_WorkspaceProfile{
+					WorkspaceProfile: v1Value,
 				},
 			},
 		}, nil
 	case storepb.SettingName_WORKSPACE_APPROVAL:
-		storeValue := new(storepb.WorkspaceApprovalSetting)
-		if err := common.ProtojsonUnmarshaler.Unmarshal([]byte(setting.Value), storeValue); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to unmarshal setting value for %s with error: %v", setting.Name, err))
+		storeValue, ok := setting.Value.(*storepb.WorkspaceApprovalSetting)
+		if !ok {
+			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("invalid setting value type for %s", setting.Name))
 		}
 		v1Value := &v1pb.WorkspaceApprovalSetting{}
 		for _, rule := range storeValue.Rules {
 			template := convertToApprovalTemplate(rule.Template)
 			v1Value.Rules = append(v1Value.Rules, &v1pb.WorkspaceApprovalSetting_Rule{
+				Source:    v1pb.WorkspaceApprovalSetting_Rule_Source(rule.Source),
 				Condition: rule.Condition,
 				Template:  template,
 			})
 		}
 		return &v1pb.Setting{
 			Name: settingName,
-			Value: &v1pb.Value{
-				Value: &v1pb.Value_WorkspaceApprovalSettingValue{
-					WorkspaceApprovalSettingValue: v1Value,
-				},
-			},
-		}, nil
-	case storepb.SettingName_SCHEMA_TEMPLATE:
-		storeValue := new(storepb.SchemaTemplateSetting)
-		if err := common.ProtojsonUnmarshaler.Unmarshal([]byte(setting.Value), storeValue); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to unmarshal setting value for %s with error: %v", setting.Name, err))
-		}
-
-		sts := convertToSchemaTemplateSetting(storeValue)
-		return &v1pb.Setting{
-			Name: settingName,
-			Value: &v1pb.Value{
-				Value: &v1pb.Value_SchemaTemplateSettingValue{
-					SchemaTemplateSettingValue: sts,
+			Value: &v1pb.SettingValue{
+				Value: &v1pb.SettingValue_WorkspaceApproval{
+					WorkspaceApproval: v1Value,
 				},
 			},
 		}, nil
 	case storepb.SettingName_DATA_CLASSIFICATION:
-		storeValue := new(storepb.DataClassificationSetting)
-		if err := common.ProtojsonUnmarshaler.Unmarshal([]byte(setting.Value), storeValue); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to unmarshal setting value for %s with error: %v", setting.Name, err))
+		storeValue, ok := setting.Value.(*storepb.DataClassificationSetting)
+		if !ok {
+			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("invalid setting value type for %s", setting.Name))
 		}
 		return &v1pb.Setting{
 			Name: settingName,
-			Value: &v1pb.Value{
-				Value: &v1pb.Value_DataClassificationSettingValue{
-					DataClassificationSettingValue: convertToDataClassificationSetting(storeValue),
+			Value: &v1pb.SettingValue{
+				Value: &v1pb.SettingValue_DataClassification{
+					DataClassification: convertToDataClassificationSetting(storeValue),
 				},
 			},
 		}, nil
 	case storepb.SettingName_SEMANTIC_TYPES:
-		storeValue := new(storepb.SemanticTypeSetting)
-		if err := common.ProtojsonUnmarshaler.Unmarshal([]byte(setting.Value), storeValue); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to unmarshal setting value for %s with error: %v", setting.Name, err))
+		storeValue, ok := setting.Value.(*storepb.SemanticTypeSetting)
+		if !ok {
+			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("invalid setting value type for %s", setting.Name))
 		}
 		return &v1pb.Setting{
 			Name: settingName,
-			Value: &v1pb.Value{
-				Value: &v1pb.Value_SemanticTypeSettingValue{
-					SemanticTypeSettingValue: convertToSemanticTypeSetting(storeValue),
-				},
-			},
-		}, nil
-	case storepb.SettingName_SCIM:
-		storeValue := new(storepb.SCIMSetting)
-		if err := common.ProtojsonUnmarshaler.Unmarshal([]byte(setting.Value), storeValue); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to unmarshal setting value for %s with error: %v", setting.Name, err))
-		}
-		return &v1pb.Setting{
-			Name: settingName,
-			Value: &v1pb.Value{
-				Value: &v1pb.Value_ScimSetting{
-					ScimSetting: convertToSCIMSetting(storeValue),
-				},
-			},
-		}, nil
-	case storepb.SettingName_PASSWORD_RESTRICTION:
-		storeValue := new(storepb.PasswordRestrictionSetting)
-		if err := common.ProtojsonUnmarshaler.Unmarshal([]byte(setting.Value), storeValue); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to unmarshal setting value for %s with error: %v", setting.Name, err))
-		}
-		return &v1pb.Setting{
-			Name: settingName,
-			Value: &v1pb.Value{
-				Value: &v1pb.Value_PasswordRestrictionSetting{
-					PasswordRestrictionSetting: convertToPasswordRestrictionSetting(storeValue),
+			Value: &v1pb.SettingValue{
+				Value: &v1pb.SettingValue_SemanticType{
+					SemanticType: convertToSemanticTypeSetting(storeValue),
 				},
 			},
 		}, nil
 	case storepb.SettingName_AI:
-		storeValue := new(storepb.AISetting)
-		if err := common.ProtojsonUnmarshaler.Unmarshal([]byte(setting.Value), storeValue); err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to unmarshal setting value for %s with error: %v", setting.Name, err))
+		storeValue, ok := setting.Value.(*storepb.AISetting)
+		if !ok {
+			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("invalid setting value type for %s", setting.Name))
 		}
-		// DO NOT expose the api key.
-		storeValue.ApiKey = ""
 		return &v1pb.Setting{
 			Name: settingName,
-			Value: &v1pb.Value{
-				Value: &v1pb.Value_AiSetting{
-					AiSetting: convertToAISetting(storeValue),
+			Value: &v1pb.SettingValue{
+				Value: &v1pb.SettingValue_Ai{
+					Ai: convertToAISetting(storeValue),
 				},
 			},
 		}, nil
 	case storepb.SettingName_ENVIRONMENT:
-		storeValue, err := convertToEnvironmentSetting(setting.Value)
-		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("failed to convert setting value for %s with error: %v", setting.Name, err))
+		storeValue, ok := setting.Value.(*storepb.EnvironmentSetting)
+		if !ok {
+			return nil, connect.NewError(connect.CodeInternal, errors.Errorf("invalid setting value type for %s", setting.Name))
 		}
+		v1Value := convertToEnvironmentSetting(storeValue)
 		return &v1pb.Setting{
 			Name: settingName,
-			Value: &v1pb.Value{
-				Value: &v1pb.Value_EnvironmentSetting{
-					EnvironmentSetting: storeValue,
+			Value: &v1pb.SettingValue{
+				Value: &v1pb.SettingValue_Environment{
+					Environment: v1Value,
 				},
 			},
 		}, nil
 	default:
-		return &v1pb.Setting{
-			Name: settingName,
-			Value: &v1pb.Value{
-				Value: &v1pb.Value_StringValue{
-					StringValue: setting.Value,
-				},
-			},
-		}, nil
+		return nil, connect.NewError(connect.CodeInternal, errors.Errorf("unsupported setting %v", setting.Name))
 	}
 }
 
@@ -208,38 +145,22 @@ func convertStoreSettingNameToV1(storeName storepb.SettingName) v1pb.Setting_Set
 	switch storeName {
 	case storepb.SettingName_SETTING_NAME_UNSPECIFIED:
 		return v1pb.Setting_SETTING_NAME_UNSPECIFIED
-	case storepb.SettingName_AUTH_SECRET:
-		return v1pb.Setting_AUTH_SECRET
-	case storepb.SettingName_BRANDING_LOGO:
-		return v1pb.Setting_BRANDING_LOGO
-	case storepb.SettingName_WORKSPACE_ID:
-		return v1pb.Setting_WORKSPACE_ID
 	case storepb.SettingName_WORKSPACE_PROFILE:
 		return v1pb.Setting_WORKSPACE_PROFILE
 	case storepb.SettingName_WORKSPACE_APPROVAL:
 		return v1pb.Setting_WORKSPACE_APPROVAL
-	case storepb.SettingName_WORKSPACE_EXTERNAL_APPROVAL:
-		return v1pb.Setting_WORKSPACE_EXTERNAL_APPROVAL
-	case storepb.SettingName_ENTERPRISE_LICENSE:
-		return v1pb.Setting_ENTERPRISE_LICENSE
 	case storepb.SettingName_APP_IM:
 		return v1pb.Setting_APP_IM
-	case storepb.SettingName_WATERMARK:
-		return v1pb.Setting_WATERMARK
 	case storepb.SettingName_AI:
 		return v1pb.Setting_AI
-	case storepb.SettingName_SCHEMA_TEMPLATE:
-		return v1pb.Setting_SCHEMA_TEMPLATE
 	case storepb.SettingName_DATA_CLASSIFICATION:
 		return v1pb.Setting_DATA_CLASSIFICATION
 	case storepb.SettingName_SEMANTIC_TYPES:
 		return v1pb.Setting_SEMANTIC_TYPES
-	case storepb.SettingName_SCIM:
-		return v1pb.Setting_SCIM
-	case storepb.SettingName_PASSWORD_RESTRICTION:
-		return v1pb.Setting_PASSWORD_RESTRICTION
 	case storepb.SettingName_ENVIRONMENT:
 		return v1pb.Setting_ENVIRONMENT
+	case storepb.SettingName_SYSTEM:
+		// Backend-only setting, not exposed in v1 API
 	default:
 	}
 	return v1pb.Setting_SETTING_NAME_UNSPECIFIED
@@ -251,36 +172,18 @@ func convertV1SettingNameToStore(v1Name v1pb.Setting_SettingName) storepb.Settin
 	switch v1Name {
 	case v1pb.Setting_SETTING_NAME_UNSPECIFIED:
 		return storepb.SettingName_SETTING_NAME_UNSPECIFIED
-	case v1pb.Setting_AUTH_SECRET:
-		return storepb.SettingName_AUTH_SECRET
-	case v1pb.Setting_BRANDING_LOGO:
-		return storepb.SettingName_BRANDING_LOGO
-	case v1pb.Setting_WORKSPACE_ID:
-		return storepb.SettingName_WORKSPACE_ID
 	case v1pb.Setting_WORKSPACE_PROFILE:
 		return storepb.SettingName_WORKSPACE_PROFILE
 	case v1pb.Setting_WORKSPACE_APPROVAL:
 		return storepb.SettingName_WORKSPACE_APPROVAL
-	case v1pb.Setting_WORKSPACE_EXTERNAL_APPROVAL:
-		return storepb.SettingName_WORKSPACE_EXTERNAL_APPROVAL
-	case v1pb.Setting_ENTERPRISE_LICENSE:
-		return storepb.SettingName_ENTERPRISE_LICENSE
 	case v1pb.Setting_APP_IM:
 		return storepb.SettingName_APP_IM
-	case v1pb.Setting_WATERMARK:
-		return storepb.SettingName_WATERMARK
 	case v1pb.Setting_AI:
 		return storepb.SettingName_AI
-	case v1pb.Setting_SCHEMA_TEMPLATE:
-		return storepb.SettingName_SCHEMA_TEMPLATE
 	case v1pb.Setting_DATA_CLASSIFICATION:
 		return storepb.SettingName_DATA_CLASSIFICATION
 	case v1pb.Setting_SEMANTIC_TYPES:
 		return storepb.SettingName_SEMANTIC_TYPES
-	case v1pb.Setting_SCIM:
-		return storepb.SettingName_SCIM
-	case v1pb.Setting_PASSWORD_RESTRICTION:
-		return storepb.SettingName_PASSWORD_RESTRICTION
 	case v1pb.Setting_ENVIRONMENT:
 		return storepb.SettingName_ENVIRONMENT
 	default:
@@ -288,113 +191,18 @@ func convertV1SettingNameToStore(v1Name v1pb.Setting_SettingName) storepb.Settin
 	}
 }
 
-func convertToSchemaTemplateSetting(template *storepb.SchemaTemplateSetting) *v1pb.SchemaTemplateSetting {
-	v1Setting := new(v1pb.SchemaTemplateSetting)
-	for _, v := range template.ColumnTypes {
-		v1Setting.ColumnTypes = append(v1Setting.ColumnTypes, &v1pb.SchemaTemplateSetting_ColumnType{
-			Engine:  convertToEngine(v.Engine),
-			Enabled: v.Enabled,
-			Types:   v.Types,
-		})
-	}
-	for _, v := range template.FieldTemplates {
-		if v == nil {
-			continue
-		}
-		t := &v1pb.SchemaTemplateSetting_FieldTemplate{
-			Id:       v.Id,
-			Engine:   convertToEngine(v.Engine),
-			Category: v.Category,
-		}
-		if v.Column != nil {
-			t.Column = convertStoreColumnMetadata(v.Column)
-		}
-		if v.Catalog != nil {
-			t.Catalog = convertColumnCatalog(v.Catalog)
-		}
-		v1Setting.FieldTemplates = append(v1Setting.FieldTemplates, t)
-	}
-	for _, v := range template.TableTemplates {
-		if v == nil {
-			continue
-		}
-		t := &v1pb.SchemaTemplateSetting_TableTemplate{
-			Id:       v.Id,
-			Engine:   convertToEngine(v.Engine),
-			Category: v.Category,
-		}
-		if v.Table != nil {
-			t.Table = convertStoreTableMetadata(v.Table)
-		}
-		if v.Catalog != nil {
-			t.Catalog = convertTableCatalog(v.Catalog)
-		}
-		v1Setting.TableTemplates = append(v1Setting.TableTemplates, t)
-	}
-
-	return v1Setting
-}
-
-func convertV1SchemaTemplateSetting(template *v1pb.SchemaTemplateSetting) *storepb.SchemaTemplateSetting {
-	v1Setting := new(storepb.SchemaTemplateSetting)
-	for _, v := range template.ColumnTypes {
-		v1Setting.ColumnTypes = append(v1Setting.ColumnTypes, &storepb.SchemaTemplateSetting_ColumnType{
-			Engine:  convertEngine(v.Engine),
-			Enabled: v.Enabled,
-			Types:   v.Types,
-		})
-	}
-	for _, v := range template.FieldTemplates {
-		if v == nil {
-			continue
-		}
-		t := &storepb.SchemaTemplateSetting_FieldTemplate{
-			Id:       v.Id,
-			Engine:   convertEngine(v.Engine),
-			Category: v.Category,
-		}
-		if v.Column != nil {
-			t.Column = convertV1ColumnMetadata(v.Column)
-		}
-		if v.Catalog != nil {
-			t.Catalog = convertV1ColumnCatalog(v.Catalog)
-		}
-		v1Setting.FieldTemplates = append(v1Setting.FieldTemplates, t)
-	}
-	for _, v := range template.TableTemplates {
-		if v == nil {
-			continue
-		}
-		t := &storepb.SchemaTemplateSetting_TableTemplate{
-			Id:       v.Id,
-			Engine:   convertEngine(v.Engine),
-			Category: v.Category,
-		}
-		if v.Table != nil {
-			t.Table = convertV1TableMetadata(v.Table)
-		}
-		if v.Catalog != nil {
-			t.Catalog = convertV1TableCatalog(v.Catalog)
-		}
-		v1Setting.TableTemplates = append(v1Setting.TableTemplates, t)
-	}
-
-	return v1Setting
-}
-
-func convertToEnvironmentSetting(value string) (*v1pb.EnvironmentSetting, error) {
-	var setting storepb.EnvironmentSetting
-	if err := common.ProtojsonUnmarshaler.Unmarshal([]byte(value), &setting); err != nil {
-		return nil, errors.Wrapf(err, "failed to unmarshal environment setting")
+func convertToEnvironmentSetting(storeValue *storepb.EnvironmentSetting) *v1pb.EnvironmentSetting {
+	if storeValue == nil {
+		return nil
 	}
 	var environments []*v1pb.EnvironmentSetting_Environment
 
-	for _, e := range setting.Environments {
+	for _, e := range storeValue.Environments {
 		environments = append(environments, convertToEnvironment(e))
 	}
 	return &v1pb.EnvironmentSetting{
 		Environments: environments,
-	}, nil
+	}
 }
 
 func convertToEnvironment(e *storepb.EnvironmentSetting_Environment) *v1pb.EnvironmentSetting_Environment {
@@ -431,32 +239,38 @@ func convertWorkspaceProfileSetting(v1Setting *v1pb.WorkspaceProfileSetting) *st
 		ExternalUrl:            v1Setting.ExternalUrl,
 		DisallowSignup:         v1Setting.DisallowSignup,
 		Require_2Fa:            v1Setting.Require_2Fa,
-		TokenDuration:          v1Setting.TokenDuration,
+		RefreshTokenDuration:   v1Setting.RefreshTokenDuration,
+		AccessTokenDuration:    v1Setting.AccessTokenDuration,
 		InactiveSessionTimeout: v1Setting.InactiveSessionTimeout,
 		MaximumRoleExpiration:  v1Setting.MaximumRoleExpiration,
 		Domains:                v1Setting.Domains,
 		EnforceIdentityDomain:  v1Setting.EnforceIdentityDomain,
-		DatabaseChangeMode:     storepb.DatabaseChangeMode(v1Setting.DatabaseChangeMode),
+		DatabaseChangeMode:     storepb.WorkspaceProfileSetting_DatabaseChangeMode(v1Setting.DatabaseChangeMode),
 		DisallowPasswordSignin: v1Setting.DisallowPasswordSignin,
 		EnableMetricCollection: v1Setting.EnableMetricCollection,
+		EnableAuditLogStdout:   v1Setting.EnableAuditLogStdout,
+		Watermark:              v1Setting.Watermark,
+		DirectorySyncToken:     v1Setting.DirectorySyncToken,
+		BrandingLogo:           v1Setting.BrandingLogo,
+		PasswordRestriction:    convertPasswordRestrictionSetting(v1Setting.PasswordRestriction),
 	}
 
 	// Convert announcement if present
 	if v1Setting.Announcement != nil {
-		storeSetting.Announcement = &storepb.Announcement{
+		storeSetting.Announcement = &storepb.WorkspaceProfileSetting_Announcement{
 			Text: v1Setting.Announcement.Text,
 			Link: v1Setting.Announcement.Link,
 		}
 		// Convert alert level
 		switch v1Setting.Announcement.Level {
 		case v1pb.Announcement_ALERT_LEVEL_UNSPECIFIED:
-			storeSetting.Announcement.Level = storepb.Announcement_ALERT_LEVEL_UNSPECIFIED
+			storeSetting.Announcement.Level = storepb.WorkspaceProfileSetting_Announcement_ALERT_LEVEL_UNSPECIFIED
 		case v1pb.Announcement_INFO:
-			storeSetting.Announcement.Level = storepb.Announcement_ALERT_LEVEL_INFO
+			storeSetting.Announcement.Level = storepb.WorkspaceProfileSetting_Announcement_INFO
 		case v1pb.Announcement_WARNING:
-			storeSetting.Announcement.Level = storepb.Announcement_ALERT_LEVEL_WARNING
+			storeSetting.Announcement.Level = storepb.WorkspaceProfileSetting_Announcement_WARNING
 		case v1pb.Announcement_CRITICAL:
-			storeSetting.Announcement.Level = storepb.Announcement_ALERT_LEVEL_CRITICAL
+			storeSetting.Announcement.Level = storepb.WorkspaceProfileSetting_Announcement_CRITICAL
 		default:
 		}
 	}
@@ -473,7 +287,8 @@ func convertToWorkspaceProfileSetting(storeSetting *storepb.WorkspaceProfileSett
 		ExternalUrl:            storeSetting.ExternalUrl,
 		DisallowSignup:         storeSetting.DisallowSignup,
 		Require_2Fa:            storeSetting.Require_2Fa,
-		TokenDuration:          storeSetting.TokenDuration,
+		RefreshTokenDuration:   storeSetting.RefreshTokenDuration,
+		AccessTokenDuration:    storeSetting.AccessTokenDuration,
 		InactiveSessionTimeout: storeSetting.InactiveSessionTimeout,
 		MaximumRoleExpiration:  storeSetting.MaximumRoleExpiration,
 		Domains:                storeSetting.Domains,
@@ -481,6 +296,11 @@ func convertToWorkspaceProfileSetting(storeSetting *storepb.WorkspaceProfileSett
 		DatabaseChangeMode:     v1pb.DatabaseChangeMode(storeSetting.DatabaseChangeMode),
 		DisallowPasswordSignin: storeSetting.DisallowPasswordSignin,
 		EnableMetricCollection: storeSetting.EnableMetricCollection,
+		EnableAuditLogStdout:   storeSetting.EnableAuditLogStdout,
+		Watermark:              storeSetting.Watermark,
+		DirectorySyncToken:     storeSetting.DirectorySyncToken,
+		BrandingLogo:           storeSetting.BrandingLogo,
+		PasswordRestriction:    convertToPasswordRestrictionSetting(storeSetting.PasswordRestriction),
 	}
 
 	if storeSetting.Announcement != nil {
@@ -489,13 +309,13 @@ func convertToWorkspaceProfileSetting(storeSetting *storepb.WorkspaceProfileSett
 			Link: storeSetting.Announcement.Link,
 		}
 		switch storeSetting.Announcement.Level {
-		case storepb.Announcement_ALERT_LEVEL_UNSPECIFIED:
+		case storepb.WorkspaceProfileSetting_Announcement_ALERT_LEVEL_UNSPECIFIED:
 			v1Setting.Announcement.Level = v1pb.Announcement_ALERT_LEVEL_UNSPECIFIED
-		case storepb.Announcement_ALERT_LEVEL_INFO:
+		case storepb.WorkspaceProfileSetting_Announcement_INFO:
 			v1Setting.Announcement.Level = v1pb.Announcement_INFO
-		case storepb.Announcement_ALERT_LEVEL_WARNING:
+		case storepb.WorkspaceProfileSetting_Announcement_WARNING:
 			v1Setting.Announcement.Level = v1pb.Announcement_WARNING
-		case storepb.Announcement_ALERT_LEVEL_CRITICAL:
+		case storepb.WorkspaceProfileSetting_Announcement_CRITICAL:
 			v1Setting.Announcement.Level = v1pb.Announcement_CRITICAL
 		default:
 		}
@@ -514,51 +334,119 @@ func convertApprovalFlow(v1Flow *v1pb.ApprovalFlow) *storepb.ApprovalFlow {
 	}
 }
 
-func convertAppIMSetting(v1Setting *v1pb.AppIMSetting) *storepb.AppIMSetting {
+func convertAppIMSetting(v1Setting *v1pb.AppIMSetting) (*storepb.AppIMSetting, error) {
 	if v1Setting == nil {
-		return nil
+		return nil, nil
 	}
 
 	storeSetting := &storepb.AppIMSetting{}
+	findIMType := map[v1pb.WebhookType]bool{}
+	for _, setting := range v1Setting.Settings {
+		if findIMType[setting.Type] {
+			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("duplicate im type %v", setting.Type.String()))
+		}
+		findIMType[setting.Type] = true
 
-	if v1Setting.Slack != nil {
-		storeSetting.Slack = &storepb.AppIMSetting_Slack{
-			Enabled: v1Setting.Slack.Enabled,
-			Token:   v1Setting.Slack.Token,
+		imSetting := &storepb.AppIMSetting_IMSetting{
+			Type: storepb.WebhookType(setting.Type),
 		}
-	}
-	if v1Setting.Feishu != nil {
-		storeSetting.Feishu = &storepb.AppIMSetting_Feishu{
-			Enabled:   v1Setting.Feishu.Enabled,
-			AppId:     v1Setting.Feishu.AppId,
-			AppSecret: v1Setting.Feishu.AppSecret,
+		// Handle based on Type field since protobuf-es may serialize oneof incorrectly.
+		// The oneof payload type may not match the Type field due to serialization issues.
+		switch setting.Type {
+		case v1pb.WebhookType_SLACK:
+			imSetting.Payload = &storepb.AppIMSetting_IMSetting_Slack{
+				Slack: &storepb.AppIMSetting_Slack{
+					Token: setting.GetSlack().GetToken(),
+				},
+			}
+		case v1pb.WebhookType_FEISHU:
+			imSetting.Payload = &storepb.AppIMSetting_IMSetting_Feishu{
+				Feishu: &storepb.AppIMSetting_Feishu{
+					AppId:     setting.GetFeishu().GetAppId(),
+					AppSecret: setting.GetFeishu().GetAppSecret(),
+				},
+			}
+		case v1pb.WebhookType_WECOM:
+			imSetting.Payload = &storepb.AppIMSetting_IMSetting_Wecom{
+				Wecom: &storepb.AppIMSetting_Wecom{
+					CorpId:  setting.GetWecom().GetCorpId(),
+					AgentId: setting.GetWecom().GetAgentId(),
+					Secret:  setting.GetWecom().GetSecret(),
+				},
+			}
+		case v1pb.WebhookType_LARK:
+			imSetting.Payload = &storepb.AppIMSetting_IMSetting_Lark{
+				Lark: &storepb.AppIMSetting_Lark{
+					AppId:     setting.GetLark().GetAppId(),
+					AppSecret: setting.GetLark().GetAppSecret(),
+				},
+			}
+		case v1pb.WebhookType_DINGTALK:
+			imSetting.Payload = &storepb.AppIMSetting_IMSetting_Dingtalk{
+				Dingtalk: &storepb.AppIMSetting_DingTalk{
+					ClientId:     setting.GetDingtalk().GetClientId(),
+					ClientSecret: setting.GetDingtalk().GetClientSecret(),
+					RobotCode:    setting.GetDingtalk().GetRobotCode(),
+				},
+			}
+		case v1pb.WebhookType_TEAMS:
+			imSetting.Payload = &storepb.AppIMSetting_IMSetting_Teams{
+				Teams: &storepb.AppIMSetting_Teams{
+					TenantId:     setting.GetTeams().GetTenantId(),
+					ClientId:     setting.GetTeams().GetClientId(),
+					ClientSecret: setting.GetTeams().GetClientSecret(),
+				},
+			}
+		default:
+			return nil, connect.NewError(connect.CodeInvalidArgument, errors.Errorf("unsupported im type %v", setting.Type.String()))
 		}
-	}
-	if v1Setting.Wecom != nil {
-		storeSetting.Wecom = &storepb.AppIMSetting_Wecom{
-			Enabled: v1Setting.Wecom.Enabled,
-			CorpId:  v1Setting.Wecom.CorpId,
-			AgentId: v1Setting.Wecom.AgentId,
-			Secret:  v1Setting.Wecom.Secret,
-		}
-	}
-	if v1Setting.Lark != nil {
-		storeSetting.Lark = &storepb.AppIMSetting_Lark{
-			Enabled:   v1Setting.Lark.Enabled,
-			AppId:     v1Setting.Lark.AppId,
-			AppSecret: v1Setting.Lark.AppSecret,
-		}
-	}
-	if v1Setting.Dingtalk != nil {
-		storeSetting.Dingtalk = &storepb.AppIMSetting_DingTalk{
-			Enabled:      v1Setting.Dingtalk.Enabled,
-			ClientId:     v1Setting.Dingtalk.ClientId,
-			ClientSecret: v1Setting.Dingtalk.ClientSecret,
-			RobotCode:    v1Setting.Dingtalk.RobotCode,
-		}
+		storeSetting.Settings = append(storeSetting.Settings, imSetting)
 	}
 
-	return storeSetting
+	return storeSetting, nil
+}
+
+func convertToAppIMSetting(storeSetting *storepb.AppIMSetting) *v1pb.AppIMSetting {
+	if storeSetting == nil {
+		return nil
+	}
+
+	v1Setting := &v1pb.AppIMSetting{}
+	for _, setting := range storeSetting.Settings {
+		imSetting := &v1pb.AppIMSetting_IMSetting{
+			Type: v1pb.WebhookType(setting.Type),
+		}
+		switch setting.Type {
+		case storepb.WebhookType_SLACK:
+			imSetting.Payload = &v1pb.AppIMSetting_IMSetting_Slack{
+				Slack: &v1pb.AppIMSetting_Slack{},
+			}
+		case storepb.WebhookType_FEISHU:
+			imSetting.Payload = &v1pb.AppIMSetting_IMSetting_Feishu{
+				Feishu: &v1pb.AppIMSetting_Feishu{},
+			}
+		case storepb.WebhookType_WECOM:
+			imSetting.Payload = &v1pb.AppIMSetting_IMSetting_Wecom{
+				Wecom: &v1pb.AppIMSetting_Wecom{},
+			}
+		case storepb.WebhookType_LARK:
+			imSetting.Payload = &v1pb.AppIMSetting_IMSetting_Lark{
+				Lark: &v1pb.AppIMSetting_Lark{},
+			}
+		case storepb.WebhookType_DINGTALK:
+			imSetting.Payload = &v1pb.AppIMSetting_IMSetting_Dingtalk{
+				Dingtalk: &v1pb.AppIMSetting_DingTalk{},
+			}
+		case storepb.WebhookType_TEAMS:
+			imSetting.Payload = &v1pb.AppIMSetting_IMSetting_Teams{
+				Teams: &v1pb.AppIMSetting_Teams{},
+			}
+		default:
+		}
+		v1Setting.Settings = append(v1Setting.Settings, imSetting)
+	}
+
+	return v1Setting
 }
 
 func convertDataClassificationSetting(v1Setting *v1pb.DataClassificationSetting) *storepb.DataClassificationSetting {
@@ -580,11 +468,10 @@ func convertDataClassificationSettingConfig(c *v1pb.DataClassificationSetting_Da
 	}
 
 	return &storepb.DataClassificationSetting_DataClassificationConfig{
-		Id:                       c.Id,
-		Title:                    c.Title,
-		Levels:                   convertDataClassificationSettingLevels(c.Levels),
-		Classification:           convertDataClassificationSettingClassification(c.Classification),
-		ClassificationFromConfig: c.ClassificationFromConfig,
+		Id:             c.Id,
+		Title:          c.Title,
+		Levels:         convertDataClassificationSettingLevels(c.Levels),
+		Classification: convertDataClassificationSettingClassification(c.Classification),
 	}
 }
 
@@ -640,11 +527,10 @@ func convertToDataClassificationSettingConfig(c *storepb.DataClassificationSetti
 	}
 
 	return &v1pb.DataClassificationSetting_DataClassificationConfig{
-		Id:                       c.Id,
-		Title:                    c.Title,
-		Levels:                   convertToDataClassificationSettingLevels(c.Levels),
-		Classification:           convertToDataClassificationSettingClassification(c.Classification),
-		ClassificationFromConfig: c.ClassificationFromConfig,
+		Id:             c.Id,
+		Title:          c.Title,
+		Levels:         convertToDataClassificationSettingLevels(c.Levels),
+		Classification: convertToDataClassificationSettingClassification(c.Classification),
 	}
 }
 
@@ -821,12 +707,12 @@ func convertToAlgorithmRangeMaskSlices(storeSlices []*storepb.Algorithm_RangeMas
 	return v1Slices
 }
 
-func convertPasswordRestrictionSetting(v1Setting *v1pb.PasswordRestrictionSetting) *storepb.PasswordRestrictionSetting {
+func convertPasswordRestrictionSetting(v1Setting *v1pb.WorkspaceProfileSetting_PasswordRestriction) *storepb.WorkspaceProfileSetting_PasswordRestriction {
 	if v1Setting == nil {
 		return nil
 	}
 
-	return &storepb.PasswordRestrictionSetting{
+	return &storepb.WorkspaceProfileSetting_PasswordRestriction{
 		MinLength:                         v1Setting.MinLength,
 		RequireNumber:                     v1Setting.RequireNumber,
 		RequireLetter:                     v1Setting.RequireLetter,
@@ -837,12 +723,12 @@ func convertPasswordRestrictionSetting(v1Setting *v1pb.PasswordRestrictionSettin
 	}
 }
 
-func convertToPasswordRestrictionSetting(storeSetting *storepb.PasswordRestrictionSetting) *v1pb.PasswordRestrictionSetting {
+func convertToPasswordRestrictionSetting(storeSetting *storepb.WorkspaceProfileSetting_PasswordRestriction) *v1pb.WorkspaceProfileSetting_PasswordRestriction {
 	if storeSetting == nil {
 		return nil
 	}
 
-	return &v1pb.PasswordRestrictionSetting{
+	return &v1pb.WorkspaceProfileSetting_PasswordRestriction{
 		MinLength:                         storeSetting.MinLength,
 		RequireNumber:                     storeSetting.RequireNumber,
 		RequireLetter:                     storeSetting.RequireLetter,
@@ -877,18 +763,9 @@ func convertToAISetting(storeSetting *storepb.AISetting) *v1pb.AISetting {
 		Enabled:  storeSetting.Enabled,
 		Provider: v1pb.AISetting_Provider(storeSetting.Provider),
 		Endpoint: storeSetting.Endpoint,
-		ApiKey:   storeSetting.ApiKey,
-		Model:    storeSetting.Model,
-		Version:  storeSetting.Version,
-	}
-}
-
-func convertToSCIMSetting(storeSetting *storepb.SCIMSetting) *v1pb.SCIMSetting {
-	if storeSetting == nil {
-		return nil
-	}
-
-	return &v1pb.SCIMSetting{
-		Token: storeSetting.Token,
+		// Do not return the API key for security reasons.
+		ApiKey:  "",
+		Model:   storeSetting.Model,
+		Version: storeSetting.Version,
 	}
 }

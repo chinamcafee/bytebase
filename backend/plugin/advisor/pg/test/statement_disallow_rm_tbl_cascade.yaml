@@ -3,11 +3,11 @@
   want:
     - status: 2
       code: 213
-      title: statement.disallow-rm-tbl-cascade
+      title: STATEMENT_DISALLOW_RM_TBL_CASCADE
       content: The use of CASCADE is not permitted when removing a table
       startposition:
         line: 1
-        column: 1
+        column: 0
       endposition: null
 - statement: |-
     CREATE TABLE users (
@@ -36,17 +36,17 @@
   want:
     - status: 2
       code: 213
-      title: statement.disallow-rm-tbl-cascade
+      title: STATEMENT_DISALLOW_RM_TBL_CASCADE
       content: The use of CASCADE is not permitted when removing a table
       startposition:
         line: 1
-        column: 1
+        column: 0
       endposition: null
     - status: 2
       code: 213
-      title: statement.disallow-rm-tbl-cascade
+      title: STATEMENT_DISALLOW_RM_TBL_CASCADE
       content: The use of CASCADE is not permitted when removing a table
       startposition:
-        line: 1
-        column: 1
+        line: 2
+        column: 0
       endposition: null

@@ -4,15 +4,17 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/antlr4-go/antlr/v4"
-	mysql "github.com/bytebase/mysql-parser"
-	"github.com/pkg/errors"
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -20,9 +22,9 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleColumnDisallowDropInIndex, &ColumnDisallowDropInIndexAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleColumnDisallowDropInIndex, &ColumnDisallowDropInIndexAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleColumnDisallowDropInIndex, &ColumnDisallowDropInIndexAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_COLUMN_DISALLOW_DROP_IN_INDEX, &ColumnDisallowDropInIndexAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_COLUMN_DISALLOW_DROP_IN_INDEX, &ColumnDisallowDropInIndexAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_COLUMN_DISALLOW_DROP_IN_INDEX, &ColumnDisallowDropInIndexAdvisor{})
 }
 
 // ColumnDisallowDropInIndexAdvisor is the advisor checking for disallow DROP COLUMN in index.
@@ -31,26 +33,28 @@ type ColumnDisallowDropInIndexAdvisor struct {
 
 // Check checks for disallow Drop COLUMN in index statement.
 func (*ColumnDisallowDropInIndexAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parser result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewColumnDisallowDropInIndexRule(level, string(checkCtx.Rule.Type), checkCtx.Catalog)
+	rule := NewColumnDisallowDropInIndexRule(level, checkCtx.Rule.Type.String(), checkCtx.OriginalMetadata)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmtNode := range stmtList {
-		rule.SetBaseLine(stmtNode.BaseLine)
-		checker.SetBaseLine(stmtNode.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmtNode.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	return checker.GetAdviceList(), nil
@@ -59,19 +63,19 @@ func (*ColumnDisallowDropInIndexAdvisor) Check(_ context.Context, checkCtx advis
 // ColumnDisallowDropInIndexRule checks for disallow DROP COLUMN in index.
 type ColumnDisallowDropInIndexRule struct {
 	BaseRule
-	tables  tableState
-	catalog *catalog.Finder
+	tables           tableState
+	originalMetadata *model.DatabaseMetadata
 }
 
 // NewColumnDisallowDropInIndexRule creates a new ColumnDisallowDropInIndexRule.
-func NewColumnDisallowDropInIndexRule(level storepb.Advice_Status, title string, catalog *catalog.Finder) *ColumnDisallowDropInIndexRule {
+func NewColumnDisallowDropInIndexRule(level storepb.Advice_Status, title string, originalMetadata *model.DatabaseMetadata) *ColumnDisallowDropInIndexRule {
 	return &ColumnDisallowDropInIndexRule{
 		BaseRule: BaseRule{
 			level: level,
 			title: title,
 		},
-		tables:  make(tableState),
-		catalog: catalog,
+		tables:           make(tableState),
+		originalMetadata: originalMetadata,
 	}
 }
 
@@ -156,18 +160,13 @@ func (r *ColumnDisallowDropInIndexRule) checkAlterTable(ctx *mysql.AlterTableCon
 			continue
 		}
 
-		index := r.catalog.Origin.Index(&catalog.TableIndexFind{
-			// In MySQL, the SchemaName is "".
-			SchemaName: "",
-			TableName:  tableName,
-		})
-
-		if index != nil {
+		table := r.originalMetadata.GetSchemaMetadata("").GetTable(tableName)
+		if table != nil {
 			if r.tables[tableName] == nil {
 				r.tables[tableName] = make(columnSet)
 			}
-			for _, indexColumn := range *index {
-				for _, column := range indexColumn.ExpressionList() {
+			for _, indexColumn := range table.ListIndexes() {
+				for _, column := range indexColumn.GetProto().GetExpressions() {
 					r.tables[tableName][column] = true
 				}
 			}
@@ -177,7 +176,7 @@ func (r *ColumnDisallowDropInIndexRule) checkAlterTable(ctx *mysql.AlterTableCon
 		if !r.canDrop(tableName, columnName) {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.DropIndexColumn.Int32(),
+				Code:          code.DropIndexColumn.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("`%s`.`%s` cannot drop index column", tableName, columnName),
 				StartPosition: common.ConvertANTLRLineToPosition(r.baseLine + item.GetStart().GetLine()),

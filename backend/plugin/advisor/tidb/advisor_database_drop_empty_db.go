@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
-	"github.com/bytebase/bytebase/backend/plugin/advisor/catalog"
+	"github.com/bytebase/bytebase/backend/store/model"
 )
 
 var (
@@ -19,7 +20,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleDropEmptyDatabase, &DatabaseAllowDropIfEmptyAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_DATABASE_DROP_EMPTY_DATABASE, &DatabaseAllowDropIfEmptyAdvisor{})
 }
 
 // DatabaseAllowDropIfEmptyAdvisor is the advisor checking the MySQLDatabaseAllowDropIfEmpty rule.
@@ -28,9 +29,10 @@ type DatabaseAllowDropIfEmptyAdvisor struct {
 
 // Check checks for drop table naming convention.
 func (*DatabaseAllowDropIfEmptyAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	root, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -39,9 +41,9 @@ func (*DatabaseAllowDropIfEmptyAdvisor) Check(_ context.Context, checkCtx adviso
 	}
 
 	checker := &allowDropEmptyDBChecker{
-		level:   level,
-		title:   string(checkCtx.Rule.Type),
-		catalog: checkCtx.Catalog,
+		level:            level,
+		title:            checkCtx.Rule.Type.String(),
+		originalMetadata: checkCtx.OriginalMetadata,
 	}
 	for _, stmtNode := range root {
 		(stmtNode).Accept(checker)
@@ -51,27 +53,27 @@ func (*DatabaseAllowDropIfEmptyAdvisor) Check(_ context.Context, checkCtx adviso
 }
 
 type allowDropEmptyDBChecker struct {
-	adviceList []*storepb.Advice
-	level      storepb.Advice_Status
-	title      string
-	catalog    *catalog.Finder
+	adviceList       []*storepb.Advice
+	level            storepb.Advice_Status
+	title            string
+	originalMetadata *model.DatabaseMetadata
 }
 
 // Enter implements the ast.Visitor interface.
 func (v *allowDropEmptyDBChecker) Enter(in ast.Node) (ast.Node, bool) {
 	if node, ok := in.(*ast.DropDatabaseStmt); ok {
-		if v.catalog.Origin.DatabaseName() != node.Name.O {
+		if v.originalMetadata.DatabaseName() != node.Name.O {
 			v.adviceList = append(v.adviceList, &storepb.Advice{
 				Status:        v.level,
-				Code:          advisor.NotCurrentDatabase.Int32(),
+				Code:          code.NotCurrentDatabase.Int32(),
 				Title:         v.title,
-				Content:       fmt.Sprintf("Database `%s` that is trying to be deleted is not the current database `%s`", node.Name, v.catalog.Origin.DatabaseName()),
+				Content:       fmt.Sprintf("Database `%s` that is trying to be deleted is not the current database `%s`", node.Name, v.originalMetadata.DatabaseName()),
 				StartPosition: common.ConvertANTLRLineToPosition(node.OriginTextPosition()),
 			})
-		} else if !v.catalog.Origin.HasNoTable() {
+		} else if !v.originalMetadata.HasNoTable() {
 			v.adviceList = append(v.adviceList, &storepb.Advice{
 				Status:        v.level,
-				Code:          advisor.DatabaseNotEmpty.Int32(),
+				Code:          code.DatabaseNotEmpty.Int32(),
 				Title:         v.title,
 				Content:       fmt.Sprintf("Database `%s` is not allowed to drop if not empty", node.Name),
 				StartPosition: common.ConvertANTLRLineToPosition(node.OriginTextPosition()),

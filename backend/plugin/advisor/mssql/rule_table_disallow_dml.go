@@ -4,13 +4,17 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/tsql-parser"
 	"github.com/pkg/errors"
+
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
+	"github.com/antlr4-go/antlr/v4"
+	parser "github.com/bytebase/parser/tsql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	tsqlparser "github.com/bytebase/bytebase/backend/plugin/parser/tsql"
 )
 
@@ -19,7 +23,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MSSQL, advisor.SchemaRuleTableDisallowDML, &TableDisallowDMLAdvisor{})
+	advisor.Register(storepb.Engine_MSSQL, storepb.SQLReviewRule_TABLE_DISALLOW_DML, &TableDisallowDMLAdvisor{})
 }
 
 // TableDisallowDMLAdvisor is the advisor checking for disallow DML on specific tables.
@@ -27,27 +31,32 @@ type TableDisallowDMLAdvisor struct {
 }
 
 func (*TableDisallowDMLAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	tree, ok := checkCtx.AST.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to Tree")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalStringArrayTypeRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
+	stringArrayPayload := checkCtx.Rule.GetStringArrayPayload()
+	if stringArrayPayload == nil {
+		return nil, errors.New("string_array_payload is required for table disallow DML rule")
 	}
 
 	// Create the rule
-	rule := NewTableDisallowDMLRule(level, string(checkCtx.Rule.Type), payload.List)
+	rule := NewTableDisallowDMLRule(level, checkCtx.Rule.Type.String(), stringArrayPayload.List)
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	antlr.ParseTreeWalkerDefault.Walk(checker, tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		rule.SetBaseLine(stmt.BaseLine())
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
+	}
 
 	return checker.GetAdviceList(), nil
 }
@@ -149,7 +158,7 @@ func (r *TableDisallowDMLRule) checkTableName(normalizedTableName string, line i
 		if normalizedTableName == disallow {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.TableDisallowDML.Int32(),
+				Code:          code.TableDisallowDML.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("DML is disallowed on table %s.", normalizedTableName),
 				StartPosition: common.ConvertANTLRLineToPosition(line),

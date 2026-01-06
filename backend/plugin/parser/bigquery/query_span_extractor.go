@@ -6,9 +6,7 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/google-sql-parser"
-
-	parsererror "github.com/bytebase/bytebase/backend/plugin/parser/errors"
+	parser "github.com/bytebase/parser/googlesql"
 
 	"github.com/pkg/errors"
 
@@ -43,7 +41,16 @@ func (q *querySpanExtractor) getQuerySpan(ctx context.Context, stmt string) (*ba
 	if err != nil {
 		return nil, err
 	}
-	tree := parseResults.Tree
+	if len(parseResults) == 0 {
+		return &base.QuerySpan{
+			SourceColumns: base.SourceColumnSet{},
+			Results:       []base.QuerySpanResult{},
+		}, nil
+	}
+	if len(parseResults) != 1 {
+		return nil, errors.Errorf("expecting only one statement to get query span, but got %d", len(parseResults))
+	}
+	tree := parseResults[0].Tree
 	q.ctx = ctx
 	accessTables, err := getAccessTables(q.defaultDatabase, tree)
 	if err != nil {
@@ -77,6 +84,7 @@ func (q *querySpanExtractor) getQuerySpan(ctx context.Context, stmt string) (*ba
 	}
 
 	return &base.QuerySpan{
+		Type:          base.Select,
 		Results:       querySpanResult,
 		SourceColumns: accessTables,
 	}, nil
@@ -729,7 +737,7 @@ func (q *querySpanExtractor) getFieldColumnSource(_, tableName, fieldName string
 		}
 	}
 
-	return nil, &parsererror.ResourceNotFoundError{
+	return nil, &base.ResourceNotFoundError{
 		Database: nil,
 		Table:    &tableName,
 		Column:   &fieldName,
@@ -1113,7 +1121,7 @@ func (q *querySpanExtractor) findTableSchema(datasetName string, tableName strin
 		return nil, errors.Errorf("dataset %q not found", datasetName)
 	}
 
-	schema := databaseMetadata.GetSchema("")
+	schema := databaseMetadata.GetSchemaMetadata("")
 	if schema == nil {
 		return nil, errors.Errorf("table %q not found", tableName)
 	}
@@ -1135,7 +1143,7 @@ func (q *querySpanExtractor) findTableSchema(datasetName string, tableName strin
 	}
 
 	var columns []string
-	for _, column := range table.GetColumns() {
+	for _, column := range table.GetProto().GetColumns() {
 		columns = append(columns, column.Name)
 	}
 	return &base.PhysicalTable{

@@ -102,10 +102,10 @@ func parseSlackWebhook(body []byte) (title, description string, err error) {
 // TestWebhookIntegration tests webhook functionality.
 func TestWebhookIntegration(t *testing.T) {
 	// Allow localhost for testing
-	webhookplugin.TestOnlyAllowedDomains[storepb.ProjectWebhook_SLACK] = []string{"127.0.0.1", "localhost", "[::1]"}
+	webhookplugin.TestOnlyAllowedDomains[storepb.WebhookType_SLACK] = []string{"127.0.0.1", "localhost", "[::1]"}
 	defer func() {
 		// Clean up after test
-		delete(webhookplugin.TestOnlyAllowedDomains, storepb.ProjectWebhook_SLACK)
+		delete(webhookplugin.TestOnlyAllowedDomains, storepb.WebhookType_SLACK)
 	}()
 
 	ctx := context.Background()
@@ -146,14 +146,12 @@ func TestWebhookIntegration(t *testing.T) {
 
 	// Create webhooks for issue events
 	for _, eventType := range []v1pb.Activity_Type{
-		v1pb.Activity_ISSUE_CREATE,
-		v1pb.Activity_ISSUE_STATUS_UPDATE,
-		v1pb.Activity_ISSUE_COMMENT_CREATE,
+		v1pb.Activity_ISSUE_CREATED,
 	} {
 		_, err := ctl.projectServiceClient.AddWebhook(ctx, connect.NewRequest(&v1pb.AddWebhookRequest{
 			Project: ctl.project.Name,
 			Webhook: &v1pb.Webhook{
-				Type:              v1pb.Webhook_SLACK,
+				Type:              v1pb.WebhookType_SLACK,
 				Title:             fmt.Sprintf("Test Webhook for %s", eventType),
 				Url:               webhookServer.URL,
 				NotificationTypes: []v1pb.Activity_Type{eventType},
@@ -189,12 +187,12 @@ func TestWebhookIntegration(t *testing.T) {
 		}))
 		require.NoError(t, err)
 
-		// Create an issue with empty title and description
+		// Create an issue for webhook testing
 		issueResp, err := ctl.issueServiceClient.CreateIssue(ctx, connect.NewRequest(&v1pb.CreateIssueRequest{
 			Parent: ctl.project.Name,
 			Issue: &v1pb.Issue{
-				Title:       "", // Empty title
-				Description: "", // Empty description
+				Title:       "Test webhook issue",
+				Description: "", // Empty description is OK
 				Type:        v1pb.Issue_DATABASE_CHANGE,
 				Plan:        planResp.Msg.Name,
 			},

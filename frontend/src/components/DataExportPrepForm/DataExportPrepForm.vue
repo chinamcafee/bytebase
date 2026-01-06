@@ -9,7 +9,7 @@
     </template>
 
     <div
-      class="space-y-4 h-full w-[calc(100vw-8rem)] lg:w-[60rem] max-w-[calc(100vw-8rem)] overflow-x-auto"
+      class="flex flex-col gap-y-4 h-full w-[calc(100vw-8rem)] lg:w-240 max-w-[calc(100vw-8rem)] overflow-x-auto"
     >
       <DatabaseAndGroupSelector
         :project="project"
@@ -41,13 +41,13 @@
 <script lang="ts" setup>
 import { NButton } from "naive-ui";
 import { computed, reactive } from "vue";
-import { useRouter, type LocationQueryRaw } from "vue-router";
+import { type LocationQueryRaw, useRouter } from "vue-router";
 import DatabaseAndGroupSelector, {
   type DatabaseSelectState,
 } from "@/components/DatabaseAndGroupSelector/";
 import { PROJECT_V1_ROUTE_PLAN_DETAIL } from "@/router/dashboard/projectV1";
 import { useProjectByName } from "@/store";
-import { generateIssueTitle, extractProjectResourceName } from "@/utils";
+import { extractProjectResourceName, generateIssueTitle } from "@/utils";
 import { DrawerContent } from "../v2";
 
 type LocalState = {

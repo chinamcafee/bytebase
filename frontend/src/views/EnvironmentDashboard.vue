@@ -1,11 +1,12 @@
 <template>
-  <div class="w-full flex flex-col gap-4">
+  <div class="w-full h-full flex flex-col gap-4">
     <NTabs
       type="line"
       :bar-width="200"
       :value="state.selectedId"
       size="large"
       justify-content="start"
+      class="h-full"
       tab-style="margin: 0 1rem; padding-left: 2rem; padding: 0 2.5rem 0.5rem 2.5rem;"
       @update:value="onTabChange"
     >
@@ -13,7 +14,8 @@
         v-for="(item, index) in tabItemList"
         :key="item.id"
         :name="item.id"
-        :tab="() => renderTab(item.data, index)"
+        :tab="() => renderTab(item.data!, index)"
+        class="h-full"
       >
         <EnvironmentDetail
           ref="environmentDetailRefs"
@@ -23,36 +25,37 @@
         />
       </NTabPane>
       <template #suffix>
-        <div class="flex items-center justify-end gap-x-2 px-2 pb-1">
-          <NButton
-            v-if="
-              hasWorkspacePermissionV2('bb.settings.get') &&
-              hasWorkspacePermissionV2('bb.settings.set')
-            "
-            :disabled="environmentList.length <= 1"
-            @click="startReorder"
-          >
-            <template #icon>
-              <ListOrderedIcon class="h-4 w-4" />
-            </template>
-            {{ $t("common.reorder") }}
-          </NButton>
-          <NButton
-            v-if="hasWorkspacePermissionV2('bb.settings.set')"
-            type="primary"
-            @click="createEnvironment"
-          >
-            <template #icon>
-              <PlusIcon class="h-4 w-4" />
-            </template>
-            {{ $t("environment.create") }}
-          </NButton>
-        </div>
+        <PermissionGuardWrapper
+          v-slot="slotProps"
+          :permissions="['bb.settings.set']"
+        >
+          <div class="flex items-center justify-end gap-x-2 px-2 pb-1">
+            <NButton
+              :disabled="slotProps.disabled || environmentList.length <= 1"
+              @click="startReorder"
+            >
+              <template #icon>
+                <ListOrderedIcon class="h-4 w-4" />
+              </template>
+              {{ t("common.reorder") }}
+            </NButton>
+            <NButton
+              type="primary"
+              :disabled="slotProps.disabled"
+              @click="createEnvironment"
+            >
+              <template #icon>
+                <PlusIcon class="h-4 w-4" />
+              </template>
+              {{ t("environment.create") }}
+            </NButton>
+          </div>
+        </PermissionGuardWrapper>
       </template>
     </NTabs>
   </div>
 
-  <Drawer :show="state.showCreateModal" @close="discardReorder">
+  <Drawer :show="state.showCreateModal" @close="state.showCreateModal = false">
     <EnvironmentForm
       :create="true"
       :environment="getEnvironmentCreate()"
@@ -61,8 +64,8 @@
       @cancel="state.showCreateModal = false"
     >
       <DrawerContent
-        :title="$t('environment.create')"
-        class="w-[36rem] max-w-[100vw]"
+        :title="t('environment.create')"
+        class="w-xl max-w-[100vw]"
       >
         <EnvironmentFormBody />
         <template #footer>
@@ -73,26 +76,21 @@
   </Drawer>
 
   <Drawer v-model:show="state.reorder" :close-on-esc="true">
-    <DrawerContent
-      :title="$t('environment.reorder')"
-      class="w-[30rem] max-w-[90vw]"
-    >
+    <DrawerContent :title="t('environment.reorder')" class="w-120 max-w-[90vw]">
       <div>
         <Draggable
           v-model="state.reorderedEnvironmentList"
           item-key="id"
           animation="300"
         >
-          <template
-            #item="{ element, index }: { element: Environment; index: number }"
-          >
+          <template #item="{ element, index }">
             <div
-              :key="element.id"
-              class="flex items-center justify-between p-2 hover:bg-gray-100 rounded-sm cursor-grab"
+              :key="(element as Environment).id"
+              class="flex items-center justify-between p-2 hover:bg-gray-100 rounded-xs cursor-grab"
             >
               <div class="flex items-center gap-x-2">
                 <span class="textinfo"> {{ index + 1 }}.</span>
-                <EnvironmentV1Name :environment="element" :link="false" />
+                <EnvironmentV1Name :environment="(element as Environment)" :link="false" />
               </div>
               <GripVerticalIcon class="w-5 h-5 text-gray-500" />
             </div>
@@ -101,9 +99,9 @@
       </div>
       <template #footer>
         <div class="flex items-center justify-end gap-x-2">
-          <NButton @click="discardReorder">{{ $t("common.cancel") }}</NButton>
+          <NButton @click="discardReorder">{{ t("common.cancel") }}</NButton>
           <NButton type="primary" :disabled="!orderChanged" @click="doReorder">
-            {{ $t("common.confirm") }}
+            {{ t("common.confirm") }}
           </NButton>
         </div>
       </template>
@@ -113,37 +111,37 @@
 
 <script lang="ts" setup>
 import { create } from "@bufbuild/protobuf";
-import { PlusIcon, ListOrderedIcon, GripVerticalIcon } from "lucide-vue-next";
-import { NTabs, NTabPane, NButton } from "naive-ui";
-import { onMounted, computed, reactive, watch, h, ref } from "vue";
+import { isEqual } from "lodash-es";
+import { GripVerticalIcon, ListOrderedIcon, PlusIcon } from "lucide-vue-next";
+import { NButton, NTabPane, NTabs } from "naive-ui";
+import { computed, h, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import Draggable from "vuedraggable";
-import type { BBTabItem } from "@/bbkit/types";
 import {
   EnvironmentForm,
   Form as EnvironmentFormBody,
   Buttons as EnvironmentFormButtons,
 } from "@/components/EnvironmentForm";
-import { Drawer, DrawerContent } from "@/components/v2";
-import { EnvironmentV1Name } from "@/components/v2";
+import PermissionGuardWrapper from "@/components/Permission/PermissionGuardWrapper.vue";
+import { Drawer, DrawerContent, EnvironmentV1Name } from "@/components/v2";
+import { useRouteChangeGuard } from "@/composables/useRouteChangeGuard";
 import {
-  useUIStateStore,
-  useEnvironmentV1Store,
-  useEnvironmentV1List,
   environmentNamePrefix,
   pushNotification,
+  useEnvironmentV1List,
+  useEnvironmentV1Store,
+  useUIStateStore,
 } from "@/store";
 import {
-  usePolicyV1Store,
   getEmptyRolloutPolicy,
+  usePolicyV1Store,
 } from "@/store/modules/v1/policy";
 import { formatEnvironmentName } from "@/types";
 import type { Policy } from "@/types/proto-es/v1/org_policy_service_pb";
 import { PolicyResourceType } from "@/types/proto-es/v1/org_policy_service_pb";
 import { EnvironmentSetting_EnvironmentSchema } from "@/types/proto-es/v1/setting_service_pb";
 import type { Environment } from "@/types/v1/environment";
-import { hasWorkspacePermissionV2 } from "@/utils";
 import { type VueClass } from "@/utils";
 import EnvironmentDetail from "@/views/EnvironmentDetail.vue";
 
@@ -182,6 +180,10 @@ const selectEnvironment = (index: number) => {
   const id = environmentList.value[index].id;
   onTabChange(id);
 };
+
+useRouteChangeGuard(
+  computed(() => environmentDetailRefs.value[0]?.isEditing ?? false)
+);
 
 const onTabChange = (id: string) => {
   // The NTabPane only render the selected environment,
@@ -226,8 +228,8 @@ watch(
   { immediate: true }
 );
 
-const tabItemList = computed((): BBTabItem[] => {
-  return environmentList.value.map((item, index: number): BBTabItem => {
+const tabItemList = computed(() => {
+  return environmentList.value.map((item, index: number) => {
     const title = `${index + 1}. ${item.title}`;
     const id = item.id;
     return { title, id, data: item };
@@ -256,16 +258,20 @@ const doCreate = async (params: {
     title: environment.title,
     order: environmentList.value.length,
     color: environment.color,
+    tags: environment.tags,
   });
   await environmentV1Store.fetchEnvironments();
 
-  const requests = [
-    policyV1Store.upsertPolicy({
+  // Only persist rollout policy if user customized it from the defaults
+  // Otherwise, let the backend return defaults dynamically via GetPolicy API
+  const isCustomized = !isEqual(rolloutPolicy, DEFAULT_NEW_ROLLOUT_POLICY);
+  if (isCustomized) {
+    await policyV1Store.upsertPolicy({
       parentPath: `${environmentNamePrefix}${createdEnvironment.id}`,
       policy: rolloutPolicy,
-    }),
-  ];
-  await Promise.all(requests);
+    });
+  }
+
   state.showCreateModal = false;
   selectEnvironment(createdEnvironment.order);
 };
@@ -320,7 +326,7 @@ const doDelete = async (environment: Environment) => {
 };
 
 const renderTab = (env: Environment, index: number) => {
-  return h("div", { class: "flex items-center space-x-2 py-1" }, [
+  return h("div", { class: "flex items-center gap-x-2 py-1" }, [
     h("span", { class: "text-opacity-60" }, `${index + 1}.`),
     h(EnvironmentV1Name, {
       environment: env,

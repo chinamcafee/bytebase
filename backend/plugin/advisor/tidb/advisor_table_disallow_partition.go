@@ -6,8 +6,9 @@ import (
 	"context"
 	"fmt"
 
+	advisorcode "github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
@@ -20,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleTableDisallowPartition, &TableDisallowPartitionAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_TABLE_DISALLOW_PARTITION, &TableDisallowPartitionAdvisor{})
 }
 
 // TableDisallowPartitionAdvisor is the advisor checking for disallow table partition.
@@ -29,9 +30,10 @@ type TableDisallowPartitionAdvisor struct {
 
 // Check checks for disallow table partition.
 func (*TableDisallowPartitionAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
@@ -40,7 +42,7 @@ func (*TableDisallowPartitionAdvisor) Check(_ context.Context, checkCtx advisor.
 	}
 	checker := &tableDisallowPartitionChecker{
 		level: level,
-		title: string(checkCtx.Rule.Type),
+		title: checkCtx.Rule.Type.String(),
 	}
 
 	for _, stmt := range stmtList {
@@ -62,22 +64,22 @@ type tableDisallowPartitionChecker struct {
 
 // Enter implements the ast.Visitor interface.
 func (checker *tableDisallowPartitionChecker) Enter(in ast.Node) (ast.Node, bool) {
-	code := advisor.Ok
+	code := advisorcode.Ok
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
 		if node.Partition != nil {
-			code = advisor.CreateTablePartition
+			code = advisorcode.CreateTablePartition
 		}
 	case *ast.AlterTableStmt:
 		for _, spec := range node.Specs {
 			if spec.Tp == ast.AlterTablePartition {
-				code = advisor.CreateTablePartition
+				code = advisorcode.CreateTablePartition
 				break
 			}
 		}
 	}
 
-	if code != advisor.Ok {
+	if code != advisorcode.Ok {
 		checker.adviceList = append(checker.adviceList, &storepb.Advice{
 			Status:        checker.level,
 			Code:          code.Int32(),

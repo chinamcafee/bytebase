@@ -1,16 +1,9 @@
 <template>
   <div class="execute-hint w-112">
     <NAlert type="info">
-      <section class="space-y-2">
+      <section class="flex flex-col gap-y-2">
         <p>
-          <i18n-t keypath="sql-editor.only-select-allowed">
-            <template #select>
-              <strong
-                ><code>SELECT</code>, <code>SHOW</code> and
-                <code>SET</code></strong
-              >
-            </template>
-          </i18n-t>
+          {{ $t("sql-editor.only-select-allowed") }}
         </p>
         <p v-if="database">
           <i18n-t keypath="sql-editor.enable-ddl-for-environment">
@@ -53,7 +46,11 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { EnvironmentV1Name } from "@/components/v2";
-import { PROJECT_V1_ROUTE_ISSUE_DETAIL } from "@/router/dashboard/projectV1";
+import { useIssueLayoutVersion } from "@/composables/useIssueLayoutVersion";
+import {
+  PROJECT_V1_ROUTE_ISSUE_DETAIL,
+  PROJECT_V1_ROUTE_PLAN_DETAIL_SPEC_DETAIL,
+} from "@/router/dashboard/projectV1";
 import {
   pushNotification,
   useDatabaseV1Store,
@@ -102,13 +99,13 @@ const actions = computed(() => {
 
 const descriptions = computed(() => {
   const descriptions = {
-    want: t("database.change-data").toLowerCase(),
+    want: t("database.change-database").toLowerCase(),
     action: "",
     reaction: "",
   };
   const { admin, issue } = actions.value;
   if (issue) {
-    descriptions.action = t("database.change-data");
+    descriptions.action = t("database.change-database");
     descriptions.reaction = t("sql-editor.and-submit-an-issue");
   } else if (admin) {
     descriptions.action = t("sql-editor.admin-mode.self");
@@ -134,22 +131,36 @@ const gotoCreateIssue = async () => {
 
   emit("close");
 
+  const { enabledNewLayout } = useIssueLayoutVersion();
   const db = await useDatabaseV1Store().getOrFetchDatabaseByName(database);
   const sqlStorageKey = `bb.issues.sql.${uuidv4()}`;
   useStorageStore().put(sqlStorageKey, statement.value);
-  const route = router.resolve({
-    name: PROJECT_V1_ROUTE_ISSUE_DETAIL,
-    params: {
-      projectId: extractProjectResourceName(db.project),
-      issueSlug: "create",
-    },
-    query: {
-      template: "bb.issue.database.data.update", // Default to DML issue template.
-      name: `[${db.databaseName}] Update from SQL Editor`,
-      databaseList: db.name,
-      sqlStorageKey,
-    },
-  });
+
+  const query = {
+    template: "bb.issue.database.update",
+    name: `[${db.databaseName}] Change from SQL Editor`,
+    databaseList: db.name,
+    sqlStorageKey,
+  };
+
+  const route = enabledNewLayout.value
+    ? router.resolve({
+        name: PROJECT_V1_ROUTE_PLAN_DETAIL_SPEC_DETAIL,
+        params: {
+          projectId: extractProjectResourceName(db.project),
+          planId: "create",
+          specId: "placeholder",
+        },
+        query,
+      })
+    : router.resolve({
+        name: PROJECT_V1_ROUTE_ISSUE_DETAIL,
+        params: {
+          projectId: extractProjectResourceName(db.project),
+          issueSlug: "create",
+        },
+        query,
+      });
   window.open(route.fullPath, "_blank");
 };
 

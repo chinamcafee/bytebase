@@ -1,36 +1,37 @@
 import { create } from "@bufbuild/protobuf";
 import { Code } from "@connectrpc/connect";
-import { isEmpty, cloneDeep } from "lodash-es";
+import { cloneDeep, isEmpty } from "lodash-es";
 import { v4 as uuidv4 } from "uuid";
 import { markRaw, reactive } from "vue";
 import { t } from "@/plugins/i18n";
 import {
+  hasFeature,
   pushNotification,
+  useDatabaseV1Store,
   useDBGroupStore,
+  useSQLEditorQueryHistoryStore,
   useSQLEditorStore,
   useSQLEditorTabStore,
   useSQLStore,
-  useSQLEditorQueryHistoryStore,
-  hasFeature,
-  batchGetOrFetchDatabases,
-  useDatabaseV1Store,
 } from "@/store";
 import type {
-  ComposedDatabase,
-  SQLResultSetV1,
   BBNotificationStyle,
-  SQLEditorQueryParams,
-  SQLEditorConnection,
+  ComposedDatabase,
   QueryContextStatus,
-  SQLEditorDatabaseQueryContext,
   QueryDataSourceType,
+  SQLEditorConnection,
+  SQLEditorDatabaseQueryContext,
+  SQLEditorQueryParams,
+  SQLResultSetV1,
 } from "@/types";
 import { isValidDatabaseName } from "@/types";
 import { Engine } from "@/types/proto-es/v1/common_pb";
 import { DatabaseGroupView } from "@/types/proto-es/v1/database_group_service_pb";
 import {
-  QueryRequestSchema,
+  type QueryOption,
   QueryOptionSchema,
+  QueryRequestSchema,
+  QueryResult_PermissionDenied_CommandType,
 } from "@/types/proto-es/v1/sql_service_pb";
 import { PlanFeature } from "@/types/proto-es/v1/subscription_service_pb";
 import {
@@ -203,7 +204,7 @@ const useExecuteSQL = () => {
     }
 
     const isBatch = batchQueryDatabaseSet.size > 1;
-    await batchGetOrFetchDatabases([...batchQueryDatabaseSet.keys()]);
+    await dbStore.batchGetOrFetchDatabases([...batchQueryDatabaseSet.keys()]);
 
     for (const databaseName of batchQueryDatabaseSet.values()) {
       if (!databaseQueryContexts.has(databaseName)) {
@@ -226,7 +227,7 @@ const useExecuteSQL = () => {
             dataSourceId: getDataSourceId(
               database,
               params.connection,
-              isBatch ? tab.batchQueryContext?.dataSourceType : undefined
+              isBatch ? tab.batchQueryContext.dataSourceType : undefined
             ),
           },
         }),
@@ -287,6 +288,7 @@ const useExecuteSQL = () => {
     }
 
     const queryOption = create(QueryOptionSchema, {
+      ...(context.params.queryOption ?? ({} as QueryOption)),
       redisRunCommandsOn: sqlEditorStore.redisCommandOption,
     });
     const resultSet = await sqlStore.query(
@@ -326,15 +328,12 @@ const useExecuteSQL = () => {
       flattenNoSQLResult(resultSet);
     }
 
-    if (resultSet.error) {
-      // The error message should be consistent with the one from the backend.
-      if (isOnlySelectError(resultSet)) {
-        // Show a tips to navigate to issue creation
-        // if the user is allowed to create issue in the project.
-        if (hasPermissionToCreateChangeDatabaseIssue(database)) {
-          sqlEditorStore.isShowExecutingHint = true;
-          sqlEditorStore.executingHintDatabase = database;
-        }
+    if (isOnlySelectError(resultSet)) {
+      // Show a tips to navigate to issue creation
+      // if the user is allowed to create issue in the project.
+      if (hasPermissionToCreateChangeDatabaseIssue(database)) {
+        sqlEditorStore.isShowExecutingHint = true;
+        sqlEditorStore.executingHintDatabase = database;
       }
       return finish(resultSet);
     }
@@ -353,19 +352,16 @@ const useExecuteSQL = () => {
 };
 
 const isOnlySelectError = (resultSet: SQLResultSetV1) => {
-  if (
-    resultSet.error.match(/Support SELECT sql statement only/) &&
-    resultSet.status === Code.InvalidArgument
-  ) {
-    return true;
-  }
-  if (
-    resultSet.error.match(/disallow execute (DML|DDL) statement/) &&
-    resultSet.status === Code.PermissionDenied
-  ) {
-    return true;
-  }
-  return false;
+  return resultSet.results.some((result) => {
+    return (
+      result.detailedError.case === "permissionDenied" &&
+      [
+        QueryResult_PermissionDenied_CommandType.DDL,
+        QueryResult_PermissionDenied_CommandType.DML,
+        QueryResult_PermissionDenied_CommandType.NON_READ_ONLY,
+      ].includes(result.detailedError.value.commandType)
+    );
+  });
 };
 
 export { useExecuteSQL };

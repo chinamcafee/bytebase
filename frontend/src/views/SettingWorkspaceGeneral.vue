@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-0 divide-y divide-block-border pt-2">
+  <div class="divide-y divide-block-border pt-2">
     <GeneralSetting
       ref="generalSettingRef"
       :title="$t('common.general')"
@@ -34,10 +34,14 @@
       ref="productImprovementSettingRef"
       :allow-edit="allowEdit"
     />
+    <AuditLogStdoutSetting
+      ref="auditLogStdoutSettingRef"
+      :allow-edit="allowEdit"
+    />
 
-    <div v-if="allowEdit && isDirty" class="sticky -bottom-4 z-10">
+    <div v-if="allowEdit && isDirty" class="sticky bottom-0 z-10">
       <div
-        class="flex justify-between w-full py-4 border-block-border bg-white"
+        class="flex justify-between w-full py-4 border-t border-block-border bg-white"
       >
         <NButton @click.prevent="onRevert">
           {{ $t("common.cancel") }}
@@ -51,20 +55,22 @@
 </template>
 
 <script lang="ts" setup>
-import { useEventListener } from "@vueuse/core";
 import { NButton } from "naive-ui";
-import { onMounted, ref, computed } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute, onBeforeRouteLeave } from "vue-router";
+import { useRoute } from "vue-router";
 import {
-  BrandingSetting,
-  SecuritySetting,
   AccountSetting,
   AIAugmentationSetting,
   AnnouncementSetting,
+  AuditLogStdoutSetting,
+  BrandingSetting,
   GeneralSetting,
   ProductImprovementSetting,
+  SecuritySetting,
 } from "@/components/GeneralSetting";
+import { useRouteChangeGuard } from "@/composables/useRouteChangeGuard";
+import { useBodyLayoutContext } from "@/layouts/common";
 import { pushNotification } from "@/store";
 import { useSettingV1Store } from "@/store/modules/v1/setting";
 
@@ -84,6 +90,8 @@ const aiAugmentationSettingRef =
 const announcementSettingRef = ref<InstanceType<typeof AnnouncementSetting>>();
 const productImprovementSettingRef =
   ref<InstanceType<typeof ProductImprovementSetting>>();
+const auditLogStdoutSettingRef =
+  ref<InstanceType<typeof AuditLogStdoutSetting>>();
 
 const settingRefList = computed(() => {
   return [
@@ -94,8 +102,13 @@ const settingRefList = computed(() => {
     aiAugmentationSettingRef,
     announcementSettingRef,
     productImprovementSettingRef,
+    auditLogStdoutSettingRef,
   ];
 });
+
+const { overrideMainContainerClass } = useBodyLayoutContext();
+
+overrideMainContainerClass("!pb-0");
 
 onMounted(async () => {
   await useSettingV1Store().fetchSettingList();
@@ -148,20 +161,5 @@ const onUpdate = async () => {
   }
 };
 
-useEventListener("beforeunload", (e) => {
-  if (!isDirty.value) {
-    return;
-  }
-  e.returnValue = t("common.leave-without-saving");
-  return e.returnValue;
-});
-
-onBeforeRouteLeave((to, from, next) => {
-  if (isDirty.value) {
-    if (!window.confirm(t("common.leave-without-saving"))) {
-      return;
-    }
-  }
-  next();
-});
+useRouteChangeGuard(isDirty);
 </script>

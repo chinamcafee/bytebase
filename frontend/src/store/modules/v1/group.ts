@@ -1,19 +1,19 @@
 import { create } from "@bufbuild/protobuf";
 import { createContextValues } from "@connectrpc/connect";
-import { orderBy } from "lodash-es";
+import { orderBy, uniq } from "lodash-es";
 import { defineStore } from "pinia";
 import { computed, reactive } from "vue";
-import { groupServiceClientConnect } from "@/grpcweb";
-import { silentContextKey } from "@/grpcweb/context-key";
+import { groupServiceClientConnect } from "@/connect";
+import { silentContextKey } from "@/connect/context-key";
 import { isValidProjectName } from "@/types";
 import type { Group } from "@/types/proto-es/v1/group_service_pb";
 import {
+  BatchGetGroupsRequestSchema,
   CreateGroupRequestSchema,
   DeleteGroupRequestSchema,
   GetGroupRequestSchema,
   ListGroupsRequestSchema,
   UpdateGroupRequestSchema,
-  BatchGetGroupsRequestSchema,
 } from "@/types/proto-es/v1/group_service_pb";
 import { hasWorkspacePermissionV2 } from "@/utils";
 import { groupNamePrefix } from "./common";
@@ -41,7 +41,7 @@ export const extractGroupEmail = (emailResource: string) => {
   return matches?.[1] ?? emailResource;
 };
 
-const ensureGroupIdentifier = (id: string) => {
+export const ensureGroupIdentifier = (id: string) => {
   const email = extractGroupEmail(id);
   return `${groupNamePrefix}${email}`;
 };
@@ -102,6 +102,19 @@ export const useGroupStore = defineStore("group", () => {
     return groups;
   };
 
+  const batchGetOrFetchGroups = async (groupNames: string[]) => {
+    const validGroupList = uniq(groupNames).filter((groupName) => !!groupName);
+    const pendingFetch = validGroupList.filter((groupName) => {
+      const group = getGroupByIdentifier(groupName);
+      if (group) {
+        return false;
+      }
+      return true;
+    });
+    await batchFetchGroups(pendingFetch);
+    return validGroupList.map(getGroupByIdentifier);
+  };
+
   const getOrFetchGroupByIdentifier = async (id: string) => {
     if (!hasWorkspacePermissionV2("bb.groups.get")) {
       return;
@@ -152,7 +165,7 @@ export const useGroupStore = defineStore("group", () => {
   return {
     groupList,
     fetchGroupList,
-    batchFetchGroups,
+    batchGetOrFetchGroups,
     getGroupByIdentifier,
     getOrFetchGroupByIdentifier,
     deleteGroup,

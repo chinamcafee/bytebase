@@ -18,6 +18,21 @@ import (
 	"github.com/bytebase/bytebase/backend/plugin/webhook"
 )
 
+// getSlackToken extracts the Slack token from the AppIMSetting.
+func getSlackToken(setting *storepb.AppIMSetting) string {
+	if setting == nil {
+		return ""
+	}
+	for _, s := range setting.Settings {
+		if s.Type == storepb.WebhookType_SLACK {
+			if slack := s.GetSlack(); slack != nil {
+				return slack.Token
+			}
+		}
+	}
+	return ""
+}
+
 // BlockMarkdown is the API message for Slack webhook block markdown.
 type BlockMarkdown struct {
 	Type string `json:"type"`
@@ -51,7 +66,7 @@ type MessagePayload struct {
 }
 
 func init() {
-	webhook.Register(storepb.ProjectWebhook_SLACK, &Receiver{})
+	webhook.Register(storepb.WebhookType_SLACK, &Receiver{})
 }
 
 // Receiver is the receiver for Slack.
@@ -100,13 +115,15 @@ func GetBlocks(context webhook.Context) []Block {
 		})
 	}
 
-	blockList = append(blockList, Block{
-		Type: "section",
-		Text: &BlockMarkdown{
-			Type: "mrkdwn",
-			Text: fmt.Sprintf("Actor: %s (%s)", context.ActorName, context.ActorEmail),
-		},
-	})
+	if context.ActorName != "" {
+		blockList = append(blockList, Block{
+			Type: "section",
+			Text: &BlockMarkdown{
+				Type: "mrkdwn",
+				Text: fmt.Sprintf("Actor: %s (%s)", context.ActorName, context.ActorEmail),
+			},
+		})
+	}
 
 	blockList = append(blockList, Block{
 		Type: "actions",
@@ -130,6 +147,7 @@ func (*Receiver) Post(context webhook.Context) error {
 		if postDirectMessage(context) {
 			return nil
 		}
+		slog.Warn("failed to send direct messages for slack users, fallback to normal webhook", slog.String("event", context.EventType))
 	}
 	return postMessage(context)
 }
@@ -179,8 +197,9 @@ func postMessage(context webhook.Context) error {
 
 func postDirectMessage(webhookCtx webhook.Context) bool {
 	ctx := context.Background()
-	t := webhookCtx.IMSetting.GetSlack().GetToken()
+	t := getSlackToken(webhookCtx.IMSetting)
 	if t == "" {
+		slog.Warn("failed to found valid slack im token", slog.String("event", webhookCtx.EventType))
 		return false
 	}
 	p := newProvider(t)
@@ -213,7 +232,7 @@ func postDirectMessage(webhookCtx webhook.Context) bool {
 		}
 		return errs
 	}); err != nil {
-		slog.Warn("failed to send direct message to slack user", log.BBError(err))
+		slog.Warn("failed to send direct message to slack user", log.BBError(err), slog.String("event", webhookCtx.EventType))
 		return false
 	}
 

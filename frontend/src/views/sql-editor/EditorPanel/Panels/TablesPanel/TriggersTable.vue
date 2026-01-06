@@ -1,67 +1,65 @@
 <template>
-  <Splitpanes
-    horizontal
-    class="w-full h-full overflow-x-auto relative flex flex-col"
+  <NSplit
+    :disabled="!detail"
+    :size="detail ? 0.6 : 1"
+    :resize-trigger-size="1"
   >
-    <Pane class="flex-1 overflow-y-hidden" :size="detail ? 60 : 100">
-      <div ref="containerElRef" class="w-full h-full">
-        <NDataTable
-          v-bind="$attrs"
-          ref="dataTableRef"
-          size="small"
-          :row-key="
-            ({ trigger, position }) => keyWithPosition(trigger.name, position)
-          "
-          :columns="columns"
-          :data="layoutReady ? filteredTriggers : []"
-          :row-props="rowProps"
-          :max-height="tableBodyHeight"
-          :virtual-scroll="true"
-          :striped="true"
-          :bordered="true"
-          :bottom-bordered="true"
-          row-class-name="cursor-pointer"
-        />
+    <template #1>
+      <div class="h-full flex-1 overflow-y-hidden">
+        <div ref="containerElRef" class="w-full h-full">
+          <NDataTable
+            v-bind="$attrs"
+            ref="dataTableRef"
+            size="small"
+            :row-key="
+              ({ trigger, position }) => keyWithPosition(trigger.name, position)
+            "
+            :columns="columns"
+            :data="layoutReady ? filteredTriggers : []"
+            :row-props="rowProps"
+            :max-height="tableBodyHeight"
+            :virtual-scroll="true"
+            :striped="true"
+            :bordered="true"
+            :bottom-bordered="true"
+            row-class-name="cursor-pointer"
+          />
+        </div>
       </div>
-    </Pane>
-    <Pane
-      v-if="detail"
-      class="flex flex-col items-stretch shrink-0 overflow-hidden"
-      :size="40"
-    >
-      <CodeViewer
-        :db="db"
-        :title="detail.trigger.name"
-        :code="detail.trigger.body"
-        header-class="!p-0 h-[34px]"
-      >
-        <template #title-prefix>
-          <NButton text @click="deselect">
-            <ChevronDownIcon class="w-5 h-5" />
-            <div class="flex items-center gap-1">
-              <TriggerIcon class="w-4 h-4" />
+    </template>
+    <template #2>
+      <div v-if="detail" class="h-full flex flex-col items-stretch shrink-0 overflow-hidden">
+        <CodeViewer
+          :db="db"
+          :title="detail.trigger.name"
+          :code="detail.trigger.body"
+          header-class="p-0! h-[34px]"
+        >
+          <template #title-prefix>
+            <NButton text @click="deselect">
+              <template #icon>
+                <TriggerIcon class="w-4 h-4" />
+              </template>
               <span>{{ detail.trigger.name }}</span>
-            </div>
-          </NButton>
-        </template>
-      </CodeViewer>
-    </Pane>
-  </Splitpanes>
+            </NButton>
+          </template>
+        </CodeViewer>
+      </div>
+    </template>
+  </NSplit>
 </template>
 
 <script setup lang="tsx">
-import { ChevronDownIcon } from "lucide-vue-next";
-import { NButton, NDataTable, type DataTableColumn } from "naive-ui";
-import { Pane, Splitpanes } from "splitpanes";
+import { type DataTableColumn, NButton, NDataTable, NSplit } from "naive-ui";
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { TriggerIcon } from "@/components/Icon";
 import type { ComposedDatabase } from "@/types";
 import type {
   DatabaseMetadata,
-  TriggerMetadata,
   SchemaMetadata,
   TableMetadata,
+  TriggerMetadata,
 } from "@/types/proto-es/v1/database_service_pb";
 import { useAutoHeightDataTable } from "@/utils";
 import {
@@ -239,9 +237,13 @@ watch(
 
 <style lang="postcss" scoped>
 :deep(.n-data-table-th .n-data-table-resize-button::after) {
-  @apply bg-control-bg h-2/3;
+  background-color: rgb(var(--color-control-bg));
+  height: 66.666667%;
 }
 :deep(.n-data-table-td.input-cell) {
-  @apply pl-0.5 pr-1 py-0;
+  padding-left: 0.125rem;
+  padding-right: 0.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 </style>

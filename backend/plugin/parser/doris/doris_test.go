@@ -3,7 +3,7 @@ package doris
 import (
 	"testing"
 
-	parser "github.com/bytebase/doris-parser"
+	parser "github.com/bytebase/parser/doris"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,8 +26,8 @@ func TestDorisSQLParser(t *testing.T) {
 
 	for _, test := range tests {
 		res, err := ParseDorisSQL(test.statement)
-		if res != nil {
-			_, ok := res.Tree.(*parser.SqlStatementsContext)
+		if len(res) > 0 {
+			_, ok := res[0].Tree.(*parser.MultiStatementsContext)
 			require.True(t, ok)
 		}
 		if test.errorMessage == "" {

@@ -15,7 +15,7 @@
     </div>
     <StepTab
       v-else
-      class="pt-4 flex-1 overflow-hidden flex flex-col !space-y-4"
+      class="pt-4 flex-1 overflow-hidden flex flex-col gap-y-4!"
       :step-list="stepTabList"
       :current-index="state.currentStep"
       :show-cancel="false"
@@ -28,7 +28,10 @@
     >
       <template #0>
         <div class="mb-4">
-          <NRadioGroup v-model:value="state.sourceSchemaType" class="space-x-4">
+          <NRadioGroup
+            v-model:value="state.sourceSchemaType"
+            class="flex gap-x-4"
+          >
             <NRadio
               :value="SourceSchemaType.SCHEMA_HISTORY_VERSION"
               :label="$t('database.sync-schema.schema-history-version')"
@@ -74,15 +77,19 @@
 
 <script lang="ts" setup>
 import { asyncComputed } from "@vueuse/core";
-import { isUndefined } from "lodash-es";
-import { NRadioGroup, NRadio, useDialog } from "naive-ui";
+import { NRadio, NRadioGroup, useDialog } from "naive-ui";
 import { v4 as uuidv4 } from "uuid";
-import { computed, onMounted, reactive, ref, nextTick } from "vue";
+import { computed, nextTick, onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute, useRouter, type LocationQueryRaw } from "vue-router";
+import { type LocationQueryRaw, useRoute, useRouter } from "vue-router";
 import { BBSpin } from "@/bbkit";
 import { StepTab } from "@/components/v2";
-import { PROJECT_V1_ROUTE_ISSUE_DETAIL } from "@/router/dashboard/projectV1";
+import { useIssueLayoutVersion } from "@/composables/useIssueLayoutVersion";
+import { useRouteChangeGuard } from "@/composables/useRouteChangeGuard";
+import {
+  PROJECT_V1_ROUTE_ISSUE_DETAIL,
+  PROJECT_V1_ROUTE_PLAN_DETAIL_SPEC_DETAIL,
+} from "@/router/dashboard/projectV1";
 import { WORKSPACE_ROOT_MODULE } from "@/router/dashboard/workspaceRoutes";
 import {
   useChangelogStore,
@@ -142,6 +149,14 @@ const rawSQLState = reactive<RawSQLState>({
 const targetDatabaseViewRef =
   ref<InstanceType<typeof SelectTargetDatabasesView>>();
 
+useRouteChangeGuard(
+  computed(
+    () =>
+      state.sourceSchemaType === SourceSchemaType.RAW_SQL &&
+      rawSQLState.statement !== ""
+  )
+);
+
 const sourceSchemaString = asyncComputed(async () => {
   if (state.sourceSchemaType === SourceSchemaType.SCHEMA_HISTORY_VERSION) {
     if (isValidChangelogName(changelogSourceSchemaState.changelogName)) {
@@ -188,18 +203,40 @@ const handleChangelogSchemaVersionChanges = (
 
 onMounted(async () => {
   const changelogName = route.query.changelog as string;
+  const isRollback = route.query.rollback === "true";
+
   if (isValidChangelogName(changelogName)) {
     // Prepare source schema from the selected changelog.
     await changelogStore.getOrFetchChangelogByName(
       changelogName,
       ChangelogView.FULL
     );
+
+    const sourceChangelogName = changelogName;
+    let targetChangelogName: string | undefined = undefined;
+
+    // For rollback, we want to show the diff of ONLY this changelog's changes
+    // Source: the changelog being rolled back (after state)
+    // Target: the previous changelog (before state)
+    // This shows exactly what this changelog changed
+    if (isRollback) {
+      const previousChangelog =
+        await changelogStore.fetchPreviousChangelog(changelogName);
+      if (previousChangelog) {
+        // Source stays as current changelog (with the changes)
+        // Target becomes the previous changelog (without the changes)
+        targetChangelogName = previousChangelog.name;
+        // Keep sourceChangelogName = changelogName (don't swap)
+      }
+    }
+
     const { databaseName } = extractDatabaseNameAndChangelogUID(changelogName);
     const database = await databaseStore.getOrFetchDatabaseByName(databaseName);
     handleChangelogSchemaVersionChanges({
       environmentName: database.effectiveEnvironment,
       databaseName: databaseName,
-      changelogName: changelogName,
+      changelogName: sourceChangelogName,
+      targetChangelogName: targetChangelogName,
     });
     nextTick(() => {
       state.currentStep = Step.SELECT_TARGET_DATABASE_LIST;
@@ -225,7 +262,7 @@ const allowNext = computed(() => {
       return (
         isValidEnvironmentName(changelogSourceSchemaState.environmentName) &&
         isValidDatabaseName(changelogSourceSchemaState.databaseName) &&
-        !isUndefined(changelogSourceSchemaState.changelogName)
+        !!changelogSourceSchemaState.changelogName
       );
     } else {
       return rawSQLState.statement !== "";
@@ -293,9 +330,10 @@ const tryFinishSetup = async () => {
     return;
   }
 
+  const { enabledNewLayout } = useIssueLayoutVersion();
   const targetDatabaseList = targetDatabaseViewRef.value.targetDatabaseList;
   const query: LocationQueryRaw = {
-    template: "bb.issue.database.schema.update",
+    template: "bb.issue.database.update",
     mode: "normal",
   };
   const sqlMap: Record<string, string> = {};
@@ -311,19 +349,30 @@ const tryFinishSetup = async () => {
   useStorageStore().put(sqlMapStorageKey, sqlMap);
   query.sqlMapStorageKey = sqlMapStorageKey;
   query.name = generateIssueTitle(
-    "bb.issue.database.schema.update",
+    "bb.issue.database.update",
     targetDatabaseList.map((db) => db.databaseName)
   );
 
-  const routeInfo = {
-    name: PROJECT_V1_ROUTE_ISSUE_DETAIL,
-    params: {
-      projectId: extractProjectResourceName(props.project.name),
-      issueSlug: "create",
-    },
-    query,
-  };
-  router.push(routeInfo);
+  if (enabledNewLayout.value) {
+    router.push({
+      name: PROJECT_V1_ROUTE_PLAN_DETAIL_SPEC_DETAIL,
+      params: {
+        projectId: extractProjectResourceName(props.project.name),
+        planId: "create",
+        specId: "placeholder",
+      },
+      query,
+    });
+  } else {
+    router.push({
+      name: PROJECT_V1_ROUTE_ISSUE_DETAIL,
+      params: {
+        projectId: extractProjectResourceName(props.project.name),
+        issueSlug: "create",
+      },
+      query,
+    });
+  }
 };
 
 const cancelSetup = () => {

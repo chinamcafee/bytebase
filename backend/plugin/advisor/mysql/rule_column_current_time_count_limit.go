@@ -5,14 +5,16 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/antlr4-go/antlr/v4"
-	"github.com/pkg/errors"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 
-	mysql "github.com/bytebase/mysql-parser"
+	"github.com/antlr4-go/antlr/v4"
+
+	"github.com/bytebase/parser/mysql"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 	mysqlparser "github.com/bytebase/bytebase/backend/plugin/parser/mysql"
 )
 
@@ -26,9 +28,9 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_MYSQL, advisor.SchemaRuleCurrentTimeColumnCountLimit, &ColumnCurrentTimeCountLimitAdvisor{})
-	advisor.Register(storepb.Engine_MARIADB, advisor.SchemaRuleCurrentTimeColumnCountLimit, &ColumnCurrentTimeCountLimitAdvisor{})
-	advisor.Register(storepb.Engine_OCEANBASE, advisor.SchemaRuleCurrentTimeColumnCountLimit, &ColumnCurrentTimeCountLimitAdvisor{})
+	advisor.Register(storepb.Engine_MYSQL, storepb.SQLReviewRule_COLUMN_CURRENT_TIME_COUNT_LIMIT, &ColumnCurrentTimeCountLimitAdvisor{})
+	advisor.Register(storepb.Engine_MARIADB, storepb.SQLReviewRule_COLUMN_CURRENT_TIME_COUNT_LIMIT, &ColumnCurrentTimeCountLimitAdvisor{})
+	advisor.Register(storepb.Engine_OCEANBASE, storepb.SQLReviewRule_COLUMN_CURRENT_TIME_COUNT_LIMIT, &ColumnCurrentTimeCountLimitAdvisor{})
 }
 
 // ColumnCurrentTimeCountLimitAdvisor is the advisor checking for current time column count limit.
@@ -37,26 +39,28 @@ type ColumnCurrentTimeCountLimitAdvisor struct {
 
 // Check checks for current time column count limit.
 func (*ColumnCurrentTimeCountLimitAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]*mysqlparser.ParseResult)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to mysql parse result")
-	}
-
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create the rule
-	rule := NewColumnCurrentTimeCountLimitRule(level, string(checkCtx.Rule.Type))
+	rule := NewColumnCurrentTimeCountLimitRule(level, checkCtx.Rule.Type.String())
 
 	// Create the generic checker with the rule
 	checker := NewGenericChecker([]Rule{rule})
 
-	for _, stmt := range stmtList {
-		rule.SetBaseLine(stmt.BaseLine)
-		checker.SetBaseLine(stmt.BaseLine)
-		antlr.ParseTreeWalkerDefault.Walk(checker, stmt.Tree)
+	for _, stmt := range checkCtx.ParsedStatements {
+		rule.SetBaseLine(stmt.BaseLine())
+		checker.SetBaseLine(stmt.BaseLine())
+		if stmt.AST == nil {
+			continue
+		}
+		antlrAST, ok := base.GetANTLRAST(stmt.AST)
+		if !ok {
+			continue
+		}
+		antlr.ParseTreeWalkerDefault.Walk(checker, antlrAST.Tree)
 	}
 
 	// Generate advice after walking
@@ -268,7 +272,7 @@ func (r *ColumnCurrentTimeCountLimitRule) generateAdvice() {
 		if table.defaultCurrentTimeCount > maxDefaultCurrentTimeColumCount {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.DefaultCurrentTimeColumnCountExceedsLimit.Int32(),
+				Code:          code.DefaultCurrentTimeColumnCountExceedsLimit.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("Table `%s` has %d DEFAULT CURRENT_TIMESTAMP() columns. The count greater than %d.", table.tableName, table.defaultCurrentTimeCount, maxDefaultCurrentTimeColumCount),
 				StartPosition: common.ConvertANTLRLineToPosition(table.line),
@@ -277,7 +281,7 @@ func (r *ColumnCurrentTimeCountLimitRule) generateAdvice() {
 		if table.onUpdateCurrentTimeCount > maxOnUpdateCurrentTimeColumnCount {
 			r.AddAdvice(&storepb.Advice{
 				Status:        r.level,
-				Code:          advisor.OnUpdateCurrentTimeColumnCountExceedsLimit.Int32(),
+				Code:          code.OnUpdateCurrentTimeColumnCountExceedsLimit.Int32(),
 				Title:         r.title,
 				Content:       fmt.Sprintf("Table `%s` has %d ON UPDATE CURRENT_TIMESTAMP() columns. The count greater than %d.", table.tableName, table.onUpdateCurrentTimeCount, maxOnUpdateCurrentTimeColumnCount),
 				StartPosition: common.ConvertANTLRLineToPosition(table.line),

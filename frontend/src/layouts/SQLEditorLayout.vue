@@ -1,31 +1,35 @@
 <template>
-  <div class="relative h-screen overflow-hidden flex flex-col">
-    <ul
-      id="sql-editor-debug"
-      class="hidden text-xs font-mono max-h-[33vh] max-w-[40vw] overflow-auto fixed bottom-0 right-0 p-2 bg-white/50 border border-gray-400 z-[999999]"
-    ></ul>
+  <RoutePermissionGuard class="m-6" :routes="sqlEditorRoutes">
+    <div class="relative h-screen overflow-hidden flex flex-col">
+      <ul
+        id="sql-editor-debug"
+        class="hidden text-xs font-mono max-h-[33vh] max-w-[40vw] overflow-auto fixed bottom-0 right-0 p-2 bg-white/50 border border-gray-400 z-999999"
+      ></ul>
 
-    <BannersWrapper />
-    <template v-if="ready">
-      <ProvideSQLEditorContext />
-    </template>
-  </div>
+      <BannersWrapper />
+      <template v-if="ready">
+        <ProvideSQLEditorContext />
+      </template>
+    </div>
+  </RoutePermissionGuard>
 </template>
 
 <script lang="ts" setup>
-import { ref } from "vue";
-import { onMounted } from "vue";
+import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import BannersWrapper from "@/components/BannersWrapper.vue";
+import RoutePermissionGuard from "@/components/Permission/RoutePermissionGuard.vue";
 import ProvideSQLEditorContext from "@/components/ProvideSQLEditorContext.vue";
+import sqlEditorRoutes from "@/router/sqlEditor";
 import {
   useEnvironmentV1Store,
   usePolicyV1Store,
   useSettingV1Store,
 } from "@/store";
 import { PolicyResourceType } from "@/types/proto-es/v1/org_policy_service_pb";
-import { provideSheetContext } from "@/views/sql-editor/Sheet";
 import { provideSQLEditorContext } from "@/views/sql-editor/context";
+import { provideSheetContext } from "@/views/sql-editor/Sheet";
+import { provideTabListContext } from "@/views/sql-editor/TabList/context";
 
 const router = useRouter();
 
@@ -33,6 +37,8 @@ const router = useRouter();
 provideSQLEditorContext();
 // provide context for sheets
 provideSheetContext();
+// provide context for tabs
+provideTabListContext();
 
 const ready = ref(false);
 

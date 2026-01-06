@@ -15,51 +15,42 @@
 <script lang="tsx" setup>
 import { create } from "@bufbuild/protobuf";
 import { orderBy } from "lodash-es";
-import { TrashIcon, InfoIcon } from "lucide-vue-next";
+import { InfoIcon, TrashIcon } from "lucide-vue-next";
 import type { DataTableColumn } from "naive-ui";
-import {
-  NCheckbox,
-  NDatePicker,
-  NDataTable,
-  useDialog,
-  NTooltip,
-} from "naive-ui";
-import { computed, reactive, h, watchEffect } from "vue";
+import { NDataTable, NDatePicker, NTooltip, useDialog } from "naive-ui";
 import type { VNodeChild } from "vue";
+import { computed, h, reactive, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
-import { RouterLink } from "vue-router";
 import { useRouter } from "vue-router";
 import GroupNameCell from "@/components/User/Settings/UserDataTableByGroup/cells/GroupNameCell.vue";
-import { MiniActionButton } from "@/components/v2";
-import { DatabaseV1Name, InstanceV1Name } from "@/components/v2";
-import { WORKSPACE_ROUTE_USER_PROFILE } from "@/router/dashboard/workspaceRoutes";
 import {
-  usePolicyV1Store,
-  usePolicyByParentAndType,
-  useUserStore,
-  useGroupStore,
-  useDatabaseV1Store,
+  DatabaseV1Name,
+  InstanceV1Name,
+  MiniActionButton,
+} from "@/components/v2";
+import { UserLink } from "@/components/v2/Model/cells";
+import {
+  composePolicyBindings,
+  extractUserId,
   pushNotification,
-  extractGroupEmail,
+  useDatabaseV1Store,
+  useGroupStore,
+  usePolicyByParentAndType,
+  usePolicyV1Store,
 } from "@/store";
-import {
-  getUserEmailInBinding,
-  getGroupEmailInBinding,
-  groupBindingPrefix,
-  isValidDatabaseName,
-} from "@/types";
+import { groupBindingPrefix, isValidDatabaseName } from "@/types";
 import { ExprSchema } from "@/types/proto-es/google/type/expr_pb";
-import { MaskingExceptionPolicy_MaskingException_Action } from "@/types/proto-es/v1/org_policy_service_pb";
-import type { MaskingExceptionPolicy_MaskingException } from "@/types/proto-es/v1/org_policy_service_pb";
-import { MaskingExceptionPolicySchema } from "@/types/proto-es/v1/org_policy_service_pb";
-import { PolicyType } from "@/types/proto-es/v1/org_policy_service_pb";
+import type { MaskingExemptionPolicy_Exemption } from "@/types/proto-es/v1/org_policy_service_pb";
+import {
+  MaskingExemptionPolicySchema,
+  PolicyType,
+} from "@/types/proto-es/v1/org_policy_service_pb";
 import type { Project } from "@/types/proto-es/v1/project_service_pb";
 import { autoDatabaseRoute, hasProjectPermissionV2 } from "@/utils";
 import {
-  type ConditionExpression,
   batchConvertFromCELString,
+  type ConditionExpression,
 } from "@/utils/issue/cel";
-import UserAvatar from "../User/UserAvatar.vue";
 import { type AccessUser } from "./types";
 
 interface LocalState {
@@ -83,7 +74,6 @@ const state = reactive<LocalState>({
 });
 const { t } = useI18n();
 const router = useRouter();
-const userStore = useUserStore();
 const groupStore = useGroupStore();
 const databaseStore = useDatabaseV1Store();
 const policyStore = usePolicyV1Store();
@@ -96,7 +86,7 @@ const hasPermission = computed(() => {
 const { policy, ready } = usePolicyByParentAndType(
   computed(() => ({
     parentPath: props.project.name,
-    policyType: PolicyType.MASKING_EXCEPTION,
+    policyType: PolicyType.MASKING_EXEMPTION,
   }))
 );
 
@@ -124,7 +114,7 @@ const getDatabaseAccessResource = (access: AccessUser): VNodeChild => {
   const validDatabase = isValidDatabaseResource(access);
 
   return (
-    <div class="space-y-1">
+    <div class="flex flex-col gap-y-1">
       {validDatabase && (
         <div class="flex flex-col xl:flex-row xl:items-center gap-x-1 text-sm textinfo">
           <span class="font-medium">{`${t("common.instance")}:`}</span>
@@ -193,10 +183,10 @@ const getDatabaseAccessResource = (access: AccessUser): VNodeChild => {
 
 const expirationTimeRegex = /request.time < timestamp\("(.+)?"\)/;
 
-const getAccessUsers = async (
-  exception: MaskingExceptionPolicy_MaskingException,
+const getAccessUsers = (
+  exception: MaskingExemptionPolicy_Exemption,
   condition: ConditionExpression
-): Promise<AccessUser | undefined> => {
+): AccessUser[] => {
   let expirationTimestamp: number | undefined;
   const expression = exception.condition?.expression ?? "";
   const description = exception.condition?.description ?? "";
@@ -205,41 +195,24 @@ const getAccessUsers = async (
     expirationTimestamp = new Date(matches[1]).getTime();
   }
 
-  const access: AccessUser = {
-    type: "user",
-    key: `${exception.member}:${expression}.${description}`,
-    expirationTimestamp,
-    supportActions: new Set([exception.action]),
-    rawExpression: expression,
-    description,
-    databaseResource: condition.databaseResources
-      ? condition.databaseResources[0]
-      : undefined,
-  };
+  const result: AccessUser[] = [];
+  for (const member of exception.members) {
+    const access: AccessUser = {
+      type: member.startsWith(groupBindingPrefix) ? "group" : "user",
+      member,
+      key: `${member}:${expression}.${description}`,
+      expirationTimestamp,
+      rawExpression: expression,
+      description,
+      databaseResource: condition.databaseResources
+        ? condition.databaseResources[0]
+        : undefined,
+    };
 
-  if (exception.member.startsWith(groupBindingPrefix)) {
-    access.type = "group";
-    access.group = await groupStore.getOrFetchGroupByIdentifier(
-      exception.member
-    );
-  } else {
-    access.type = "user";
-    access.user = await userStore.getOrFetchUserByIdentifier(exception.member);
+    result.push(access);
   }
 
-  if (!access.group && !access.user) {
-    return;
-  }
-
-  return access;
-};
-
-const getMemberBinding = (access: AccessUser): string => {
-  if (access.type === "user") {
-    return getUserEmailInBinding(access.user!.email);
-  }
-  const email = extractGroupEmail(access.group!.name);
-  return getGroupEmailInBinding(email);
+  return result;
 };
 
 const updateAccessUserList = async () => {
@@ -247,61 +220,33 @@ const updateAccessUserList = async () => {
     return;
   }
 
-  if (!policy.value || policy.value.policy?.case !== "maskingExceptionPolicy") {
+  if (!policy.value || policy.value.policy?.case !== "maskingExemptionPolicy") {
     state.rawAccessList = [];
     state.loading = false;
     return;
   }
 
-  // Exec data merge, we will merge data with same expiration time and level.
-  // For example, the exception list and merge exec should be:
-  // - 1. user1, action:export, level:FULL, expires at 2023-09-03
-  // - 2. user1, action:export, level:FULL, expires at 2023-09-04
-  // - 3. user1, action:export, level:PARTIAL, expires at 2023-09-04
-  // - 4. user1, action:query, level:PARTIAL, expires at 2023-09-04
-  // - 5. user1, action:query, level:FULL, expires at 2023-09-03
-  // After the merge we should get:
-  // - 1 & 5 is merged: user1, action:export+action, level:FULL, expires at 2023-09-03
-  // - 2 cannot merge: user1, action:export, level:FULL, expires at 2023-09-04
-  // - 3 & 4 is merged: user1, action:export+action, level:PARTIAL, expires at 2023-09-04
   const memberMap = new Map<string, AccessUser>();
-  const { maskingExceptions } = policy.value.policy.value;
-  const expressionList = maskingExceptions.map((e) =>
+  const { exemptions } = policy.value.policy.value;
+  const expressionList = exemptions.map((e) =>
     e.condition?.expression ? e.condition?.expression : "true"
   );
   const conditionList = await batchConvertFromCELString(expressionList);
 
-  for (let i = 0; i < maskingExceptions.length; i++) {
-    const exception = maskingExceptions[i];
+  await composePolicyBindings(exemptions, true);
+  for (let i = 0; i < exemptions.length; i++) {
+    const exception = exemptions[i];
     const condition = conditionList[i];
 
-    const item = await getAccessUsers(exception, condition);
-    if (!item) {
-      continue;
+    const items = getAccessUsers(exception, condition);
+    for (const item of items) {
+      memberMap.set(item.key, item);
     }
-
-    const target = memberMap.get(item.key) ?? item;
-    if (memberMap.has(item.key)) {
-      for (const action of item.supportActions) {
-        target.supportActions.add(action);
-      }
-    }
-    memberMap.set(item.key, target);
   }
 
   state.rawAccessList = orderBy(
     [...memberMap.values()],
-    [
-      (access) => (access.type === "user" ? 1 : 0),
-      (access) => {
-        if (access.group) {
-          return access.group.name;
-        } else if (access.user) {
-          return access.user.name;
-        }
-        return "";
-      },
-    ],
+    [(access) => (access.type === "user" ? 1 : 0), (access) => access.member],
     ["desc", "desc"]
   );
   state.loading = false;
@@ -325,29 +270,16 @@ const accessTableColumns = computed(
         title: t("common.members"),
         resizable: true,
         render: (item: AccessUser) => {
-          if (item.type === "group") {
-            return <GroupNameCell group={item.group!} />;
+          if (item.member.startsWith(groupBindingPrefix)) {
+            const group = groupStore.getGroupByIdentifier(item.member);
+            if (group) {
+              return <GroupNameCell group={group} />;
+            }
+          } else {
+            const email = extractUserId(item.member);
+            return <UserLink title={email} email={email} />;
           }
-
-          return (
-            <div class="flex items-center gap-x-2">
-              <UserAvatar size="SMALL" user={item.user} />
-              <div class="flex flex-col">
-                <RouterLink
-                  to={{
-                    name: WORKSPACE_ROUTE_USER_PROFILE,
-                    params: {
-                      principalEmail: item.user!.email,
-                    },
-                  }}
-                  class="normal-link"
-                >
-                  {item.user!.title}
-                </RouterLink>
-                <span class="textinfolabel">{item.user!.email}</span>
-              </div>
-            </div>
-          );
+          return <span>{item.member}</span>;
         },
       },
       {
@@ -357,66 +289,6 @@ const accessTableColumns = computed(
         hide: !props.showDatabaseColumn,
         render: (item: AccessUser) => {
           return getDatabaseAccessResource(item);
-        },
-      },
-      {
-        key: "export",
-        title: t("settings.sensitive-data.action.export"),
-        width: "5rem",
-        render: (item: AccessUser) => {
-          return (
-            <NCheckbox
-              checked={item.supportActions.has(
-                MaskingExceptionPolicy_MaskingException_Action.EXPORT
-              )}
-              disabled={!hasPermission.value || props.disabled}
-              onUpdateChecked={() =>
-                onAccessControlUpdate(
-                  item,
-                  (item) =>
-                    toggleAction(
-                      item,
-                      MaskingExceptionPolicy_MaskingException_Action.EXPORT
-                    ),
-                  (item) =>
-                    toggleAction(
-                      item,
-                      MaskingExceptionPolicy_MaskingException_Action.EXPORT
-                    )
-                )
-              }
-            />
-          );
-        },
-      },
-      {
-        key: "query",
-        title: t("settings.sensitive-data.action.query"),
-        width: "5rem",
-        render: (item: AccessUser) => {
-          return (
-            <NCheckbox
-              checked={item.supportActions.has(
-                MaskingExceptionPolicy_MaskingException_Action.QUERY
-              )}
-              disabled={!hasPermission.value || props.disabled}
-              onUpdate:checked={() =>
-                onAccessControlUpdate(
-                  item,
-                  (item) =>
-                    toggleAction(
-                      item,
-                      MaskingExceptionPolicy_MaskingException_Action.QUERY
-                    ),
-                  (item) =>
-                    toggleAction(
-                      item,
-                      MaskingExceptionPolicy_MaskingException_Action.QUERY
-                    )
-                )
-              }
-            />
-          );
         },
       },
       {
@@ -472,29 +344,15 @@ const accessTableColumns = computed(
   }
 );
 
-const toggleAction = (
-  item: AccessUser,
-  action: MaskingExceptionPolicy_MaskingException_Action
-) => {
-  if (item.supportActions.has(action)) {
-    item.supportActions.delete(action);
-  } else {
-    item.supportActions.add(action);
-  }
-};
-
-const revokeAccessAlert = (
-  item: AccessUser,
-  revert: (item: AccessUser) => void = () => {}
-) => {
+const revokeAccessAlert = (item: AccessUser) => {
   $dialog.warning({
     title: t("common.warning"),
     content: () => {
       return (
-        <div class="space-y-3">
-          <div class="textlabel !text-base">
+        <div class="flex flex-col gap-y-3">
+          <div class="textlabel text-base!">
             {t("project.masking-exemption.revoke-exemption-title", {
-              member: getMemberBinding(item),
+              member: item.member,
             })}
           </div>
           {getDatabaseAccessResource(item)}
@@ -506,11 +364,9 @@ const revokeAccessAlert = (
     positiveText: t("common.confirm"),
     closeOnEsc: false,
     maskClosable: false,
-    onClose: () => revert(item),
     onPositiveClick: async () => {
       await onRemove(item);
     },
-    onNegativeClick: () => revert(item),
   });
 };
 
@@ -525,15 +381,10 @@ const onRemove = async (item: AccessUser) => {
 
 const onAccessControlUpdate = async (
   item: AccessUser,
-  callback: (item: AccessUser) => void,
-  revert: (item: AccessUser) => void = () => {}
+  callback: (item: AccessUser) => void
 ) => {
   callback(item);
-  if (item.supportActions.size === 0) {
-    revokeAccessAlert(item, revert);
-  } else {
-    await onSubmit();
-  }
+  await onSubmit();
 };
 
 const onSubmit = async () => {
@@ -557,13 +408,20 @@ const onSubmit = async () => {
 const updateExceptionPolicy = async () => {
   const policy = await policyStore.getOrFetchPolicyByParentAndType({
     parentPath: props.project.name,
-    policyType: PolicyType.MASKING_EXCEPTION,
+    policyType: PolicyType.MASKING_EXEMPTION,
   });
   if (!policy) {
     return;
   }
 
-  const exceptions = [];
+  const expressionsMap = new Map<
+    string,
+    {
+      description: string;
+      members: string[];
+    }
+  >();
+
   for (const accessUser of state.rawAccessList) {
     const expressions = accessUser.rawExpression
       .split(" && ")
@@ -586,23 +444,31 @@ const updateExceptionPolicy = async () => {
         ).toISOString()}")`
       );
     }
-    const member = getMemberBinding(accessUser);
-    for (const action of accessUser.supportActions) {
-      exceptions.push({
-        action,
-        member,
-        condition: create(ExprSchema, {
-          description: accessUser.description,
-          expression: expressions.join(" && "),
-        }),
+    const finalExpression = expressions.join(" && ");
+    if (!expressionsMap.has(finalExpression)) {
+      expressionsMap.set(finalExpression, {
+        description: accessUser.description,
+        members: [],
       });
     }
+    expressionsMap.get(finalExpression)!.members.push(accessUser.member);
+  }
+
+  const exceptions = [];
+  for (const [expression, { description, members }] of expressionsMap) {
+    exceptions.push({
+      members,
+      condition: create(ExprSchema, {
+        description: description,
+        expression: expression,
+      }),
+    });
   }
 
   policy.policy = {
-    case: "maskingExceptionPolicy",
-    value: create(MaskingExceptionPolicySchema, {
-      maskingExceptions: exceptions,
+    case: "maskingExemptionPolicy",
+    value: create(MaskingExemptionPolicySchema, {
+      exemptions: exceptions,
     }),
   };
   await policyStore.upsertPolicy({

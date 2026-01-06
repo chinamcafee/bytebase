@@ -8,19 +8,19 @@
     <DrawerContent
       :title="$t('issue.title.request-role')"
       :closable="true"
-      class="w-[50rem] max-w-[100vw] relative"
+      class="w-200 max-w-[100vw] relative"
     >
-      <div class="w-full mx-auto space-y-4">
+      <div class="w-full mx-auto flex flex-col gap-y-4">
         <AddProjectMemberForm
           ref="formRef"
           class="w-full"
           :project-name="projectName"
-          :binding="state.binding"
+          :binding="binding"
           :allow-remove="false"
           :disable-member-change="true"
           :require-reason="project.enforceIssueTitle"
           :support-roles="supportRoles"
-          :database-resource="databaseResource"
+          :database-resources="databaseResources"
         />
       </div>
       <template #footer>
@@ -47,48 +47,42 @@ import { DurationSchema } from "@bufbuild/protobuf/wkt";
 import dayjs from "dayjs";
 import { uniq } from "lodash-es";
 import { NButton } from "naive-ui";
-import { computed, reactive, ref } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import AddProjectMemberForm from "@/components/ProjectMember/AddProjectMember/AddProjectMemberForm.vue";
 import { Drawer, DrawerContent } from "@/components/v2";
-import { issueServiceClientConnect } from "@/grpcweb";
+import { issueServiceClientConnect } from "@/connect";
 import { PROJECT_V1_ROUTE_ISSUE_DETAIL_V1 } from "@/router/dashboard/projectV1";
 import { useCurrentUserV1, useProjectV1Store } from "@/store";
 import type { DatabaseResource } from "@/types";
 import { getUserEmailInBinding } from "@/types";
-import type { Binding } from "@/types/proto-es/v1/iam_policy_pb";
 import { BindingSchema } from "@/types/proto-es/v1/iam_policy_pb";
 import {
   CreateIssueRequestSchema,
+  GrantRequestSchema,
   IssueSchema,
   Issue_Type as NewIssue_Type,
-  GrantRequestSchema,
 } from "@/types/proto-es/v1/issue_service_pb";
 import {
-  generateIssueTitle,
   displayRoleTitle,
-  extractProjectResourceName,
   extractIssueUID,
+  extractProjectResourceName,
+  generateIssueTitle,
 } from "@/utils";
-
-interface LocalState {
-  binding: Binding;
-}
 
 const props = withDefaults(
   defineProps<{
     projectName: string;
     role?: string;
-    databaseResource?: DatabaseResource;
+    databaseResources?: DatabaseResource[];
     placement?: "left" | "right";
     supportRoles?: string[];
   }>(),
   {
-    databaseResource: undefined,
+    databaseResources: () => [],
     role: undefined,
     placement: "right",
-    supportRoles: () => [],
   }
 );
 
@@ -101,12 +95,13 @@ const currentUser = useCurrentUserV1();
 const projectStore = useProjectV1Store();
 const router = useRouter();
 
-const state = reactive<LocalState>({
-  binding: create(BindingSchema, {
+const binding = computed(() => {
+  return create(BindingSchema, {
     role: props.role,
     members: [getUserEmailInBinding(currentUser.value.email)],
-  }),
+  });
 });
+
 const formRef = ref<InstanceType<typeof AddProjectMemberForm>>();
 
 const project = computed(() =>
@@ -122,10 +117,15 @@ const doCreateIssue = async () => {
     return;
   }
 
+  const binding = await formRef.value?.getBinding();
+  if (!binding) {
+    return;
+  }
+
   const grantRequest = create(GrantRequestSchema, {
-    role: state.binding.role,
+    role: binding.role,
     user: `users/${currentUser.value.email}`,
-    condition: state.binding.condition,
+    condition: binding.condition,
     expiration: formRef.value?.expirationTimestampInMS
       ? create(DurationSchema, {
           seconds: BigInt(
@@ -135,21 +135,23 @@ const doCreateIssue = async () => {
       : undefined,
   });
 
+  const databaseResources = await formRef.value?.getDatabaseResources();
+
   const newIssue = create(IssueSchema, {
     title: project.value.enforceIssueTitle
       ? `[${t("issue.title.request-role")}] ${formRef.value?.reason}`
       : generateIssueTitle(
           "bb.issue.grant.request",
           uniq(
-            formRef.value?.databaseResources?.map(
+            databaseResources?.map(
               (databaseResource) => databaseResource.databaseFullName
             )
           ),
           t("issue.title.request-specific-role", {
-            role: displayRoleTitle(state.binding.role),
+            role: displayRoleTitle(binding.role),
           })
         ),
-    description: state.binding.condition?.description,
+    description: binding.condition?.description,
     type: NewIssue_Type.GRANT_REQUEST,
     grantRequest,
   });
@@ -168,7 +170,6 @@ const doCreateIssue = async () => {
     },
   });
 
-  // TODO(ed): handle no permission
   window.open(route.fullPath, "_blank");
 
   emit("close");

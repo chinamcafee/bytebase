@@ -2,23 +2,20 @@ package plsql
 
 import (
 	"github.com/antlr4-go/antlr/v4"
-	parser "github.com/bytebase/plsql-parser"
+	parser "github.com/bytebase/parser/plsql"
 	"github.com/pkg/errors"
+
+	"github.com/bytebase/bytebase/backend/plugin/parser/base"
 )
 
-func GetStatementTypes(asts any) ([]string, error) {
-	node, ok := asts.(antlr.Tree)
-	if !ok {
-		return nil, errors.Errorf("invalid ast type %T", asts)
-	}
+func GetStatementTypes(asts []base.AST) ([]string, error) {
 	sqlTypeSet := make(map[string]bool)
-	for _, child := range node.GetChildren() {
-		_, ok := child.(*antlr.TerminalNodeImpl)
-		if ok {
-			continue
+	for _, ast := range asts {
+		antlrAST, ok := base.GetANTLRAST(ast)
+		if !ok {
+			return nil, errors.New("expected ANTLR AST for Oracle")
 		}
-
-		t := getStatementType(child)
+		t := getStatementType(antlrAST.Tree)
 		sqlTypeSet[t] = true
 	}
 	var sqlTypes []string

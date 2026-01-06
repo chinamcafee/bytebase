@@ -37,21 +37,19 @@ const (
 	PlanServiceGetPlanProcedure = "/bytebase.v1.PlanService/GetPlan"
 	// PlanServiceListPlansProcedure is the fully-qualified name of the PlanService's ListPlans RPC.
 	PlanServiceListPlansProcedure = "/bytebase.v1.PlanService/ListPlans"
-	// PlanServiceSearchPlansProcedure is the fully-qualified name of the PlanService's SearchPlans RPC.
-	PlanServiceSearchPlansProcedure = "/bytebase.v1.PlanService/SearchPlans"
 	// PlanServiceCreatePlanProcedure is the fully-qualified name of the PlanService's CreatePlan RPC.
 	PlanServiceCreatePlanProcedure = "/bytebase.v1.PlanService/CreatePlan"
 	// PlanServiceUpdatePlanProcedure is the fully-qualified name of the PlanService's UpdatePlan RPC.
 	PlanServiceUpdatePlanProcedure = "/bytebase.v1.PlanService/UpdatePlan"
-	// PlanServiceListPlanCheckRunsProcedure is the fully-qualified name of the PlanService's
-	// ListPlanCheckRuns RPC.
-	PlanServiceListPlanCheckRunsProcedure = "/bytebase.v1.PlanService/ListPlanCheckRuns"
+	// PlanServiceGetPlanCheckRunProcedure is the fully-qualified name of the PlanService's
+	// GetPlanCheckRun RPC.
+	PlanServiceGetPlanCheckRunProcedure = "/bytebase.v1.PlanService/GetPlanCheckRun"
 	// PlanServiceRunPlanChecksProcedure is the fully-qualified name of the PlanService's RunPlanChecks
 	// RPC.
 	PlanServiceRunPlanChecksProcedure = "/bytebase.v1.PlanService/RunPlanChecks"
-	// PlanServiceBatchCancelPlanCheckRunsProcedure is the fully-qualified name of the PlanService's
-	// BatchCancelPlanCheckRuns RPC.
-	PlanServiceBatchCancelPlanCheckRunsProcedure = "/bytebase.v1.PlanService/BatchCancelPlanCheckRuns"
+	// PlanServiceCancelPlanCheckRunProcedure is the fully-qualified name of the PlanService's
+	// CancelPlanCheckRun RPC.
+	PlanServiceCancelPlanCheckRunProcedure = "/bytebase.v1.PlanService/CancelPlanCheckRun"
 )
 
 // PlanServiceClient is a client for the bytebase.v1.PlanService service.
@@ -62,9 +60,6 @@ type PlanServiceClient interface {
 	// Lists deployment plans in a project.
 	// Permissions required: bb.plans.list
 	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
-	// Search for plans that the caller has the bb.plans.get permission on and also satisfy the specified filter & query.
-	// Permissions required: bb.plans.get
-	SearchPlans(context.Context, *connect.Request[v1.SearchPlansRequest]) (*connect.Response[v1.SearchPlansResponse], error)
 	// Creates a new deployment plan.
 	// Permissions required: bb.plans.create
 	CreatePlan(context.Context, *connect.Request[v1.CreatePlanRequest]) (*connect.Response[v1.Plan], error)
@@ -72,15 +67,15 @@ type PlanServiceClient interface {
 	// The plan creator and the user with bb.plans.update permission on the project can update the plan.
 	// Permissions required: bb.plans.update (or creator)
 	UpdatePlan(context.Context, *connect.Request[v1.UpdatePlanRequest]) (*connect.Response[v1.Plan], error)
-	// Lists plan check runs for a deployment plan.
-	// Permissions required: bb.planCheckRuns.list
-	ListPlanCheckRuns(context.Context, *connect.Request[v1.ListPlanCheckRunsRequest]) (*connect.Response[v1.ListPlanCheckRunsResponse], error)
+	// Gets the plan check run for a deployment plan.
+	// Permissions required: bb.planCheckRuns.get
+	GetPlanCheckRun(context.Context, *connect.Request[v1.GetPlanCheckRunRequest]) (*connect.Response[v1.PlanCheckRun], error)
 	// Executes validation checks on a deployment plan.
 	// Permissions required: bb.planCheckRuns.run
 	RunPlanChecks(context.Context, *connect.Request[v1.RunPlanChecksRequest]) (*connect.Response[v1.RunPlanChecksResponse], error)
-	// Cancels multiple plan check runs.
+	// Cancels the plan check run for a deployment plan.
 	// Permissions required: bb.planCheckRuns.run
-	BatchCancelPlanCheckRuns(context.Context, *connect.Request[v1.BatchCancelPlanCheckRunsRequest]) (*connect.Response[v1.BatchCancelPlanCheckRunsResponse], error)
+	CancelPlanCheckRun(context.Context, *connect.Request[v1.CancelPlanCheckRunRequest]) (*connect.Response[v1.CancelPlanCheckRunResponse], error)
 }
 
 // NewPlanServiceClient constructs a client for the bytebase.v1.PlanService service. By default, it
@@ -106,12 +101,6 @@ func NewPlanServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(planServiceMethods.ByName("ListPlans")),
 			connect.WithClientOptions(opts...),
 		),
-		searchPlans: connect.NewClient[v1.SearchPlansRequest, v1.SearchPlansResponse](
-			httpClient,
-			baseURL+PlanServiceSearchPlansProcedure,
-			connect.WithSchema(planServiceMethods.ByName("SearchPlans")),
-			connect.WithClientOptions(opts...),
-		),
 		createPlan: connect.NewClient[v1.CreatePlanRequest, v1.Plan](
 			httpClient,
 			baseURL+PlanServiceCreatePlanProcedure,
@@ -124,10 +113,10 @@ func NewPlanServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(planServiceMethods.ByName("UpdatePlan")),
 			connect.WithClientOptions(opts...),
 		),
-		listPlanCheckRuns: connect.NewClient[v1.ListPlanCheckRunsRequest, v1.ListPlanCheckRunsResponse](
+		getPlanCheckRun: connect.NewClient[v1.GetPlanCheckRunRequest, v1.PlanCheckRun](
 			httpClient,
-			baseURL+PlanServiceListPlanCheckRunsProcedure,
-			connect.WithSchema(planServiceMethods.ByName("ListPlanCheckRuns")),
+			baseURL+PlanServiceGetPlanCheckRunProcedure,
+			connect.WithSchema(planServiceMethods.ByName("GetPlanCheckRun")),
 			connect.WithClientOptions(opts...),
 		),
 		runPlanChecks: connect.NewClient[v1.RunPlanChecksRequest, v1.RunPlanChecksResponse](
@@ -136,10 +125,10 @@ func NewPlanServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(planServiceMethods.ByName("RunPlanChecks")),
 			connect.WithClientOptions(opts...),
 		),
-		batchCancelPlanCheckRuns: connect.NewClient[v1.BatchCancelPlanCheckRunsRequest, v1.BatchCancelPlanCheckRunsResponse](
+		cancelPlanCheckRun: connect.NewClient[v1.CancelPlanCheckRunRequest, v1.CancelPlanCheckRunResponse](
 			httpClient,
-			baseURL+PlanServiceBatchCancelPlanCheckRunsProcedure,
-			connect.WithSchema(planServiceMethods.ByName("BatchCancelPlanCheckRuns")),
+			baseURL+PlanServiceCancelPlanCheckRunProcedure,
+			connect.WithSchema(planServiceMethods.ByName("CancelPlanCheckRun")),
 			connect.WithClientOptions(opts...),
 		),
 	}
@@ -147,14 +136,13 @@ func NewPlanServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 
 // planServiceClient implements PlanServiceClient.
 type planServiceClient struct {
-	getPlan                  *connect.Client[v1.GetPlanRequest, v1.Plan]
-	listPlans                *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
-	searchPlans              *connect.Client[v1.SearchPlansRequest, v1.SearchPlansResponse]
-	createPlan               *connect.Client[v1.CreatePlanRequest, v1.Plan]
-	updatePlan               *connect.Client[v1.UpdatePlanRequest, v1.Plan]
-	listPlanCheckRuns        *connect.Client[v1.ListPlanCheckRunsRequest, v1.ListPlanCheckRunsResponse]
-	runPlanChecks            *connect.Client[v1.RunPlanChecksRequest, v1.RunPlanChecksResponse]
-	batchCancelPlanCheckRuns *connect.Client[v1.BatchCancelPlanCheckRunsRequest, v1.BatchCancelPlanCheckRunsResponse]
+	getPlan            *connect.Client[v1.GetPlanRequest, v1.Plan]
+	listPlans          *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
+	createPlan         *connect.Client[v1.CreatePlanRequest, v1.Plan]
+	updatePlan         *connect.Client[v1.UpdatePlanRequest, v1.Plan]
+	getPlanCheckRun    *connect.Client[v1.GetPlanCheckRunRequest, v1.PlanCheckRun]
+	runPlanChecks      *connect.Client[v1.RunPlanChecksRequest, v1.RunPlanChecksResponse]
+	cancelPlanCheckRun *connect.Client[v1.CancelPlanCheckRunRequest, v1.CancelPlanCheckRunResponse]
 }
 
 // GetPlan calls bytebase.v1.PlanService.GetPlan.
@@ -167,11 +155,6 @@ func (c *planServiceClient) ListPlans(ctx context.Context, req *connect.Request[
 	return c.listPlans.CallUnary(ctx, req)
 }
 
-// SearchPlans calls bytebase.v1.PlanService.SearchPlans.
-func (c *planServiceClient) SearchPlans(ctx context.Context, req *connect.Request[v1.SearchPlansRequest]) (*connect.Response[v1.SearchPlansResponse], error) {
-	return c.searchPlans.CallUnary(ctx, req)
-}
-
 // CreatePlan calls bytebase.v1.PlanService.CreatePlan.
 func (c *planServiceClient) CreatePlan(ctx context.Context, req *connect.Request[v1.CreatePlanRequest]) (*connect.Response[v1.Plan], error) {
 	return c.createPlan.CallUnary(ctx, req)
@@ -182,9 +165,9 @@ func (c *planServiceClient) UpdatePlan(ctx context.Context, req *connect.Request
 	return c.updatePlan.CallUnary(ctx, req)
 }
 
-// ListPlanCheckRuns calls bytebase.v1.PlanService.ListPlanCheckRuns.
-func (c *planServiceClient) ListPlanCheckRuns(ctx context.Context, req *connect.Request[v1.ListPlanCheckRunsRequest]) (*connect.Response[v1.ListPlanCheckRunsResponse], error) {
-	return c.listPlanCheckRuns.CallUnary(ctx, req)
+// GetPlanCheckRun calls bytebase.v1.PlanService.GetPlanCheckRun.
+func (c *planServiceClient) GetPlanCheckRun(ctx context.Context, req *connect.Request[v1.GetPlanCheckRunRequest]) (*connect.Response[v1.PlanCheckRun], error) {
+	return c.getPlanCheckRun.CallUnary(ctx, req)
 }
 
 // RunPlanChecks calls bytebase.v1.PlanService.RunPlanChecks.
@@ -192,9 +175,9 @@ func (c *planServiceClient) RunPlanChecks(ctx context.Context, req *connect.Requ
 	return c.runPlanChecks.CallUnary(ctx, req)
 }
 
-// BatchCancelPlanCheckRuns calls bytebase.v1.PlanService.BatchCancelPlanCheckRuns.
-func (c *planServiceClient) BatchCancelPlanCheckRuns(ctx context.Context, req *connect.Request[v1.BatchCancelPlanCheckRunsRequest]) (*connect.Response[v1.BatchCancelPlanCheckRunsResponse], error) {
-	return c.batchCancelPlanCheckRuns.CallUnary(ctx, req)
+// CancelPlanCheckRun calls bytebase.v1.PlanService.CancelPlanCheckRun.
+func (c *planServiceClient) CancelPlanCheckRun(ctx context.Context, req *connect.Request[v1.CancelPlanCheckRunRequest]) (*connect.Response[v1.CancelPlanCheckRunResponse], error) {
+	return c.cancelPlanCheckRun.CallUnary(ctx, req)
 }
 
 // PlanServiceHandler is an implementation of the bytebase.v1.PlanService service.
@@ -205,9 +188,6 @@ type PlanServiceHandler interface {
 	// Lists deployment plans in a project.
 	// Permissions required: bb.plans.list
 	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
-	// Search for plans that the caller has the bb.plans.get permission on and also satisfy the specified filter & query.
-	// Permissions required: bb.plans.get
-	SearchPlans(context.Context, *connect.Request[v1.SearchPlansRequest]) (*connect.Response[v1.SearchPlansResponse], error)
 	// Creates a new deployment plan.
 	// Permissions required: bb.plans.create
 	CreatePlan(context.Context, *connect.Request[v1.CreatePlanRequest]) (*connect.Response[v1.Plan], error)
@@ -215,15 +195,15 @@ type PlanServiceHandler interface {
 	// The plan creator and the user with bb.plans.update permission on the project can update the plan.
 	// Permissions required: bb.plans.update (or creator)
 	UpdatePlan(context.Context, *connect.Request[v1.UpdatePlanRequest]) (*connect.Response[v1.Plan], error)
-	// Lists plan check runs for a deployment plan.
-	// Permissions required: bb.planCheckRuns.list
-	ListPlanCheckRuns(context.Context, *connect.Request[v1.ListPlanCheckRunsRequest]) (*connect.Response[v1.ListPlanCheckRunsResponse], error)
+	// Gets the plan check run for a deployment plan.
+	// Permissions required: bb.planCheckRuns.get
+	GetPlanCheckRun(context.Context, *connect.Request[v1.GetPlanCheckRunRequest]) (*connect.Response[v1.PlanCheckRun], error)
 	// Executes validation checks on a deployment plan.
 	// Permissions required: bb.planCheckRuns.run
 	RunPlanChecks(context.Context, *connect.Request[v1.RunPlanChecksRequest]) (*connect.Response[v1.RunPlanChecksResponse], error)
-	// Cancels multiple plan check runs.
+	// Cancels the plan check run for a deployment plan.
 	// Permissions required: bb.planCheckRuns.run
-	BatchCancelPlanCheckRuns(context.Context, *connect.Request[v1.BatchCancelPlanCheckRunsRequest]) (*connect.Response[v1.BatchCancelPlanCheckRunsResponse], error)
+	CancelPlanCheckRun(context.Context, *connect.Request[v1.CancelPlanCheckRunRequest]) (*connect.Response[v1.CancelPlanCheckRunResponse], error)
 }
 
 // NewPlanServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -245,12 +225,6 @@ func NewPlanServiceHandler(svc PlanServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(planServiceMethods.ByName("ListPlans")),
 		connect.WithHandlerOptions(opts...),
 	)
-	planServiceSearchPlansHandler := connect.NewUnaryHandler(
-		PlanServiceSearchPlansProcedure,
-		svc.SearchPlans,
-		connect.WithSchema(planServiceMethods.ByName("SearchPlans")),
-		connect.WithHandlerOptions(opts...),
-	)
 	planServiceCreatePlanHandler := connect.NewUnaryHandler(
 		PlanServiceCreatePlanProcedure,
 		svc.CreatePlan,
@@ -263,10 +237,10 @@ func NewPlanServiceHandler(svc PlanServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(planServiceMethods.ByName("UpdatePlan")),
 		connect.WithHandlerOptions(opts...),
 	)
-	planServiceListPlanCheckRunsHandler := connect.NewUnaryHandler(
-		PlanServiceListPlanCheckRunsProcedure,
-		svc.ListPlanCheckRuns,
-		connect.WithSchema(planServiceMethods.ByName("ListPlanCheckRuns")),
+	planServiceGetPlanCheckRunHandler := connect.NewUnaryHandler(
+		PlanServiceGetPlanCheckRunProcedure,
+		svc.GetPlanCheckRun,
+		connect.WithSchema(planServiceMethods.ByName("GetPlanCheckRun")),
 		connect.WithHandlerOptions(opts...),
 	)
 	planServiceRunPlanChecksHandler := connect.NewUnaryHandler(
@@ -275,10 +249,10 @@ func NewPlanServiceHandler(svc PlanServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(planServiceMethods.ByName("RunPlanChecks")),
 		connect.WithHandlerOptions(opts...),
 	)
-	planServiceBatchCancelPlanCheckRunsHandler := connect.NewUnaryHandler(
-		PlanServiceBatchCancelPlanCheckRunsProcedure,
-		svc.BatchCancelPlanCheckRuns,
-		connect.WithSchema(planServiceMethods.ByName("BatchCancelPlanCheckRuns")),
+	planServiceCancelPlanCheckRunHandler := connect.NewUnaryHandler(
+		PlanServiceCancelPlanCheckRunProcedure,
+		svc.CancelPlanCheckRun,
+		connect.WithSchema(planServiceMethods.ByName("CancelPlanCheckRun")),
 		connect.WithHandlerOptions(opts...),
 	)
 	return "/bytebase.v1.PlanService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -287,18 +261,16 @@ func NewPlanServiceHandler(svc PlanServiceHandler, opts ...connect.HandlerOption
 			planServiceGetPlanHandler.ServeHTTP(w, r)
 		case PlanServiceListPlansProcedure:
 			planServiceListPlansHandler.ServeHTTP(w, r)
-		case PlanServiceSearchPlansProcedure:
-			planServiceSearchPlansHandler.ServeHTTP(w, r)
 		case PlanServiceCreatePlanProcedure:
 			planServiceCreatePlanHandler.ServeHTTP(w, r)
 		case PlanServiceUpdatePlanProcedure:
 			planServiceUpdatePlanHandler.ServeHTTP(w, r)
-		case PlanServiceListPlanCheckRunsProcedure:
-			planServiceListPlanCheckRunsHandler.ServeHTTP(w, r)
+		case PlanServiceGetPlanCheckRunProcedure:
+			planServiceGetPlanCheckRunHandler.ServeHTTP(w, r)
 		case PlanServiceRunPlanChecksProcedure:
 			planServiceRunPlanChecksHandler.ServeHTTP(w, r)
-		case PlanServiceBatchCancelPlanCheckRunsProcedure:
-			planServiceBatchCancelPlanCheckRunsHandler.ServeHTTP(w, r)
+		case PlanServiceCancelPlanCheckRunProcedure:
+			planServiceCancelPlanCheckRunHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -316,10 +288,6 @@ func (UnimplementedPlanServiceHandler) ListPlans(context.Context, *connect.Reque
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bytebase.v1.PlanService.ListPlans is not implemented"))
 }
 
-func (UnimplementedPlanServiceHandler) SearchPlans(context.Context, *connect.Request[v1.SearchPlansRequest]) (*connect.Response[v1.SearchPlansResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bytebase.v1.PlanService.SearchPlans is not implemented"))
-}
-
 func (UnimplementedPlanServiceHandler) CreatePlan(context.Context, *connect.Request[v1.CreatePlanRequest]) (*connect.Response[v1.Plan], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bytebase.v1.PlanService.CreatePlan is not implemented"))
 }
@@ -328,14 +296,14 @@ func (UnimplementedPlanServiceHandler) UpdatePlan(context.Context, *connect.Requ
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bytebase.v1.PlanService.UpdatePlan is not implemented"))
 }
 
-func (UnimplementedPlanServiceHandler) ListPlanCheckRuns(context.Context, *connect.Request[v1.ListPlanCheckRunsRequest]) (*connect.Response[v1.ListPlanCheckRunsResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bytebase.v1.PlanService.ListPlanCheckRuns is not implemented"))
+func (UnimplementedPlanServiceHandler) GetPlanCheckRun(context.Context, *connect.Request[v1.GetPlanCheckRunRequest]) (*connect.Response[v1.PlanCheckRun], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bytebase.v1.PlanService.GetPlanCheckRun is not implemented"))
 }
 
 func (UnimplementedPlanServiceHandler) RunPlanChecks(context.Context, *connect.Request[v1.RunPlanChecksRequest]) (*connect.Response[v1.RunPlanChecksResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bytebase.v1.PlanService.RunPlanChecks is not implemented"))
 }
 
-func (UnimplementedPlanServiceHandler) BatchCancelPlanCheckRuns(context.Context, *connect.Request[v1.BatchCancelPlanCheckRunsRequest]) (*connect.Response[v1.BatchCancelPlanCheckRunsResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bytebase.v1.PlanService.BatchCancelPlanCheckRuns is not implemented"))
+func (UnimplementedPlanServiceHandler) CancelPlanCheckRun(context.Context, *connect.Request[v1.CancelPlanCheckRunRequest]) (*connect.Response[v1.CancelPlanCheckRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bytebase.v1.PlanService.CancelPlanCheckRun is not implemented"))
 }

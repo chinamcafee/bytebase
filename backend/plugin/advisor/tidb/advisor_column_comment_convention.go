@@ -8,11 +8,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pkg/errors"
 
 	"github.com/bytebase/bytebase/backend/common"
 	storepb "github.com/bytebase/bytebase/backend/generated-go/store"
 	"github.com/bytebase/bytebase/backend/plugin/advisor"
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
 )
 
 var (
@@ -21,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleColumnCommentConvention, &ColumnCommentConventionAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_COLUMN_COMMENT, &ColumnCommentConventionAdvisor{})
 }
 
 // ColumnCommentConventionAdvisor is the advisor checking for column comment convention.
@@ -30,24 +30,21 @@ type ColumnCommentConventionAdvisor struct {
 
 // Check checks for column comment convention.
 func (*ColumnCommentConventionAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	stmtList, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	stmtList, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	payload, err := advisor.UnmarshalCommentConventionRulePayload(checkCtx.Rule.Payload)
-	if err != nil {
-		return nil, err
-	}
+	commentPayload := checkCtx.Rule.GetCommentConventionPayload()
 	checker := &columnCommentConventionChecker{
-		level:                level,
-		title:                string(checkCtx.Rule.Type),
-		payload:              payload,
-		classificationConfig: checkCtx.ClassificationConfig,
+		level:   level,
+		title:   checkCtx.Rule.Type.String(),
+		payload: commentPayload,
 	}
 
 	for _, stmt := range stmtList {
@@ -60,13 +57,12 @@ func (*ColumnCommentConventionAdvisor) Check(_ context.Context, checkCtx advisor
 }
 
 type columnCommentConventionChecker struct {
-	adviceList           []*storepb.Advice
-	level                storepb.Advice_Status
-	title                string
-	text                 string
-	line                 int
-	payload              *advisor.CommentConventionRulePayload
-	classificationConfig *storepb.DataClassificationSetting_DataClassificationConfig
+	adviceList []*storepb.Advice
+	level      storepb.Advice_Status
+	title      string
+	text       string
+	line       int
+	payload    *storepb.SQLReviewRule_CommentConventionRulePayload
 }
 
 type columnCommentData struct {
@@ -125,31 +121,20 @@ func (checker *columnCommentConventionChecker) Enter(in ast.Node) (ast.Node, boo
 		if checker.payload.Required && !column.exist {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.CommentEmpty.Int32(),
+				Code:          code.CommentEmpty.Int32(),
 				Title:         checker.title,
 				Content:       fmt.Sprintf("Column `%s`.`%s` requires comments", column.table, column.column),
 				StartPosition: common.ConvertANTLRLineToPosition(column.line),
 			})
 		}
-		if checker.payload.MaxLength >= 0 && len(column.comment) > checker.payload.MaxLength {
+		if checker.payload.MaxLength >= 0 && int32(len(column.comment)) > checker.payload.MaxLength {
 			checker.adviceList = append(checker.adviceList, &storepb.Advice{
 				Status:        checker.level,
-				Code:          advisor.CommentTooLong.Int32(),
+				Code:          code.CommentTooLong.Int32(),
 				Title:         checker.title,
 				Content:       fmt.Sprintf("The length of column `%s`.`%s` comment should be within %d characters", column.table, column.column, checker.payload.MaxLength),
 				StartPosition: common.ConvertANTLRLineToPosition(column.line),
 			})
-		}
-		if checker.payload.RequiredClassification {
-			if classification, _ := common.GetClassificationAndUserComment(column.comment, checker.classificationConfig); classification == "" {
-				checker.adviceList = append(checker.adviceList, &storepb.Advice{
-					Status:        checker.level,
-					Code:          advisor.CommentMissingClassification.Int32(),
-					Title:         checker.title,
-					Content:       fmt.Sprintf("Column `%s`.`%s` comment requires classification", column.table, column.column),
-					StartPosition: common.ConvertANTLRLineToPosition(column.line),
-				})
-			}
 		}
 	}
 
@@ -169,7 +154,7 @@ func (checker *columnCommentConventionChecker) columnComment(column *ast.ColumnD
 				comment = ""
 				checker.adviceList = append(checker.adviceList, &storepb.Advice{
 					Status:  checker.level,
-					Code:    advisor.Internal.Int32(),
+					Code:    code.Internal.Int32(),
 					Title:   "Internal error for parsing column comment",
 					Content: fmt.Sprintf("\"%q\" meet internal error %s", checker.text, err),
 				})

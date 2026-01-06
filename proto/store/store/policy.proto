@@ -4,7 +4,6 @@ package bytebase.store;
 
 import "google/protobuf/duration.proto";
 import "google/type/expr.proto";
-import "store/common.proto";
 
 option go_package = "generated-go/store";
 
@@ -12,12 +11,12 @@ message Policy {
   enum Type {
     TYPE_UNSPECIFIED = 0;
     ROLLOUT = 1;
-    MASKING_EXCEPTION = 2;
-    QUERY_DATA = 5;
-    MASKING_RULE = 6;
-    IAM = 8;
-    TAG = 9;
-    DATA_SOURCE_QUERY = 10;
+    MASKING_EXEMPTION = 2;
+    QUERY_DATA = 3;
+    MASKING_RULE = 4;
+    IAM = 5;
+    TAG = 6;
+    DATA_SOURCE_QUERY = 7;
   }
 
   enum Resource {
@@ -31,56 +30,36 @@ message Policy {
 message RolloutPolicy {
   bool automatic = 1;
   repeated string roles = 2;
-  // Checkers that must pass before rollout execution.
-  // These checks are performed in UI workflows only.
-  Checkers checkers = 4;
-
-  message Checkers {
-    // Whether issue approval is required before proceeding with rollout.
-    bool required_issue_approval = 1;
-
-    // Status checks that must pass before rollout can be executed.
-    RequiredStatusChecks required_status_checks = 2;
-
-    message RequiredStatusChecks {
-      // Enforcement level for plan check results during rollout validation.
-      PlanCheckEnforcement plan_check_enforcement = 1;
-    }
-
-    enum PlanCheckEnforcement {
-      // Allow rollout regardless of plan check results (no enforcement).
-      PLAN_CHECK_ENFORCEMENT_UNSPECIFIED = 0;
-
-      // Block rollout only when plan check finds errors.
-      ERROR_ONLY = 1;
-
-      // Block rollout when plan check finds errors or warnings.
-      STRICT = 2;
-    }
-  }
 }
 
-// MaskingExceptionPolicy is the allowlist of users who can access sensitive data.
-message MaskingExceptionPolicy {
-  message MaskingException {
-    enum Action {
-      ACTION_UNSPECIFIED = 0;
-      QUERY = 1;
-      EXPORT = 2;
-    }
-    // action is the action by which the user can access sensitive data.
-    Action action = 1;
-
-    // Member is the principal who binds to this exception policy instance.
+// MaskingExemptionPolicy is the allowlist of users who can access sensitive data.
+message MaskingExemptionPolicy {
+  message Exemption {
+    // Members who bind to this exemption.
     //
-    // Format: users/{userUID} or groups/{group email}
-    string member = 4;
+    // Format: users/{email} or groups/{group email}
+    repeated string members = 1;
 
     // The condition that is associated with this exception policy instance.
-    google.type.Expr condition = 5;
+    // The syntax and semantics of CEL are documented at https://github.com/google/cel-spec
+    // If the condition is empty, means the user can access all databases without expiration.
+    //
+    // Support variables:
+    // resource.instance_id: the instance resource id. Only support "==" operation.
+    // resource.database_name: the database name. Only support "==" operation.
+    // resource.schema_name: the schema name. Only support "==" operation.
+    // resource.table_name: the table name. Only support "==" operation.
+    // resource.column_name: the column name. Only support "==" operation.
+    // request.time: the expiration. Only support "<" operation in `request.time < timestamp("{ISO datetime string format}")`
+    // All variables should join with "&&" condition.
+    //
+    // For example:
+    // resource.instance_id == "local" && resource.database_name == "employee" && request.time < timestamp("2025-04-30T11:10:39.000Z")
+    // resource.instance_id == "local" && resource.database_name == "employee"
+    google.type.Expr condition = 2;
   }
 
-  repeated MaskingException masking_exceptions = 1;
+  repeated Exemption exemptions = 1;
 }
 
 message MaskingRulePolicy {
@@ -95,20 +74,6 @@ message MaskingRulePolicy {
   repeated MaskingRule rules = 1;
 }
 
-message SQLReviewRule {
-  string type = 1;
-  SQLReviewRuleLevel level = 2;
-  string payload = 3;
-  Engine engine = 4;
-  string comment = 5;
-}
-
-enum SQLReviewRuleLevel {
-  LEVEL_UNSPECIFIED = 0;
-  ERROR = 1;
-  WARNING = 2;
-}
-
 message TagPolicy {
   // tags is the key-value map for resources.
   // For example, the environment resource can have the SQL review config tag, such as "bb.tag.review_config": "reviewConfigs/{review config resource id}".
@@ -121,7 +86,7 @@ message Binding {
   string role = 1;
 
   // Specifies the principals requesting access for a Bytebase resource.
-  // For users, the member should be: users/{userUID}
+  // For users, the member should be: users/{email}
   // For groups, the member should be: groups/{email}
   repeated string members = 2;
 

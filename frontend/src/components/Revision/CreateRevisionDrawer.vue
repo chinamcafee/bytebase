@@ -6,7 +6,7 @@
     :default-width="1024"
     :resizable="true"
     :width="undefined"
-    class="!max-w-[90vw]"
+    class="max-w-[90vw]!"
   >
     <DrawerContent :title="$t('database.revision.import-revision')" closable>
       <div class="flex flex-col gap-y-4">
@@ -34,7 +34,7 @@
             <NRadioGroup
               v-model:value="selectedSource"
               size="large"
-              class="space-y-4 w-full"
+              class="flex flex-col gap-y-4 w-full"
             >
               <div
                 class="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors"
@@ -43,13 +43,13 @@
                 }"
               >
                 <NRadio value="release" class="w-full">
-                  <div class="flex items-start space-x-3 w-full">
+                  <div class="flex items-start gap-x-3 w-full">
                     <PackageIcon
-                      class="w-6 h-6 mt-1 flex-shrink-0"
+                      class="w-6 h-6 mt-1 shrink-0"
                       :stroke-width="1.5"
                     />
                     <div class="flex-1">
-                      <div class="flex items-center space-x-2">
+                      <div class="flex items-center gap-x-2">
                         <span class="text-lg font-medium text-gray-900">
                           {{ $t("database.revision.from-release") }}
                         </span>
@@ -68,13 +68,13 @@
                 }"
               >
                 <NRadio value="local" class="w-full">
-                  <div class="flex items-start space-x-3 w-full">
+                  <div class="flex items-start gap-x-3 w-full">
                     <FolderOpenIcon
-                      class="w-6 h-6 mt-1 flex-shrink-0"
+                      class="w-6 h-6 mt-1 shrink-0"
                       :stroke-width="1.5"
                     />
                     <div class="flex-1">
-                      <div class="flex items-center space-x-2">
+                      <div class="flex items-center gap-x-2">
                         <span class="text-lg font-medium text-gray-900">
                           {{ $t("database.revision.from-local-files") }}
                         </span>
@@ -97,7 +97,7 @@
               currentStep === Step.UPLOAD_FILES && selectedSource === 'local'
             "
           >
-            <div class="space-y-4">
+            <div class="flex flex-col gap-y-4">
               <div class="text-sm text-gray-600">
                 {{ $t("database.revision.upload-files-description") }}
               </div>
@@ -139,7 +139,7 @@
               />
 
               <!-- Uploaded files list -->
-              <div v-if="localFiles.length > 0" class="space-y-3">
+              <div v-if="localFiles.length > 0" class="flex flex-col gap-y-3">
                 <div class="flex items-center justify-between">
                   <h4 class="font-medium text-control">
                     {{ $t("database.revision.uploaded-files") }}
@@ -160,10 +160,10 @@
                 <div
                   v-for="(file, index) in localFiles"
                   :key="index"
-                  class="border border-gray-200 rounded-lg p-4 space-y-3"
+                  class="border border-gray-200 rounded-lg p-4 flex flex-col gap-y-3"
                 >
                   <div class="flex items-start justify-between">
-                    <div class="flex-1 space-y-3">
+                    <div class="flex-1 flex flex-col gap-y-3">
                       <div class="flex items-center gap-2">
                         <FileIcon class="w-4 h-4 text-gray-500" />
                         <span class="text-sm font-medium">{{ file.name }}</span>
@@ -219,7 +219,7 @@
                           {{ $t("database.revision.content-preview") }}
                         </label>
                         <div
-                          class="bg-gray-50 rounded p-2 text-xs font-mono text-gray-700 max-h-32 overflow-auto"
+                          class="bg-gray-50 rounded-sm p-2 text-xs font-mono text-gray-700 max-h-32 overflow-auto"
                         >
                           <pre
                             >{{ file.content.substring(0, 500)
@@ -248,7 +248,7 @@
               selectedSource === 'release'
             "
           >
-            <div class="space-y-4">
+            <div class="flex flex-col gap-y-4">
               <div class="text-sm text-gray-600">
                 {{ $t("database.revision.select-release-description") }}
               </div>
@@ -275,13 +275,16 @@
 
           <!-- Step 3: Select Files -->
           <template v-else-if="currentStep === Step.SELECT_FILES">
-            <div class="space-y-4">
+            <div class="flex flex-col gap-y-4">
               <div class="text-sm text-gray-600">
                 {{ $t("database.revision.select-files-description") }}
               </div>
 
               <!-- Selectable files section -->
-              <div v-if="selectableFiles.length > 0" class="space-y-2">
+              <div
+                v-if="selectableFiles.length > 0"
+                class="flex flex-col gap-y-2"
+              >
                 <div>
                   <h4 class="font-medium text-control">
                     {{ $t("database.revision.available-files") }}
@@ -295,6 +298,7 @@
                 </div>
                 <ReleaseFileTable
                   :files="selectableFiles"
+                  :release-type="selectedRelease!.type"
                   :show-selection="true"
                   :selected-files="selectedFiles"
                   @update:selected-files="handleFileSelection"
@@ -304,7 +308,7 @@
               <!-- Files with existing versions section -->
               <div
                 v-if="filesWithExistingVersions.length > 0"
-                class="space-y-2 mt-6"
+                class="flex flex-col gap-y-2 mt-6"
               >
                 <div>
                   <h4 class="text font-medium text-control">
@@ -323,6 +327,7 @@
                 </div>
                 <ReleaseFileTable
                   :files="filesWithExistingVersions"
+                  :release-type="selectedRelease!.type"
                   :show-selection="false"
                   :row-clickable="false"
                 />
@@ -387,20 +392,20 @@
 <script setup lang="ts">
 import { create as createProto } from "@bufbuild/protobuf";
 import {
-  PackageIcon,
-  FolderOpenIcon,
   FileIcon,
-  XIcon,
+  FolderOpenIcon,
+  PackageIcon,
   PlusIcon,
+  XIcon,
 } from "lucide-vue-next";
 import {
   NButton,
+  NInput,
   NRadio,
   NRadioGroup,
-  NSteps,
-  NStep,
-  NInput,
   NSelect,
+  NStep,
+  NSteps,
 } from "naive-ui";
 import type { Ref } from "vue";
 import { computed, ref, watch } from "vue";
@@ -408,25 +413,25 @@ import { useI18n } from "vue-i18n";
 import ReleaseDataTable from "@/components/Release/ReleaseDataTable.vue";
 import ReleaseFileTable from "@/components/Release/ReleaseDetail/ReleaseFileTable/ReleaseFileTable.vue";
 import { Drawer, DrawerContent } from "@/components/v2";
-import { revisionServiceClientConnect } from "@/grpcweb";
+import { revisionServiceClientConnect } from "@/connect";
 import {
+  pushNotification,
   useCurrentProjectV1,
   useReleaseStore,
   useRevisionStore,
   useSheetV1Store,
-  pushNotification,
 } from "@/store";
 import {
-  Release_File_Type,
   type Release,
   type Release_File,
+  Release_Type,
 } from "@/types/proto-es/v1/release_service_pb";
 import {
   BatchCreateRevisionsRequestSchema,
-  CreateRevisionRequestSchema,
-  Revision_Type,
   type CreateRevisionRequest,
+  CreateRevisionRequestSchema,
   type Revision,
+  Revision_Type,
 } from "@/types/proto-es/v1/revision_service_pb";
 
 const props = defineProps<{
@@ -575,14 +580,14 @@ const isVersionDuplicate = (version: string): boolean => {
   return existingRevisionVersions.value.has(version);
 };
 
-// Map release file type to revision type
-const mapFileTypeToRevisionType = (
-  fileType: Release_File_Type
+// Map release type to revision type
+const mapReleaseTypeToRevisionType = (
+  releaseType: Release_Type
 ): Revision_Type => {
-  switch (fileType) {
-    case Release_File_Type.VERSIONED:
+  switch (releaseType) {
+    case Release_Type.VERSIONED:
       return Revision_Type.VERSIONED;
-    case Release_File_Type.DECLARATIVE:
+    case Release_Type.DECLARATIVE:
       return Revision_Type.DECLARATIVE;
     default:
       return Revision_Type.TYPE_UNSPECIFIED;
@@ -797,7 +802,6 @@ const handleConfirm = async () => {
         try {
           // Create a sheet for each file
           const sheet = await sheetStore.createSheet(project.value.name, {
-            title: file.name,
             content: new TextEncoder().encode(file.content),
           });
 
@@ -829,9 +833,9 @@ const handleConfirm = async () => {
           revision: {
             release: selectedRelease.value!.name,
             version: file.version,
-            file: `${selectedRelease.value!.name}/files/${file.id}`,
+            file: `${selectedRelease.value!.name}/files/${file.path}`,
             sheet: file.sheet,
-            type: mapFileTypeToRevisionType(file.type),
+            type: mapReleaseTypeToRevisionType(selectedRelease.value!.type),
           },
         })
       );

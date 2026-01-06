@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 
+	"github.com/bytebase/bytebase/backend/plugin/advisor/code"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pkg/errors"
 
@@ -19,7 +21,7 @@ var (
 )
 
 func init() {
-	advisor.Register(storepb.Engine_TIDB, advisor.SchemaRuleTableDropNamingConvention, &TableDropNamingConventionAdvisor{})
+	advisor.Register(storepb.Engine_TIDB, storepb.SQLReviewRule_TABLE_DROP_NAMING_CONVENTION, &TableDropNamingConventionAdvisor{})
 }
 
 // TableDropNamingConventionAdvisor is the advisor checking the MySQLTableDropNamingConvention rule.
@@ -28,23 +30,29 @@ type TableDropNamingConventionAdvisor struct {
 
 // Check checks for drop table naming convention.
 func (*TableDropNamingConventionAdvisor) Check(_ context.Context, checkCtx advisor.Context) ([]*storepb.Advice, error) {
-	root, ok := checkCtx.AST.([]ast.StmtNode)
-	if !ok {
-		return nil, errors.Errorf("failed to convert to StmtNode")
+	root, err := getTiDBNodes(checkCtx)
+
+	if err != nil {
+		return nil, err
 	}
 
 	level, err := advisor.NewStatusBySQLReviewRuleLevel(checkCtx.Rule.Level)
 	if err != nil {
 		return nil, err
 	}
-	format, _, err := advisor.UnmarshalNamingRulePayloadAsRegexp(checkCtx.Rule.Payload)
+	namingPayload := checkCtx.Rule.GetNamingPayload()
+	if namingPayload == nil {
+		return nil, errors.New("naming_payload is required for table drop naming convention rule")
+	}
+
+	format, err := regexp.Compile(namingPayload.Format)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "failed to compile regex format %q", namingPayload.Format)
 	}
 
 	checker := &namingDropTableConventionChecker{
 		level:  level,
-		title:  string(checkCtx.Rule.Type),
+		title:  checkCtx.Rule.Type.String(),
 		format: format,
 	}
 	for _, stmtNode := range root {
@@ -68,7 +76,7 @@ func (v *namingDropTableConventionChecker) Enter(in ast.Node) (ast.Node, bool) {
 			if !v.format.MatchString(table.Name.O) {
 				v.adviceList = append(v.adviceList, &storepb.Advice{
 					Status:        v.level,
-					Code:          advisor.TableDropNamingConventionMismatch.Int32(),
+					Code:          code.TableDropNamingConventionMismatch.Int32(),
 					Title:         v.title,
 					Content:       fmt.Sprintf("`%s` mismatches drop table naming convention, naming format should be %q", table.Name.O, v.format),
 					StartPosition: common.ConvertANTLRLineToPosition(node.OriginTextPosition()),

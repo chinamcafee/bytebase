@@ -1,5 +1,5 @@
 <template>
-  <div class="mx-auto space-y-4">
+  <div class="mx-auto flex flex-col gap-y-4">
     <div class="textinfolabel">
       {{ $t("sql-review.description") }}
       <LearnMoreLink
@@ -31,14 +31,17 @@
       :review-list="filteredReviewConfigList"
       :filter="searchText"
     />
-    <NEmpty v-else class="py-12 border rounded">
+    <NEmpty v-else class="py-12 border rounded-sm">
       <template #extra>
         <NButton
+          v-if="hasCreatePolicyPermission"
           :size="'small'"
           type="primary"
-          :disabled="!hasCreatePolicyPermission"
           @click="createSQLReview"
         >
+          <template #icon>
+            <PlusIcon class="h-4 w-4" />
+          </template>
           {{ $t("sql-review.create-policy") }}
         </NButton>
       </template>
@@ -48,9 +51,8 @@
 
 <script lang="ts" setup>
 import { PlusIcon } from "lucide-vue-next";
-import { NButton } from "naive-ui";
-import { NEmpty } from "naive-ui";
-import { watchEffect, ref, computed } from "vue";
+import { NButton, NEmpty } from "naive-ui";
+import { computed, ref, watchEffect } from "vue";
 import { useRouter } from "vue-router";
 import LearnMoreLink from "@/components/LearnMoreLink.vue";
 import SQLReviewPolicyTable from "@/components/SQLReview/components/SQLReviewPolicyTable.vue";
