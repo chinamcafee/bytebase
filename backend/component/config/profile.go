@@ -38,7 +38,8 @@ type Profile struct {
 	// PgURL is the optional external PostgreSQL instance connection url
 	PgURL string
 	// MetricConnectionKey is the connection key for metric.
-	MetricConnectionKey string
+	// DISABLED: Metrics collection disabled to prevent communication with external servers.
+	MetricConnectionKey string // This field is kept for compatibility but will always be empty
 
 	// LastActiveTS is the service last active timestamp, any API calls will refresh this value.
 	LastActiveTS atomic.Int64

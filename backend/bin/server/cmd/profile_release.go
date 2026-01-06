@@ -10,9 +10,9 @@ import (
 func activeProfile(dataDir string) *config.Profile {
 	p := getBaseProfile(dataDir)
 	p.Mode = common.ReleaseModeProd
-	// Set metric connection key. Actual collection is controlled by workspace setting.
-	if !p.Demo {
-		p.MetricConnectionKey = "so9lLwj5zLjH09sxNabsyVNYSsAHn68F"
-	}
+	// DISABLED: Metrics collection disabled to prevent communication with external servers.
+	// Metric connection key is not set to prevent any metrics collection.
+	// Original key was: "so9lLwj5zLjH09sxNabsyVNYSsAHn68F"
+	// p.MetricConnectionKey = "" // Always keep empty to disable metrics
 	return p
 }
